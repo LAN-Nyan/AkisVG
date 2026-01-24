@@ -21,12 +21,20 @@ void PencilTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *
     canvas->addObject(m_currentPath);
 }
 
-void PencilTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
-{
-    Q_UNUSED(canvas)
-    
-    if (m_isDrawing && m_currentPath) {
-        m_currentPath->lineTo(event->scenePos());
+void PencilTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) {
+    Q_UNUSED(canvas); // This fixes the 'unused parameter' warning
+
+    if (!m_currentPath) return; // Use m_currentPath instead of m_currentPathItem
+
+    QPointF newPoint = event->scenePos();
+    QPainterPath path = m_currentPath->path();
+    QPointF lastPoint = path.currentPosition();
+
+    if (QLineF(lastPoint, newPoint).length() > 3.0) {
+        QPointF midPoint = (lastPoint + newPoint) / 2.0;
+        path.quadTo(lastPoint, midPoint);
+
+        m_currentPath->setPath(path);
     }
 }
 
