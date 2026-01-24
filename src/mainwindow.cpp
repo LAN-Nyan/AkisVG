@@ -26,14 +26,14 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_project(new Project(this))
-    , m_canvas(new VectorCanvas(m_project, this))
+    , m_undoStack(new QUndoStack(this))
+    , m_canvas(new VectorCanvas(m_project, m_undoStack, this))
     , m_canvasView(new CanvasView(m_canvas, this))
     , m_toolBox(new ToolBox(this))
-    , m_layerPanel(new LayerPanel(m_project, this))
+    , m_layerPanel(new LayerPanel(m_project, m_undoStack, this))
     , m_colorPicker(new ColorPicker(this))
     , m_assetLibrary(new AssetLibrary(this))
     , m_timeline(new TimelineWidget(m_project, this))
-    , m_undoStack(new QUndoStack(this))
     , m_isModified(false)
 {
     setWindowTitle("Lumina Studio");
@@ -129,8 +129,8 @@ void MainWindow::setupCanvas()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // Canvas area with background
-    m_canvasView->setStyleSheet("QGraphicsView { background-color: #1a1a1a; border: none; }");
+    // Canvas area with grey background (infinite canvas feel)
+    m_canvasView->setStyleSheet("QGraphicsView { background-color: #3c3c3c; border: none; }");
     layout->addWidget(m_canvasView);
 
     setCentralWidget(centralWidget);
@@ -173,10 +173,12 @@ void MainWindow::createMenus()
 
     QAction *undoAct = m_undoStack->createUndoAction(this, "&Undo");
     undoAct->setShortcut(QKeySequence::Undo);
+    undoAct->setIcon(QIcon::fromTheme("edit-undo"));
     m_editMenu->addAction(undoAct);
 
     QAction *redoAct = m_undoStack->createRedoAction(this, "&Redo");
     redoAct->setShortcut(QKeySequence::Redo);
+    redoAct->setIcon(QIcon::fromTheme("edit-redo"));
     m_editMenu->addAction(redoAct);
 
     m_editMenu->addSeparator();
