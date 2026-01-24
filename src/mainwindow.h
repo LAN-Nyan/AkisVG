@@ -44,6 +44,10 @@ private:
     void setupCanvas();
     void updateWindowTitle();
 
+    // YOU I D I O T WHY DID I PUT THIS AT THE BOTTOM
+    QUndoStack *m_undoStack;
+
+
     // Core components
     Project *m_project;
     VectorCanvas *m_canvas;
@@ -53,7 +57,6 @@ private:
     ColorPicker *m_colorPicker;
     AssetLibrary *m_assetLibrary;
     TimelineWidget *m_timeline;
-    QUndoStack *m_undoStack;
 
     // UI elements
     QMenu *m_fileMenu;
