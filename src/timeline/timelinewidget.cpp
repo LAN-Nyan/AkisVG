@@ -5,91 +5,91 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPushButton>
-#include <QSlider>
 #include <QLabel>
 #include <QTimerEvent>
 #include <QSplitter>
 #include <QScrollArea>
-#include <QFrame>
 #include <QPainter>
 #include <QMouseEvent>
+#include <QMenu>
+#include <QScrollBar>
+#include <QAction>
 
-// Custom widget for layer list
+// --- Internal Helper: LayerListWidget ---
+// Kept internal because only Timeline uses it
 class LayerListWidget : public QWidget {
 public:
     LayerListWidget(Project *project, QWidget *parent = nullptr)
         : QWidget(parent), m_project(project) {
         setMinimumWidth(200);
         setMaximumWidth(300);
-        updateLayers();
+        setMinimumHeight(32 + m_project->layerCount() * 36);
 
-        connect(project, &Project::layersChanged, this, &LayerListWidget::updateLayers);
+        connect(project, &Project::layersChanged, this, [this]() {
+            setMinimumHeight(32 + m_project->layerCount() * 36);
+            update();
+        });
     }
 
 protected:
     void paintEvent(QPaintEvent *event) override {
         Q_UNUSED(event);
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(45, 45, 45));
+        painter.fillRect(rect(), QColor(30, 30, 30));
 
         // Header
-        painter.fillRect(0, 0, width(), 30, QColor(58, 58, 58));
+        painter.fillRect(0, 0, width(), 32, QColor(40, 40, 40));
         painter.setPen(Qt::white);
-        painter.setFont(QFont("Arial", 10, QFont::Bold));
-        painter.drawText(rect().adjusted(10, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, "LAYERS");
+        painter.setFont(QFont("Arial", 9, QFont::Bold));
+        painter.drawText(rect().adjusted(12, 0, 0, -height() + 32), Qt::AlignLeft | Qt::AlignVCenter, "LAYERS");
 
-        // Draw layers
-        int y = 30;
-        int rowHeight = 40;
-
+        int y = 32;
+        int rowHeight = 36;
         auto layers = m_project->layers();
+
         for (int i = layers.size() - 1; i >= 0; --i) {
             Layer *layer = layers[i];
             bool isCurrent = (m_project->currentLayer() == layer);
 
-            // Background
-            QColor bgColor = isCurrent ? QColor(42, 130, 218, 50) : QColor(45, 45, 45);
+            // Row Background
+            QColor bgColor = isCurrent ? QColor(42, 130, 218, 40) : QColor(30, 30, 30);
             painter.fillRect(0, y, width(), rowHeight, bgColor);
 
-            // Border
-            painter.setPen(QColor(0, 0, 0));
-            painter.drawLine(0, y + rowHeight, width(), y + rowHeight);
+            // Color Strip
+            painter.fillRect(8, y + 8, 4, rowHeight - 16, layer->color());
 
-            // Layer color indicator
-            painter.fillRect(5, y + 10, 6, rowHeight - 20, layer->color());
-
-            // Layer name
-            painter.setPen(layer->isVisible() ? Qt::white : QColor(100, 100, 100));
-            painter.setFont(QFont("Arial", 11));
-            painter.drawText(QRect(20, y, width() - 60, rowHeight),
+            // Name
+            painter.setPen(layer->isVisible() ? QColor(220, 220, 220) : QColor(100, 100, 100));
+            painter.setFont(QFont("Arial", 10));
+            painter.drawText(QRect(20, y, width() - 80, rowHeight),
                              Qt::AlignLeft | Qt::AlignVCenter, layer->name());
 
-            // Visibility icon
-            QString visIcon = layer->isVisible() ? "👁" : "👁‍🗨";
-            painter.drawText(QRect(width() - 50, y, 20, rowHeight),
-                             Qt::AlignCenter, visIcon);
+            // Icons
+            QString visIcon = layer->isVisible() ? "👁" : "○";
+            painter.setFont(QFont("Arial", 12));
+            painter.drawText(QRect(width() - 65, y, 25, rowHeight), Qt::AlignCenter, visIcon);
 
-            // Lock icon
             if (layer->isLocked()) {
-                painter.drawText(QRect(width() - 25, y, 20, rowHeight),
-                                 Qt::AlignCenter, "🔒");
+                painter.drawText(QRect(width() - 35, y, 25, rowHeight), Qt::AlignCenter, "🔒");
             }
 
+            // Divider
+            painter.setPen(QColor(20, 20, 20));
+            painter.drawLine(0, y + rowHeight - 1, width(), y + rowHeight - 1);
             y += rowHeight;
         }
     }
 
     void mousePressEvent(QMouseEvent *event) override {
         int y = event->pos().y();
-        if (y < 30) return; // Header
+        if (y < 32) return;
 
-        int rowHeight = 40;
-        int index = (y - 30) / rowHeight;
+        int rowHeight = 36;
+        int index = (y - 32) / rowHeight;
         int layerIndex = m_project->layers().size() - 1 - index;
 
         if (layerIndex >= 0 && layerIndex < m_project->layers().size()) {
-            // Check if clicked on visibility icon
-            if (event->pos().x() > width() - 50 && event->pos().x() < width() - 30) {
+            if (event->pos().x() > width() - 65 && event->pos().x() < width() - 40) {
                 Layer *layer = m_project->layers()[layerIndex];
                 layer->setVisible(!layer->isVisible());
                 update();
@@ -101,123 +101,165 @@ protected:
     }
 
 private:
-    void updateLayers() {
-        setMinimumHeight(30 + m_project->layerCount() * 40 + 50);
+    Project *m_project;
+};
+
+// --- FrameGridWidget Implementation ---
+
+FrameGridWidget::FrameGridWidget(Project *project, QWidget *parent)
+    : QWidget(parent)
+    , m_project(project)
+    , m_onionFrames(2)        // Listed 1st in .h
+    , m_isDragging(false)     // Listed 2nd in .h
+    , m_onionSkinEnabled(false) // Listed 3rd in .h
+{
+    setMinimumHeight(200);
+    connect(project, &Project::currentFrameChanged, this, QOverload<>::of(&QWidget::update));
+    connect(project, &Project::layersChanged, this, QOverload<>::of(&QWidget::update));
+}
+
+QSize FrameGridWidget::sizeHint() const {
+    // Now valid because we included project.h
+    return QSize(m_project->totalFrames() * 16, 200);
+}
+
+void FrameGridWidget::setOnionSkin(bool enabled, int frames) {
+    m_onionSkinEnabled = enabled;
+    m_onionFrames = frames;
+    update();
+}
+
+void FrameGridWidget::paintEvent(QPaintEvent *event) {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.fillRect(rect(), QColor(20, 20, 20));
+
+    const int cellWidth = 16;
+    const int rowHeight = 36;
+    const int headerHeight = 32;
+
+    // Header
+    painter.fillRect(0, 0, width(), headerHeight, QColor(40, 40, 40));
+    painter.setPen(QColor(120, 120, 120));
+    painter.setFont(QFont("Arial", 8));
+
+    for (int frame = 1; frame <= m_project->totalFrames() && frame * cellWidth < width(); ++frame) {
+        int x = (frame - 1) * cellWidth;
+        if (frame % 5 == 0) {
+            painter.setPen(QColor(180, 180, 180));
+            painter.drawText(QRect(x, 0, cellWidth * 5, headerHeight), Qt::AlignCenter, QString::number(frame));
+            painter.setPen(QColor(120, 120, 120));
+        }
+        painter.setPen(QColor(30, 30, 30));
+        painter.drawLine(x, 0, x, height());
+    }
+
+    // Grid Content
+    auto layers = m_project->layers();
+    for (int i = layers.size() - 1; i >= 0; --i) {
+        Layer *layer = layers[i];
+        int y = headerHeight + (layers.size() - 1 - i) * rowHeight;
+
+        painter.fillRect(0, y, width(), rowHeight, QColor(30, 30, 30));
+
+        // Onion Skin
+        if (m_onionSkinEnabled && layer == m_project->currentLayer()) {
+            for (int offset = 1; offset <= m_onionFrames; ++offset) {
+                int prevFrame = m_project->currentFrame() - offset;
+                if (prevFrame >= 1 && layer->hasContentAtFrame(prevFrame)) {
+                    int x = (prevFrame - 1) * cellWidth;
+                    int alpha = 100 - (offset * 30);
+                    painter.fillRect(x + 2, y + 6, cellWidth - 4, rowHeight - 12, QColor(100, 200, 100, alpha));
+                }
+            }
+        }
+
+
+        // Frames
+        for (int frame = 1; frame <= m_project->totalFrames(); ++frame) {
+            int x = (frame - 1) * cellWidth;
+            QRect cellRect(x, y, cellWidth, rowHeight);
+
+            if (frame == m_project->currentFrame()) {
+                painter.fillRect(cellRect, QColor(42, 130, 218, 20));
+            }
+
+            if (layer->hasContentAtFrame(frame)) {
+                QColor col = layer->color();
+                painter.fillRect(cellRect.adjusted(2, 8, -2, -8), col);
+                painter.setPen(col.lighter(120));
+                painter.drawRect(cellRect.adjusted(2, 8, -2, -8));
+            }
+            painter.setPen(QColor(25, 25, 25));
+            painter.drawRect(cellRect);
+        }
+        painter.setPen(QColor(20, 20, 20));
+        painter.drawLine(0, y + rowHeight, width(), y + rowHeight);
+    }
+
+    // Playhead
+    int playheadX = (m_project->currentFrame() - 1) * cellWidth + cellWidth / 2;
+    painter.setPen(QPen(QColor(255, 60, 60), 2));
+    painter.drawLine(playheadX, headerHeight, playheadX, height());
+
+    QPolygon triangle;
+    triangle << QPoint(playheadX, headerHeight)
+             << QPoint(playheadX - 6, headerHeight - 10)
+             << QPoint(playheadX + 6, headerHeight - 10);
+    painter.setBrush(QColor(255, 60, 60));
+    painter.setPen(Qt::NoPen);
+    painter.drawPolygon(triangle);
+}
+
+void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
+    const int cellWidth = 16;
+    // Now valid because we included QMouseEvent header
+    int frame = (event->pos().x() / cellWidth) + 1;
+    if (frame >= 1 && frame <= m_project->totalFrames()) {
+        m_project->setCurrentFrame(frame);
+        m_isDragging = true;
+    }
+}
+void FrameGridWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (m_isDragging) {
+        const int cellWidth = 16;
+        int frame = (event->pos().x() / cellWidth) + 1;
+
+        // Use qBound to keep the frame within project limits
+        frame = qBound(1, frame, m_project->totalFrames());
+
+        if (frame != m_project->currentFrame()) {
+            m_project->setCurrentFrame(frame);
+            update();
+        }
+    }
+}
+
+void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
+    QMenu menu(this);
+    QAction *add10 = menu.addAction("Add 10 Frames");
+    QAction *add24 = menu.addAction("Add 24 Frames");
+
+    QAction *selected = menu.exec(event->globalPos());
+    if (selected) {
+        if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
+        else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+
+        // This is the magic line:
+        updateGeometry();
+        // This forces the ScrollArea to re-read sizeHint() and update scrollbars
+
         update();
     }
+}
 
-    Project *m_project;
-};
 
-// Custom widget for frame grid
-class FrameGridWidget : public QWidget {
-public:
-    FrameGridWidget(Project *project, QWidget *parent = nullptr)
-        : QWidget(parent), m_project(project) {
-        setMinimumHeight(200);
+void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
+    Q_UNUSED(event);
+    m_isDragging = false;
+}
 
-        connect(project, &Project::currentFrameChanged, this, QOverload<>::of(&QWidget::update));
-        connect(project, &Project::layersChanged, this, QOverload<>::of(&QWidget::update));
-    }
-
-protected:
-    void paintEvent(QPaintEvent *event) override {
-        Q_UNUSED(event);
-        QPainter painter(this);
-        painter.fillRect(rect(), QColor(26, 26, 26));
-
-        const int cellWidth = 20;
-        const int rowHeight = 40;
-        const int headerHeight = 30;
-
-        // Draw frame numbers
-        painter.fillRect(0, 0, width(), headerHeight, QColor(58, 58, 58));
-        painter.setPen(QColor(150, 150, 150));
-        painter.setFont(QFont("Arial", 9));
-
-        for (int frame = 1; frame <= m_project->totalFrames() && frame * cellWidth < width(); ++frame) {
-            int x = (frame - 1) * cellWidth;
-
-            if (frame % 5 == 0) {
-                painter.setPen(QColor(200, 200, 200));
-                painter.drawText(QRect(x, 0, cellWidth * 5, headerHeight),
-                                 Qt::AlignCenter, QString::number(frame));
-                painter.setPen(QColor(150, 150, 150));
-            }
-
-            // Frame divider
-            painter.setPen(QColor(40, 40, 40));
-            painter.drawLine(x, headerHeight, x, height());
-        }
-
-        // Draw layers
-        auto layers = m_project->layers();
-        for (int i = layers.size() - 1; i >= 0; --i) {
-            Layer *layer = layers[i];
-            int y = headerHeight + (layers.size() - 1 - i) * rowHeight;
-
-            // Row background
-            painter.fillRect(0, y, width(), rowHeight, QColor(45, 45, 45));
-
-            // Draw cells with content
-            for (int frame = 1; frame <= m_project->totalFrames(); ++frame) {
-                int x = (frame - 1) * cellWidth;
-                QRect cellRect(x, y, cellWidth, rowHeight);
-
-                // Highlight current frame
-                if (frame == m_project->currentFrame()) {
-                    painter.fillRect(cellRect, QColor(42, 130, 218, 30));
-                }
-
-                // Draw content indicator
-                if (layer->hasContentAtFrame(frame)) {
-                    painter.fillRect(cellRect.adjusted(3, 8, -3, -8), layer->color());
-                }
-
-                // Cell border
-                painter.setPen(QColor(40, 40, 40));
-                painter.drawRect(cellRect);
-            }
-
-            // Row divider
-            painter.setPen(QColor(0, 0, 0));
-            painter.drawLine(0, y + rowHeight, width(), y + rowHeight);
-        }
-
-        // Draw playhead
-        int playheadX = (m_project->currentFrame() - 1) * cellWidth + cellWidth / 2;
-        painter.setPen(QPen(QColor(255, 0, 0), 2));
-        painter.drawLine(playheadX, 0, playheadX, height());
-
-        // Playhead triangle
-        QPolygon triangle;
-        triangle << QPoint(playheadX, 0)
-                 << QPoint(playheadX - 6, 10)
-                 << QPoint(playheadX + 6, 10);
-        painter.setBrush(QColor(255, 0, 0));
-        painter.drawPolygon(triangle);
-    }
-
-    void mousePressEvent(QMouseEvent *event) override {
-        const int cellWidth = 20;
-        const int headerHeight = 30;
-
-        if (event->pos().y() < headerHeight) {
-            // Clicked on header - seek to frame
-            int frame = (event->pos().x() / cellWidth) + 1;
-            if (frame >= 1 && frame <= m_project->totalFrames()) {
-                m_project->setCurrentFrame(frame);
-            }
-        }
-    }
-
-    QSize sizeHint() const override {
-        return QSize(m_project->totalFrames() * 20, 200);
-    }
-
-private:
-    Project *m_project;
-};
+// --- TimelineWidget Implementation ---
 
 TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     : QWidget(parent)
@@ -226,9 +268,7 @@ TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     , m_playbackTimerId(-1)
 {
     setupUI();
-
-    connect(m_project, &Project::currentFrameChanged,
-            this, &TimelineWidget::updateFrameDisplay);
+    connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::updateFrameDisplay);
 }
 
 void TimelineWidget::setupUI()
@@ -237,47 +277,28 @@ void TimelineWidget::setupUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // Control bar
+    // Control Bar
     QWidget *controlBar = new QWidget();
-    controlBar->setStyleSheet("background-color: #3a3a3a; border-bottom: 1px solid #000;");
-    controlBar->setFixedHeight(50);
+    controlBar->setStyleSheet("background-color: #282828; border-bottom: 1px solid #000;");
+    controlBar->setFixedHeight(48);
 
     QHBoxLayout *controlLayout = new QHBoxLayout(controlBar);
-    controlLayout->setContentsMargins(12, 8, 12, 8);
+    controlLayout->setContentsMargins(12, 6, 12, 6);
 
-    // Playback buttons
     auto createPlayButton = [](const QString &text, const QString &tooltip) {
         QPushButton *btn = new QPushButton(text);
-        btn->setFixedSize(36, 36);
+        btn->setFixedSize(34, 34);
         btn->setToolTip(tooltip);
         btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(
-            "QPushButton {"
-            "   background-color: #2d2d2d;"
-            "   border: 2px solid #555;"
-            "   border-radius: 6px;"
-            "   color: white;"
-            "   font-size: 16px;"
-            "   font-weight: bold;"
-            "}"
-            "QPushButton:hover {"
-            "   background-color: #3a3a3a;"
-            "   border-color: #666;"
-            "}"
-            "QPushButton:pressed {"
-            "   background-color: #2a82da;"
-            "}"
-            );
+        btn->setStyleSheet("QPushButton { background-color: #1e1e1e; border: none; border-radius: 4px; color: white; font-size: 14px; } QPushButton:hover { background-color: #2a82da; } QPushButton:pressed { background-color: #1e60a0; }");
         return btn;
     };
 
     QPushButton *firstBtn = createPlayButton("⏮", "First Frame");
-    connect(firstBtn, &QPushButton::clicked, this, [this]() {
-        m_project->setCurrentFrame(1);
-    });
+    connect(firstBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(1); });
 
     QPushButton *prevBtn = createPlayButton("◀", "Previous Frame");
-    connect(prevBtn, &QPushButton::clicked, this, [this]() {
+    connect(prevBtn, &QPushButton::clicked, [this]() {
         int prev = m_project->currentFrame() - 1;
         if (prev >= 1) m_project->setCurrentFrame(prev);
     });
@@ -286,15 +307,13 @@ void TimelineWidget::setupUI()
     connect(m_playPauseBtn, &QPushButton::clicked, this, &TimelineWidget::onPlayPauseClicked);
 
     QPushButton *nextBtn = createPlayButton("▶", "Next Frame");
-    connect(nextBtn, &QPushButton::clicked, this, [this]() {
+    connect(nextBtn, &QPushButton::clicked, [this]() {
         int next = m_project->currentFrame() + 1;
         if (next <= m_project->totalFrames()) m_project->setCurrentFrame(next);
     });
 
     QPushButton *lastBtn = createPlayButton("⏭", "Last Frame");
-    connect(lastBtn, &QPushButton::clicked, this, [this]() {
-        m_project->setCurrentFrame(m_project->totalFrames());
-    });
+    connect(lastBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(m_project->totalFrames()); });
 
     m_stopBtn = createPlayButton("⏹", "Stop");
     connect(m_stopBtn, &QPushButton::clicked, this, &TimelineWidget::onStopClicked);
@@ -305,76 +324,44 @@ void TimelineWidget::setupUI()
     controlLayout->addWidget(nextBtn);
     controlLayout->addWidget(lastBtn);
     controlLayout->addWidget(m_stopBtn);
-
     controlLayout->addSpacing(16);
 
-    // Frame counter
+    // Frame Label
     m_frameLabel = new QLabel("1 / 100");
-    m_frameLabel->setStyleSheet(
-        "color: #2a82da; "
-        "font-family: 'Courier New', monospace; "
-        "font-size: 14px; "
-        "font-weight: bold; "
-        "background-color: #2d2d2d; "
-        "padding: 6px 12px; "
-        "border: 2px solid #555; "
-        "border-radius: 6px;"
-        );
-    m_frameLabel->setMinimumWidth(100);
+    m_frameLabel->setStyleSheet("color: #2a82da; font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; background-color: #1e1e1e; padding: 6px 12px; border-radius: 4px;");
+    m_frameLabel->setMinimumWidth(90);
     m_frameLabel->setAlignment(Qt::AlignCenter);
     controlLayout->addWidget(m_frameLabel);
 
-    controlLayout->addSpacing(16);
-
-    // FPS label
+    controlLayout->addSpacing(12);
     QLabel *fpsLabel = new QLabel(QString("@ %1 FPS").arg(m_project->fps()));
     fpsLabel->setStyleSheet("color: #888; font-size: 11px;");
     controlLayout->addWidget(fpsLabel);
-
     controlLayout->addStretch();
 
-    // Add frames button
-    QPushButton *addFramesBtn = new QPushButton("+ Add 50 Frames");
-    addFramesBtn->setStyleSheet(
-        "QPushButton {"
-        "   background-color: #2a82da;"
-        "   border: none;"
-        "   border-radius: 6px;"
-        "   color: white;"
-        "   padding: 8px 16px;"
-        "   font-weight: bold;"
-        "}"
-        "QPushButton:hover {"
-        "   background-color: #3a92ea;"
-        "}"
-        );
-    connect(addFramesBtn, &QPushButton::clicked, this, [this]() {
-        m_project->setTotalFrames(m_project->totalFrames() + 50);
-        updateFrameDisplay();
-    });
-    controlLayout->addWidget(addFramesBtn);
+    // Onion Skin
+    QPushButton *onionBtn = new QPushButton("◉ Onion Skin");
+    onionBtn->setCheckable(true);
+    onionBtn->setStyleSheet("QPushButton { background-color: #1e1e1e; border: none; border-radius: 4px; color: #aaa; padding: 6px 12px; font-size: 11px; } QPushButton:checked { background-color: #2a82da; color: white; }");
 
+    connect(onionBtn, &QPushButton::toggled, this, [this](bool checked) {
+        FrameGridWidget *grid = findChild<FrameGridWidget*>();
+        if (grid) grid->setOnionSkin(checked, 2);
+    });
+    controlLayout->addWidget(onionBtn);
     mainLayout->addWidget(controlBar);
 
-    // Timeline content
+    // Splitter Area
     QSplitter *splitter = new QSplitter(Qt::Horizontal);
-    splitter->setStyleSheet("QSplitter::handle { background-color: #000; width: 2px; }");
+    splitter->setStyleSheet("QSplitter::handle { background-color: #000; width: 1px; }");
 
-    // Layer list
     LayerListWidget *layerList = new LayerListWidget(m_project);
     splitter->addWidget(layerList);
 
-    // Frame grid (scrollable)
     QScrollArea *scrollArea = new QScrollArea();
     scrollArea->setWidgetResizable(false);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scrollArea->setStyleSheet(
-        "QScrollArea { background-color: #1a1a1a; border: none; }"
-        "QScrollBar:horizontal { background: #2d2d2d; height: 12px; }"
-        "QScrollBar::handle:horizontal { background: #555; border-radius: 6px; min-width: 20px; }"
-        "QScrollBar::handle:horizontal:hover { background: #666; }"
-        );
+    scrollArea->setStyleSheet("QScrollArea { background-color: #1a1a1a; border: none; } QScrollBar:horizontal { background: #1e1e1e; height: 10px; } QScrollBar::handle:horizontal { background: #3a3a3a; border-radius: 5px; }");
 
     FrameGridWidget *frameGrid = new FrameGridWidget(m_project);
     scrollArea->setWidget(frameGrid);
@@ -382,77 +369,48 @@ void TimelineWidget::setupUI()
     splitter->addWidget(scrollArea);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
-
     mainLayout->addWidget(splitter);
 
     updateFrameDisplay();
 }
 
-void TimelineWidget::onPlayPauseClicked()
-{
-    if (m_isPlaying) {
-        stopPlayback();
-    } else {
-        startPlayback();
-    }
+void TimelineWidget::onPlayPauseClicked() {
+    if (m_isPlaying) stopPlayback();
+    else startPlayback();
 }
 
-void TimelineWidget::onStopClicked()
-{
+void TimelineWidget::onStopClicked() {
     stopPlayback();
     m_project->setCurrentFrame(1);
 }
 
-void TimelineWidget::onFrameChanged(int frame)
-{
+void TimelineWidget::onFrameChanged(int frame) {
     m_project->setCurrentFrame(frame);
 }
 
-void TimelineWidget::updateFrameDisplay()
-{
+void TimelineWidget::updateFrameDisplay() {
     int current = m_project->currentFrame();
     int total = m_project->totalFrames();
-
     m_frameLabel->setText(QString("%1 / %2").arg(current).arg(total));
 }
 
-void TimelineWidget::startPlayback()
-{
+void TimelineWidget::startPlayback() {
     m_isPlaying = true;
     m_playPauseBtn->setText("⏸");
-    m_playPauseBtn->setStyleSheet(m_playPauseBtn->styleSheet() + "QPushButton { background-color: #2a82da; }");
-
     int interval = 1000 / m_project->fps();
     m_playbackTimerId = startTimer(interval);
 }
 
-void TimelineWidget::stopPlayback()
-{
+void TimelineWidget::stopPlayback() {
     m_isPlaying = false;
     m_playPauseBtn->setText("▶");
-    m_playPauseBtn->setStyleSheet(
-        "QPushButton {"
-        "   background-color: #2d2d2d;"
-        "   border: 2px solid #555;"
-        "   border-radius: 6px;"
-        "   color: white;"
-        "   font-size: 16px;"
-        "   font-weight: bold;"
-        "}"
-        "QPushButton:hover {"
-        "   background-color: #3a3a3a;"
-        "   border-color: #666;"
-        "}"
-        );
-
     if (m_playbackTimerId != -1) {
         killTimer(m_playbackTimerId);
         m_playbackTimerId = -1;
     }
 }
 
-void TimelineWidget::timerEvent(QTimerEvent *event)
-{
+void TimelineWidget::timerEvent(QTimerEvent *event) {
     if (event->timerId() == m_playbackTimerId) {
         int nextFrame = m_project->currentFrame() + 1;
         if (nextFrame > m_project->totalFrames()) {
@@ -463,3 +421,12 @@ void TimelineWidget::timerEvent(QTimerEvent *event)
         }
     }
 }
+void TimelineWidget::setOnionSkinEnabled(bool enabled) {
+    m_onionSkinEnabled = enabled;
+    // Find the grid child and update it
+    FrameGridWidget *grid = findChild<FrameGridWidget*>();
+    if (grid) {
+        grid->setOnionSkin(enabled, 3); // Default to 3 frames
+    }
+}
+
