@@ -37,6 +37,7 @@ private slots:
     void onImportClicked();
     void onDeleteClicked();
     void showContextMenu(const QPoint &pos);
+    void startDrag(QListWidgetItem *item);
 
 private:
     void setupUI();
