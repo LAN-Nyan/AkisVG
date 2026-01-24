@@ -147,6 +147,39 @@ void Project::moveLayer(int fromIndex, int toIndex)
     }
 }
 
+void Project::addLayerSilent(Layer *layer)
+{
+    if (!layer) return;
+
+    // Safety check: is it already in the list?
+    if (m_layers.contains(layer)) return;
+
+    m_layers.append(layer);
+    // Note: We emit manually in the Command to avoid recursion
+}
+
+void Project::removeLayerSilent(int index)
+{
+    // SIGABRT prevention: Check bounds BEFORE removal
+    if (index >= 0 && index < m_layers.size()) {
+        m_layers.removeAt(index);
+
+        // Update current index safely
+        if (m_currentLayerIndex >= m_layers.size()) {
+            m_currentLayerIndex = qMax(0, m_layers.size() - 1);
+        }
+    }
+}
+
+
+void Project::insertLayerSilent(int index, Layer *layer)
+{
+    if (layer && index >= 0 && index <= m_layers.size()) {
+        m_layers.insert(index, layer);
+        emit layersChanged();
+    }
+}
+
 Layer* Project::layerAt(int index) const
 {
     if (index >= 0 && index < m_layers.size()) {
