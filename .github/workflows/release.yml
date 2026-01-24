@@ -1,0 +1,90 @@
+name: Build and Release v0.1
+
+on:
+  push:
+    tags:
+      - 'v0.1' # Triggers when you push a tag named v0.1
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: LuminaStudio-Linux
+            asset_name: LuminaStudio-Linux.tar.gz
+          - os: windows-latest
+            artifact_name: LuminaStudio-Windows
+            asset_name: LuminaStudio-Windows.zip
+          - os: macos-latest
+            artifact_name: LuminaStudio-Mac
+            asset_name: LuminaStudio-Mac.dmg
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.5.*' # Match your local Qt version
+          host: ${{ matrix.os == 'windows-latest' && 'windows' || matrix.os == 'macos-latest' && 'mac' || 'linux' }}
+          modules: 'qtmultimedia qtsvg'
+
+      - name: Install Dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
+
+      - name: Setup Ninja (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: anaerobic/setup-ninja@v1
+
+      - name: Configure and Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd build
+          windeployqt --release LuminaStudio.exe
+          compress-archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
+
+      - name: Package (Linux/Mac)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd build
+          tar -czvf ../${{ matrix.asset_name }} .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            LuminaStudio-Linux/LuminaStudio-Linux.tar.gz
+            LuminaStudio-Windows/LuminaStudio-Windows.zip
+            LuminaStudio-Mac/LuminaStudio-Mac.dmg
+          tag_name: v0.1
+          name: Release v0.1
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
