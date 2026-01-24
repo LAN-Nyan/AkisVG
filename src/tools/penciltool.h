@@ -21,4 +21,3 @@ private:
 };
 
 #endif // PENCILTOOL_H
-
