@@ -63,32 +63,33 @@ void ColorWheel::paintEvent(QPaintEvent *event)
         painter.fillPath(path, hueColor);
     }
 
-    // Draw SV triangle
+    // Draw SV triangle - FIXED COLORS
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    qreal angle = hue * 2 * M_PI;
-    QPointF p1 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    // Triangle points
+    qreal angle = hue * 2 * M_PI - M_PI / 2;  // Start at top
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
     angle += 2 * M_PI / 3;
-    QPointF p2 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
     angle += 2 * M_PI / 3;
-    QPointF p3 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
 
-    // Draw gradient triangle
-    QLinearGradient satGradient(p2, p3);
-    satGradient.setColorAt(0, Qt::white);
-    satGradient.setColorAt(1, QColor::fromHsvF(hue, 1.0, 1.0));
-
+    // Draw triangle with gradients
     QPainterPath triangle;
-    triangle.moveTo(p1);
-    triangle.lineTo(p2);
-    triangle.lineTo(p3);
+    triangle.moveTo(pWhite);
+    triangle.lineTo(pBlack);
+    triangle.lineTo(pColor);
     triangle.closeSubpath();
 
+    // Create gradient from white to pure color
+    QLinearGradient satGradient(pWhite, pColor);
+    satGradient.setColorAt(0, Qt::white);
+    satGradient.setColorAt(1, QColor::fromHsvF(hue, 1.0, 1.0));
     painter.fillPath(triangle, satGradient);
 
     // Overlay black gradient for value
-    QLinearGradient valGradient(p1, (p2 + p3) / 2);
+    QLinearGradient valGradient((pWhite + pColor) / 2, pBlack);
     valGradient.setColorAt(0, QColor(0, 0, 0, 0));
     valGradient.setColorAt(1, QColor(0, 0, 0, 255));
     painter.fillPath(triangle, valGradient);
@@ -150,9 +151,9 @@ void ColorWheel::updateColor(const QPoint &pos)
     qreal dist = QLineF(m_center, pos).length();
 
     if (m_isSelectingHue) {
-        qreal angle = qAtan2(delta.y(), delta.x());
+        qreal angle = qAtan2(delta.y(), delta.x()) + M_PI / 2;  // Adjust for top start
+        if (angle < 0) angle += 2 * M_PI;
         qreal hue = angle / (2 * M_PI);
-        if (hue < 0) hue += 1.0;
 
         m_currentColor.setHsvF(hue, m_currentColor.saturationF(), m_currentColor.valueF());
         emit colorChanged(m_currentColor);
@@ -161,27 +162,44 @@ void ColorWheel::updateColor(const QPoint &pos)
         qreal hue = m_currentColor.hueF();
         if (hue < 0) hue = 0;
 
-        qreal angle = hue * 2 * M_PI;
-        QPointF p1 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95; // Black
+        // Triangle points
+        qreal angle = hue * 2 * M_PI - M_PI / 2;
+        QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
         angle += 2 * M_PI / 3;
-        QPointF p2 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95; // White
+        QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
         angle += 2 * M_PI / 3;
-        QPointF p3 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95; // Pure Color
+        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
 
-        // --- THE FIX ---
-        // Use vector projections to find Saturation and Value relative to the triangle's orientation
-        QLineF baseLine(p2, p3);       // Line from White to Pure Hue
-        QLineF valLine(p1, (p2+p3)/2); // Line from Black to the center of the White-Hue edge
+        // Convert to barycentric coordinates
+        QPointF v0 = pColor - pWhite;
+        QPointF v1 = pBlack - pWhite;
+        QPointF v2 = pos - pWhite;
 
-        // Calculate Value: 0 at p1 (Black), 1 at the p2-p3 edge
-        // We project the mouse position onto the line that bisects the triangle from the black point
-        qreal val = 1.0 - qBound(0.0, QLineF(pos, (p2+p3)/2).length() / valLine.length(), 1.0);
+        qreal dot00 = QPointF::dotProduct(v0, v0);
+        qreal dot01 = QPointF::dotProduct(v0, v1);
+        qreal dot02 = QPointF::dotProduct(v0, v2);
+        qreal dot11 = QPointF::dotProduct(v1, v1);
+        qreal dot12 = QPointF::dotProduct(v1, v2);
 
-        // Calculate Saturation: 0 at p2 (White), 1 at p3 (Pure Hue)
-        // We project the mouse position onto the baseline
-        qreal sat = qBound(0.0, QLineF(p2, pos).length() / baseLine.length(), 1.0);
+        qreal invDenom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+        qreal u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+        qreal v = (dot00 * dot12 - dot01 * dot02) * invDenom;
 
-        m_currentColor.setHsvF(hue, sat, val);
+        // Clamp to triangle
+        if (u < 0) u = 0;
+        if (v < 0) v = 0;
+        if (u + v > 1) {
+            qreal total = u + v;
+            u /= total;
+            v /= total;
+        }
+
+        // u = distance along white->color (saturation)
+        // v = distance toward black (reduces value)
+        qreal saturation = u;
+        qreal value = 1.0 - v;
+
+        m_currentColor.setHsvF(hue, saturation, value);
         emit colorChanged(m_currentColor);
         update();
     }
@@ -199,19 +217,18 @@ QPointF ColorWheel::svToPoint(qreal saturation, qreal value) const
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    qreal angle = hue * 2 * M_PI;
-    QPointF p1 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
     angle += 2 * M_PI / 3;
-    QPointF p2 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
     angle += 2 * M_PI / 3;
-    QPointF p3 = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.95;
+    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
 
-    QPointF whitePoint = p2;
-    QPointF colorPoint = p3;
-    QPointF blackPoint = p1;
+    // Point along white->color edge (saturation)
+    QPointF satPoint = pWhite + (pColor - pWhite) * saturation;
 
-    QPointF satPoint = whitePoint + (colorPoint - whitePoint) * saturation;
-    QPointF finalPoint = satPoint + (blackPoint - satPoint) * (1.0 - value);
+    // Move toward black based on value
+    QPointF finalPoint = satPoint + (pBlack - satPoint) * (1.0 - value);
 
     return finalPoint;
 }
