@@ -30,6 +30,10 @@ public:
     void setHeight(int height);
     void setFps(int fps);
 
+    void addLayerSilent(Layer *layer);
+    void removeLayerSilent(int index);
+    void insertLayerSilent(int index, Layer *layer);
+
     // Frame management
     int currentFrame() const { return m_currentFrame; }
     void setCurrentFrame(int frame);
