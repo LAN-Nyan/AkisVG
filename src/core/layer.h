@@ -10,6 +10,13 @@
 class Frame;
 class VectorObject;
 
+enum class LayerType {
+    Art,        // Normal drawing layer
+    Background, // Static background, typically locked
+    Audio,      // Audio waveform layer
+    Reference   // Reference layer for tracing, non-exportable
+};
+
 class Layer : public QObject
 {
     Q_OBJECT
@@ -17,23 +24,28 @@ class Layer : public QObject
 public:
     explicit Layer(const QString &name, QObject *parent = nullptr);
     ~Layer();
-    
+
     // Properties
     QString name() const { return m_name; }
     void setName(const QString &name);
-    
+
     bool isVisible() const { return m_visible; }
     void setVisible(bool visible);
-    
+
     bool isLocked() const { return m_locked; }
     void setLocked(bool locked);
-    
+
     QColor color() const { return m_color; }
     void setColor(const QColor &color);
-    
+
     qreal opacity() const { return m_opacity; }
     void setOpacity(qreal opacity);
-    
+
+    // Layer type
+    LayerType layerType() const { return m_layerType; }
+    void setLayerType(LayerType type);
+    QString layerTypeString() const;
+
     // Frame data management
     QList<VectorObject*> objectsAtFrame(int frameNumber) const;
     void addObjectToFrame(int frameNumber, VectorObject *obj);
@@ -45,6 +57,7 @@ signals:
     void modified();
     void visibilityChanged(bool visible);
     void lockedChanged(bool locked);
+    void typeChanged(LayerType type);
 
 private:
     QString m_name;
@@ -52,7 +65,8 @@ private:
     bool m_locked;
     QColor m_color;
     qreal m_opacity;
-    
+    LayerType m_layerType;
+
     // Frame data: frameNumber -> list of objects
     QMap<int, QList<VectorObject*>> m_frames;
 };
