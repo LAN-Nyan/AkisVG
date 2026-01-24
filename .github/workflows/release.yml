@@ -1,9 +1,12 @@
 name: Build and Release v0.1
-# plaz work!
+
 on:
   push:
-    tags:
-      - 'v0.1' # Triggers when you push a tag named v0.1
+    branches:
+      - main  # branch
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
