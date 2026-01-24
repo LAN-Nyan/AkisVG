@@ -15,9 +15,11 @@ public:
     void zoomIn();
     void zoomOut();
     void resetZoom();
-    void fitInView();
+    void fitCanvas();
 
 protected:
+    void drawBackground(QPainter *painter, const QRectF &rect) override;
+    void keyReleaseEvent(QKeyEvent *event) override; // To fix the spacebar panning
     void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
