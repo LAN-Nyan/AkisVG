@@ -8,6 +8,7 @@ Layer::Layer(const QString &name, QObject *parent)
     , m_locked(false)
     , m_color(QColor(59, 130, 246)) // Blue
     , m_opacity(1.0)
+    , m_layerType(LayerType::Art)
 {
 }
 
@@ -61,6 +62,37 @@ void Layer::setOpacity(qreal opacity)
     }
 }
 
+void Layer::setLayerType(LayerType type)
+{
+    if (m_layerType != type) {
+        m_layerType = type;
+
+        // Auto-lock background layers
+        if (type == LayerType::Background) {
+            setLocked(true);
+        }
+
+        // Set reference layers to 50% opacity
+        if (type == LayerType::Reference) {
+            setOpacity(0.5);
+        }
+
+        emit typeChanged(type);
+        emit modified();
+    }
+}
+
+QString Layer::layerTypeString() const
+{
+    switch (m_layerType) {
+    case LayerType::Art: return "Art";
+    case LayerType::Background: return "Background";
+    case LayerType::Audio: return "Audio";
+    case LayerType::Reference: return "Reference";
+    }
+    return "Unknown";
+}
+
 QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
 {
     return m_frames.value(frameNumber, QList<VectorObject*>());
@@ -98,3 +130,4 @@ bool Layer::hasContentAtFrame(int frameNumber) const
 {
     return m_frames.contains(frameNumber) && !m_frames[frameNumber].isEmpty();
 }
+
