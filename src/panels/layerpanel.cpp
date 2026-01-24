@@ -1,6 +1,7 @@
 #include "layerpanel.h"
 #include "core/project.h"
 #include "core/layer.h"
+#include "core/commands.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -10,18 +11,57 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
+#include <QDragEnterEvent>
+#include <QMimeData>
+#include <QUrl>
 
-LayerPanel::LayerPanel(Project *project, QWidget *parent)
-    : QWidget(parent)
-    , m_project(project)
-{
-    setupUI();
-    updateLayerList();
-
-    connect(m_project, &Project::layersChanged, this, &LayerPanel::updateLayerList);
-    connect(m_project, &Project::currentLayerChanged, this, &LayerPanel::updateLayerList);
+void LayerPanel::dragEnterEvent(QDragEnterEvent *event) {
+    // Only accept if it's a file (URL)
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
 }
 
+void LayerPanel::dropEvent(QDropEvent *event) {
+    const QMimeData* mimeData = event->mimeData();
+
+    if (mimeData->hasUrls()) {
+        QString filePath = mimeData->urls().at(0).toLocalFile();
+
+        // Simple check for audio extensions
+        if (filePath.endsWith(".mp3") || filePath.endsWith(".wav") || filePath.endsWith(".ogg")) {
+
+            // Find which layer item we dropped it on
+            QWidget* child = childAt(event->position().toPoint());
+            // You'll need logic here to find the actual Layer* object associated with that widget
+
+            qDebug() << "Audio file dropped:" << filePath;
+
+            // TODO: Update the Layer's audio path and trigger waveform generation
+        }
+    }
+}
+
+LayerPanel::LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent)
+    : QWidget(parent)
+    , m_project(project)
+    , m_undoStack(undoStack)
+{
+    // SAFETY CHECK: Ensure undoStack is valid
+    if (!m_undoStack) {
+        qWarning("LayerPanel received null UndoStack! App will crash on action.");
+    }
+
+    setupUI();
+    rebuildLayerList(); // Initial build
+
+    // CRITICAL FIX: Split connections to avoid crashing
+    // Only rebuild the list if layers are actually added/removed/reordered
+    connect(m_project, &Project::layersChanged, this, &LayerPanel::rebuildLayerList, Qt::QueuedConnection);
+
+    // If just the SELECTION changes, do NOT destroy the list items. Just update them.
+    connect(m_project, &Project::currentLayerChanged, this, &LayerPanel::updateSelection);
+}
 void LayerPanel::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
@@ -161,6 +201,26 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
     colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layer->color().name()));
     layout->addWidget(colorLabel);
 
+    // Corrected logic for your switch statement
+    QString layerColor;
+    switch(layer->layerType()) { // Assuming type() returns your LayerType enum
+    case LayerType::Audio:
+        layerColor = "#9b59b6"; break; // Purple
+    case LayerType::Art:
+        layerColor = "#3498db"; break; // Blue
+    case LayerType::Reference:
+        layerColor = "#e74c3c"; break; // Red
+    default:
+        layerColor = "#2ecc71"; break; // Green
+    }
+
+    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layerColor));
+
+    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;")
+                                  .arg(layerColor));
+
+    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layerColor));
+
     // Layer name
     QLabel *nameLabel = new QLabel(layer->name());
     nameLabel->setStyleSheet("color: white; font-size: 12px; font-weight: 500;");
@@ -185,7 +245,7 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
 
     connect(visBtn, &QPushButton::clicked, this, [this, layer, index]() {
         layer->setVisible(!layer->isVisible());
-        updateLayerList();
+        rebuildLayerList();
         // Force canvas refresh when visibility changes
         emit layer->visibilityChanged(layer->isVisible());
     });
@@ -210,7 +270,7 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
 
     connect(lockBtn, &QPushButton::clicked, this, [this, layer, index]() {
         layer->setLocked(!layer->isLocked());
-        updateLayerList();
+        rebuildLayerList();
     });
     layout->addWidget(lockBtn);
 
@@ -222,29 +282,53 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
     return itemWidget;
 }
 
-void LayerPanel::updateLayerList()
+// Rename 'updateLayerList' to 'rebuildLayerList'
+void LayerPanel::rebuildLayerList()
 {
-    m_layerList->clear();
+    m_layerList->clear(); // Only safe to call when NOT triggered by a list item click
 
-    // Add layers in reverse order (top layer first in UI)
     auto layers = m_project->layers();
     for (int i = layers.size() - 1; i >= 0; --i) {
         Layer *layer = layers[i];
 
         QListWidgetItem *item = new QListWidgetItem(m_layerList);
         item->setSizeHint(QSize(0, 48));
-        item->setData(Qt::UserRole, i); // Store layer index
+        item->setData(Qt::UserRole, i);
 
         QWidget *itemWidget = createLayerItem(layer, i);
         m_layerList->setItemWidget(item, itemWidget);
+    }
 
-        // Highlight current layer
-        if (m_project->currentLayer() == layer) {
+    updateSelection(); // Apply selection after rebuilding
+    updateButtons();   // Update button states
+}
+
+// NEW FUNCTION: Updates visual state without deleting widgets
+void LayerPanel::updateSelection()
+{
+    // Block signals to prevent infinite loops during selection updates
+    const QSignalBlocker blocker(m_layerList);
+
+    Layer* current = m_project->currentLayer();
+
+    for(int i = 0; i < m_layerList->count(); ++i) {
+        QListWidgetItem* item = m_layerList->item(i);
+        int layerIndex = item->data(Qt::UserRole).toInt();
+        Layer* layer = m_project->layerAt(layerIndex);
+
+        if (layer == current) {
             item->setSelected(true);
+            // Ensure the item is visible in scroll area
+            m_layerList->scrollToItem(item);
+        } else {
+            item->setSelected(false);
         }
     }
 
-    // Update button states
+    updateButtons();
+}
+
+void LayerPanel::updateButtons() {
     bool hasLayers = m_project->layerCount() > 0;
     bool canDelete = m_project->layerCount() > 1;
 
@@ -253,6 +337,7 @@ void LayerPanel::updateLayerList()
     m_moveUpButton->setEnabled(hasLayers);
     m_moveDownButton->setEnabled(hasLayers);
 }
+
 
 void LayerPanel::onLayerItemClicked(QListWidgetItem *item)
 {
@@ -269,7 +354,7 @@ void LayerPanel::onAddLayerClicked()
                                          &ok);
 
     if (ok && !name.isEmpty()) {
-        m_project->addLayer(name);
+        m_undoStack->push(new AddLayerCommand(m_project, name));
     }
 }
 
@@ -290,7 +375,7 @@ void LayerPanel::onDeleteLayerClicked()
                                                               QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
-        m_project->removeLayer(currentIndex);
+        m_undoStack->push(new RemoveLayerCommand(m_project, currentIndex));
     }
 }
 
@@ -348,6 +433,24 @@ void LayerPanel::showContextMenu(const QPoint &pos)
 
     QAction *renameAct = menu.addAction("Rename Layer");
     QAction *duplicateAct = menu.addAction("Duplicate Layer");
+
+    menu.addSeparator();
+
+    // Layer type submenu
+    QMenu *typeMenu = menu.addMenu("Change Layer Type");
+    QAction *artAct = typeMenu->addAction("🎨 Art Layer");
+    QAction *bgAct = typeMenu->addAction("🖼️ Background Layer");
+    QAction *audioAct = typeMenu->addAction("🎵 Audio Layer");
+    QAction *refAct = typeMenu->addAction("📐 Reference Layer");
+
+    // Mark current type
+    switch (layer->layerType()) {
+    case LayerType::Art: artAct->setCheckable(true); artAct->setChecked(true); break;
+    case LayerType::Background: bgAct->setCheckable(true); bgAct->setChecked(true); break;
+    case LayerType::Audio: audioAct->setCheckable(true); audioAct->setChecked(true); break;
+    case LayerType::Reference: refAct->setCheckable(true); refAct->setChecked(true); break;
+    }
+
     menu.addSeparator();
     QAction *deleteAct = menu.addAction("Delete Layer");
 
@@ -359,11 +462,23 @@ void LayerPanel::showContextMenu(const QPoint &pos)
                                              QLineEdit::Normal, layer->name(), &ok);
         if (ok && !name.isEmpty()) {
             layer->setName(name);
-            updateLayerList();
+            rebuildLayerList();
         }
     } else if (selected == duplicateAct) {
         onDuplicateLayerClicked();
     } else if (selected == deleteAct) {
         onDeleteLayerClicked();
+    } else if (selected == artAct) {
+        layer->setLayerType(LayerType::Art);
+        rebuildLayerList();
+    } else if (selected == bgAct) {
+        layer->setLayerType(LayerType::Background);
+        rebuildLayerList();
+    } else if (selected == audioAct) {
+        layer->setLayerType(LayerType::Audio);
+        rebuildLayerList();
+    } else if (selected == refAct) {
+        layer->setLayerType(LayerType::Reference);
+        rebuildLayerList();
     }
 }
