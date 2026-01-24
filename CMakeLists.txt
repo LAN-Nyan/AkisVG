@@ -4,37 +4,26 @@ project(LuminaStudio VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Qt configuration
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Find Qt6 packages
+# Find Qt6 packages - Added Multimedia here
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Widgets
     Gui
     Svg
+    Multimedia
 )
 
-# Compiler flags for optimization
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -O3)
 endif()
 
-# Source files (we'll add more as we build)
 set(SOURCES
     src/main.cpp
     src/mainwindow.cpp
-    src/canvas/objects/shapeobject.cpp
-    src/canvas/objects/textobject.cpp
-    src/panels/layerpanel.cpp
-    src/panels/colorpicker.cpp
-    src/panels/assetlibrary.cpp
-    src/tools/brushtool.cpp
-    src/tools/erasertool.cpp
-    src/tools/shapetool.cpp
-    src/tools/texttool.cpp
     src/core/project.cpp
     src/core/layer.cpp
     src/core/frame.cpp
@@ -47,6 +36,17 @@ set(SOURCES
     src/tools/selecttool.cpp
     src/panels/toolbox.cpp
     src/timeline/timelinewidget.cpp
+    src/panels/layerpanel.cpp
+    src/panels/colorpicker.cpp
+    src/panels/assetlibrary.cpp
+    src/tools/erasertool.cpp
+    src/tools/shapetool.cpp
+    src/tools/texttool.cpp
+    src/tools/brushtool.cpp
+    src/canvas/objects/shapeobject.cpp
+    src/canvas/objects/textobject.cpp
+    src/core/commands.cpp
+    src/canvas/objects/imageobject.cpp
 )
 
 set(HEADERS
@@ -63,28 +63,20 @@ set(HEADERS
     src/tools/selecttool.h
     src/panels/toolbox.h
     src/timeline/timelinewidget.h
+    src/canvas/objects/imageobject.h
 )
 
-# Create executable
-add_executable(${PROJECT_NAME}
-    ${SOURCES}
-    ${HEADERS}
-)
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-# Link Qt libraries
+# Link Qt libraries - Added Qt6::Multimedia here
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui
     Qt6::Svg
+    Qt6::Multimedia
 )
 
-# Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# Install
-install(TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION bin
-)
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
