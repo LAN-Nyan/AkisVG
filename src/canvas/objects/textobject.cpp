@@ -64,3 +64,5 @@ void TextObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
         painter->drawRect(boundingRect());
     }
 }
+
+
