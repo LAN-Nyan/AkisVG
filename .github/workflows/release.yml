@@ -3,7 +3,7 @@ name: Build and Release v0.1
 on:
   push:
     branches:
-      - main  # branch
+      - main
   pull_request:
     branches:
       - main
@@ -13,6 +13,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -32,34 +33,38 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: '6.5.*' # Match your local Qt version
-          host: ${{ matrix.os == 'windows-latest' && 'windows' || matrix.os == 'macos-latest' && 'mac' || 'linux' }}
+          version: '6.5.*'
           modules: 'qtmultimedia qtsvg'
 
-      - name: Install Dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install Dependencies & Ninja
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
-
-      - name: Setup Ninja (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: anaerobic/setup-ninja@v1
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            choco install ninja
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
+          else
+            brew install ninja
+          fi
 
       - name: Configure and Build
+        shell: bash
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
-      - name: Package (Windows)
+      - name: Package Windows
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           cd build
           windeployqt --release LuminaStudio.exe
-          compress-archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
+          Compress-Archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
 
-      - name: Package (Linux/Mac)
+      - name: Package Linux/Mac
         if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
           cd build
           tar -czvf ../${{ matrix.asset_name }} .
@@ -74,6 +79,7 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -85,8 +91,8 @@ jobs:
             LuminaStudio-Linux/LuminaStudio-Linux.tar.gz
             LuminaStudio-Windows/LuminaStudio-Windows.zip
             LuminaStudio-Mac/LuminaStudio-Mac.dmg
-          tag_name: v0.1
-          name: Release v0.1
+          tag_name: v0.1-${{ github.run_number }}
+          name: Release v0.1 (Build ${{ github.run_number }})
           draft: false
           prerelease: false
         env:
