@@ -1,48 +1,65 @@
 #include "vectorcanvas.h"
 #include "core/project.h"
 #include "core/layer.h"
+#include "core/commands.h"
 #include "objects/vectorobject.h"
+#include "objects/imageobject.h"
 #include "tools/tool.h"
 
 #include <QPen>
 #include <QBrush>
+#include <QGraphicsSceneDragDropEvent>
+#include <QMimeData>
 
-VectorCanvas::VectorCanvas(Project *project, QObject *parent)
+VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *parent)
     : QGraphicsScene(parent)
     , m_project(project)
+    , m_undoStack(undoStack)
     , m_currentTool(nullptr)
     , m_canvasBounds(nullptr)
 {
-    // Set scene rect to match project dimensions
+    if (!m_project) return; // Critical safety check
+
     setSceneRect(0, 0, project->width(), project->height());
     setBackgroundBrush(QBrush(Qt::white));
 
-    // Draw canvas bounds
     m_canvasBounds = addRect(sceneRect(), QPen(Qt::lightGray, 2));
     m_canvasBounds->setZValue(-1);
 
-    // Enable BSP index for performance
     setItemIndexMethod(QGraphicsScene::BspTreeIndex);
 
-    // Connect to project signals
+    // 1. Frame change connection
     connect(project, &Project::currentFrameChanged, this, &VectorCanvas::onFrameChanged);
 
-    // Connect to layer visibility changes
-    for (Layer *layer : project->layers()) {
-        connect(layer, &Layer::visibilityChanged, this, [this]() { refreshFrame(); });
-        connect(layer, &Layer::modified, this, [this]() { refreshFrame(); });
-    }
+    // 2. Initial layer connection setup
+    setupLayerConnections();
 
-    // Connect to layers changed to hook up new layers
+    // 3. Dynamic layer connection setup (Safe handling for AddLayerCommand)
+    // Use Qt::QueuedConnection to ensure the Command finishes before we try to loop
     connect(project, &Project::layersChanged, this, [this]() {
-        for (Layer *layer : m_project->layers()) {
-            connect(layer, &Layer::visibilityChanged, this, [this]() { refreshFrame(); }, Qt::UniqueConnection);
-            connect(layer, &Layer::modified, this, [this]() { refreshFrame(); }, Qt::UniqueConnection);
-        }
+        setupLayerConnections();
         refreshFrame();
-    });
+    }, Qt::QueuedConnection);
 
     refreshFrame();
+}
+
+// Add this helper method to your vectorcanvas.cpp (and declare it in vectorcanvas.h)
+void VectorCanvas::setupLayerConnections() {
+    if (!m_project) return;
+
+    for (Layer *layer : m_project->layers()) {
+        if (!layer) continue; // Prevent Level 7 SIGABRT
+
+        // Qt::UniqueConnection prevents multiple connections to the same signal
+        connect(layer, &Layer::visibilityChanged, this, [this](bool) {
+            refreshFrame();
+        }, Qt::UniqueConnection);
+
+        connect(layer, &Layer::modified, this, [this]() {
+            refreshFrame();
+        }, Qt::UniqueConnection);
+    }
 }
 
 VectorCanvas::~VectorCanvas()
@@ -61,8 +78,9 @@ void VectorCanvas::addObject(VectorObject *obj)
     // Add to scene
     addItem(obj);
 
-    // Add to current layer's current frame
-    m_project->currentLayer()->addObjectToFrame(m_project->currentFrame(), obj);
+    // Push undo command
+    m_undoStack->push(new AddObjectCommand(obj, m_project->currentLayer(),
+                                           m_project->currentFrame()));
 }
 
 void VectorCanvas::removeObject(VectorObject *obj)
@@ -70,8 +88,10 @@ void VectorCanvas::removeObject(VectorObject *obj)
     if (!obj || !m_project->currentLayer()) return;
 
     removeItem(obj);
-    m_project->currentLayer()->removeObjectFromFrame(m_project->currentFrame(), obj);
-    delete obj;
+
+    // Push undo command
+    m_undoStack->push(new RemoveObjectCommand(obj, m_project->currentLayer(),
+                                              m_project->currentFrame()));
 }
 
 void VectorCanvas::clearCurrentFrame()
@@ -133,5 +153,50 @@ void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
         m_currentTool->mouseReleaseEvent(event, this);
     } else {
         QGraphicsScene::mouseReleaseEvent(event);
+    }
+}
+
+void VectorCanvas::dragEnterEvent(QGraphicsSceneDragDropEvent *event)
+{
+    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
+{
+    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void VectorCanvas::dropEvent(QGraphicsSceneDragDropEvent *event)
+{
+    if (!event->mimeData()->hasFormat("application/x-lumina-asset")) {
+        event->ignore();
+        return;
+    }
+
+    // Get asset info from MIME data
+    QString assetType = event->mimeData()->data("application/x-lumina-asset-type");
+    QString assetPath = QString::fromUtf8(event->mimeData()->data("application/x-lumina-asset-path"));
+
+    int typeInt = assetType.toInt();
+
+    if (typeInt == 0) {  // Image asset
+        ImageObject *imageObj = new ImageObject();
+        imageObj->setImagePath(assetPath);
+        imageObj->setPos(event->scenePos() - QPointF(imageObj->boundingRect().width() / 2,
+                                                     imageObj->boundingRect().height() / 2));
+        addObject(imageObj);
+
+        event->acceptProposedAction();
+    } else {
+        // Audio assets go to timeline, not canvas
+        event->ignore();
     }
 }
