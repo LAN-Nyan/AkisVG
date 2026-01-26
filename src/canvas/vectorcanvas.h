@@ -2,11 +2,14 @@
 #define VECTORCANVAS_H
 
 #include <QGraphicsScene>
-#include <QGraphicsSceneMouseEvent>
 #include <QUndoStack>
+#include <QImage>
+#include <QSet>
+#include "tools/tool.h"
+#include "core/layer.h"
 
+// Forward declarations
 class Project;
-class Tool;
 class VectorObject;
 
 class VectorCanvas : public QGraphicsScene
@@ -17,38 +20,48 @@ public:
     explicit VectorCanvas(Project *project, QUndoStack *undoStack, QObject *parent = nullptr);
     ~VectorCanvas();
 
-    Project* project() const { return m_project; }
-    QUndoStack* undoStack() const { return m_undoStack; }
-
-    // Tool management
     void setCurrentTool(Tool *tool);
     Tool* currentTool() const { return m_currentTool; }
 
-    // Object management
+    void setOnionSkinEnabled(bool enabled);
+    bool onionSkinEnabled() const { return m_onionSkinEnabled; }
+
+    QImage currentImage();
+    void updateCurrentImage(const QImage &image);
+
     void addObject(VectorObject *obj);
     void removeObject(VectorObject *obj);
     void clearCurrentFrame();
-
-    // Refresh display
     void refreshFrame();
 
+signals:
+    void referenceImageDropped(const QString &path, const QPointF &position);
+    void audioDropped(const QString &path);
+
+public slots:
+    void onFrameChanged(int frame);
+    void setupLayerConnections();
+
 protected:
+    //void drawBackground(QPainter *painter, const QRectF &rect) override;
+    void dragEnterEvent(QGraphicsSceneDragDropEvent *event) override;
+    void dropEvent(QGraphicsSceneDragDropEvent *event) override;
+    void dragMoveEvent(QGraphicsSceneDragDropEvent *event) override;
     void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event) override;
-    void dragEnterEvent(QGraphicsSceneDragDropEvent *event) override;
-    void dragMoveEvent(QGraphicsSceneDragDropEvent *event) override;
-    void dropEvent(QGraphicsSceneDragDropEvent *event) override;
-
-private slots:
-    void setupLayerConnections();
-    void onFrameChanged(int frame);
 
 private:
+    QBrush getTextureBrush(ToolTexture texture, const QColor &color);
+    void saveCurrentFrameStrokes();
+    void connectLayerSignals(Layer *layer);
+
     Project *m_project;
     QUndoStack *m_undoStack;
     Tool *m_currentTool;
-    QGraphicsRectItem *m_canvasBounds;
+    bool m_onionSkinEnabled;
+    bool m_isDrawing = false;
+    QSet<Layer*> m_connectedLayers;  // Track which layers are already connected
 };
 
 #endif // VECTORCANVAS_H

@@ -4,20 +4,18 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QScrollBar>
-// #include <QOpenGLWidget>  // Commented out - requires qt6-openglwidgets
 #include <QtMath>
 
 void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
 {
-    // 1. Fill everything with the "Desk" color (Grey)
+    // Fill everything with the workspace color (dark grey)
     painter->fillRect(rect, QColor(60, 60, 60));
 
-    // 2. Draw the "Paper" (White)
-    // This uses the sceneRect defined in your VectorCanvas
+    // Draw the canvas "paper" (white)
     QRectF canvasRect = sceneRect();
     painter->fillRect(canvasRect, Qt::white);
 
-    // 3. Optional: Add a subtle border/shadow so the white stands out
+    // Add a subtle border so the white stands out
     painter->setPen(QPen(QColor(40, 40, 40), 1));
     painter->drawRect(canvasRect);
 }
@@ -25,13 +23,15 @@ void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
 CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     : QGraphicsView(canvas, parent)
     , m_currentZoom(1.0)
-    , m_zoomMin(0.01) // Ensure these members are initialized
+    , m_zoomMin(0.01)
     , m_zoomMax(50.0)
 {
     setRenderHint(QPainter::Antialiasing);
     setRenderHint(QPainter::SmoothPixmapTransform);
     setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
     setDragMode(QGraphicsView::NoDrag);
+
+    // Use AnchorUnderMouse for proper zoom behavior
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorUnderMouse);
 
@@ -40,7 +40,7 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
         centerOn(canvas->sceneRect().center());
     }
 }
-// Also add this to stop panning when you let go of Space
+
 void CanvasView::keyReleaseEvent(QKeyEvent *event)
 {
     if (event->key() == Qt::Key_Space) {

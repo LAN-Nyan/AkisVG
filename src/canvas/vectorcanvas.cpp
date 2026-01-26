@@ -1,41 +1,39 @@
 #include "vectorcanvas.h"
 #include "core/project.h"
+#include "core/frame.h"
 #include "core/layer.h"
-#include "core/commands.h"
-#include "objects/vectorobject.h"
-#include "objects/imageobject.h"
 #include "tools/tool.h"
+#include "objects/vectorobject.h"
+#include "objects/pathobject.h"
+#include "core/commands.h"
 
-#include <QPen>
-#include <QBrush>
+#include <QPainter>
 #include <QGraphicsSceneDragDropEvent>
+#include <QGraphicsSceneMouseEvent>
 #include <QMimeData>
+#include <QUrl>
+#include <QFileInfo>
+#include <QBitmap>
+#include <QPen>
+#include <QDebug>
+
 
 VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *parent)
     : QGraphicsScene(parent)
     , m_project(project)
     , m_undoStack(undoStack)
     , m_currentTool(nullptr)
-    , m_canvasBounds(nullptr)
+    , m_onionSkinEnabled(true)
 {
-    if (!m_project) return; // Critical safety check
+    if (!m_project) return;
 
     setSceneRect(0, 0, project->width(), project->height());
     setBackgroundBrush(QBrush(Qt::white));
-
-    m_canvasBounds = addRect(sceneRect(), QPen(Qt::lightGray, 2));
-    m_canvasBounds->setZValue(-1);
-
     setItemIndexMethod(QGraphicsScene::BspTreeIndex);
 
-    // 1. Frame change connection
     connect(project, &Project::currentFrameChanged, this, &VectorCanvas::onFrameChanged);
-
-    // 2. Initial layer connection setup
     setupLayerConnections();
 
-    // 3. Dynamic layer connection setup (Safe handling for AddLayerCommand)
-    // Use Qt::QueuedConnection to ensure the Command finishes before we try to loop
     connect(project, &Project::layersChanged, this, [this]() {
         setupLayerConnections();
         refreshFrame();
@@ -44,14 +42,13 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
     refreshFrame();
 }
 
-// Add this helper method to your vectorcanvas.cpp (and declare it in vectorcanvas.h)
-void VectorCanvas::setupLayerConnections() {
+void VectorCanvas::setupLayerConnections()
+{
     if (!m_project) return;
 
     for (Layer *layer : m_project->layers()) {
-        if (!layer) continue; // Prevent Level 7 SIGABRT
+        if (!layer) continue;
 
-        // Qt::UniqueConnection prevents multiple connections to the same signal
         connect(layer, &Layer::visibilityChanged, this, [this](bool) {
             refreshFrame();
         }, Qt::UniqueConnection);
@@ -66,52 +63,22 @@ VectorCanvas::~VectorCanvas()
 {
 }
 
-void VectorCanvas::setCurrentTool(Tool *tool)
-{
-    m_currentTool = tool;
-}
-
-void VectorCanvas::addObject(VectorObject *obj)
-{
-    if (!obj || !m_project->currentLayer()) return;
-
-    // Add to scene
-    addItem(obj);
-
-    // Push undo command
-    m_undoStack->push(new AddObjectCommand(obj, m_project->currentLayer(),
-                                           m_project->currentFrame()));
-}
-
-void VectorCanvas::removeObject(VectorObject *obj)
-{
-    if (!obj || !m_project->currentLayer()) return;
-
-    removeItem(obj);
-
-    // Push undo command
-    m_undoStack->push(new RemoveObjectCommand(obj, m_project->currentLayer(),
-                                              m_project->currentFrame()));
-}
-
-void VectorCanvas::clearCurrentFrame()
-{
-    if (m_project->currentLayer()) {
-        m_project->currentLayer()->clearFrame(m_project->currentFrame());
-        refreshFrame();
-    }
-}
-
 void VectorCanvas::refreshFrame()
 {
-    // Clear all objects from scene (except canvas bounds)
+    // Clear all objects from scene
+    QList<QGraphicsItem*> toRemove;
     for (QGraphicsItem *item : items()) {
-        if (item != m_canvasBounds && dynamic_cast<VectorObject*>(item)) {
-            removeItem(item);
+        if (dynamic_cast<VectorObject*>(item)) {
+            toRemove.append(item);
         }
     }
+    for (auto *item : toRemove) {
+        removeItem(item);
+    }
 
-    // Add objects from all visible layers at current frame
+    if (!m_project) return;
+
+    // Add objects from all visible layers - WORKING VERSION LOGIC
     int currentFrame = m_project->currentFrame();
     for (Layer *layer : m_project->layers()) {
         if (!layer->isVisible()) continue;
@@ -129,74 +96,254 @@ void VectorCanvas::onFrameChanged(int frame)
     refreshFrame();
 }
 
-void VectorCanvas::mousePressEvent(QGraphicsSceneMouseEvent *event)
+void VectorCanvas::connectLayerSignals(Layer *layer)
 {
-    if (m_currentTool) {
-        m_currentTool->mousePressEvent(event, this);
-    } else {
-        QGraphicsScene::mousePressEvent(event);
+    if (!layer) return;
+
+    // Check if already connected
+    if (m_connectedLayers.contains(layer)) {
+        return;  // Already connected, skip
     }
+
+    // Mark as connected
+    m_connectedLayers.insert(layer);
+
+    // Connect layer signals to force canvas update
+    connect(layer, &Layer::modified, this, [this]() {
+        qDebug() << "VectorCanvas: Layer modified signal received";
+        invalidate();  // Force complete scene redraw
+    });
+
+    connect(layer, &Layer::visibilityChanged, this, [this](bool visible) {
+        qDebug() << "VectorCanvas: Layer visibility changed to:" << visible;
+        invalidate();  // Force complete scene redraw
+    });
+
+    // Also connect to layer destruction to remove from set
+    connect(layer, &QObject::destroyed, this, [this, layer]() {
+        m_connectedLayers.remove(layer);
+    });
+
+    qDebug() << "VectorCanvas: Connected signals for layer:" << layer->name();
 }
 
-void VectorCanvas::mouseMoveEvent(QGraphicsSceneMouseEvent *event)
+void VectorCanvas::setOnionSkinEnabled(bool enabled)
 {
-    if (m_currentTool) {
-        m_currentTool->mouseMoveEvent(event, this);
-    } else {
-        QGraphicsScene::mouseMoveEvent(event);
-    }
+    m_onionSkinEnabled = enabled;
+    update();
 }
 
-void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
+QBrush VectorCanvas::getTextureBrush(ToolTexture texture, const QColor &color)
 {
-    if (m_currentTool) {
-        m_currentTool->mouseReleaseEvent(event, this);
-    } else {
-        QGraphicsScene::mouseReleaseEvent(event);
+    QBrush brush(color);
+    static const uchar grainBits[] = { 0x11, 0x44, 0x11, 0x44, 0x11, 0x44, 0x11, 0x44 };
+    static const uchar chalkBits[] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
+    static const uchar canvasBits[] = { 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00 };
+
+    switch (texture) {
+    case ToolTexture::Grainy:
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), grainBits));
+        break;
+    case ToolTexture::Chalk:
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), chalkBits));
+        break;
+    case ToolTexture::Canvas:
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), canvasBits));
+        break;
+    default:
+        break;
     }
+    return brush;
 }
 
 void VectorCanvas::dragEnterEvent(QGraphicsSceneDragDropEvent *event)
 {
-    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
+    if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
-    } else {
-        event->ignore();
-    }
-}
-
-void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
-{
-    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
-        event->acceptProposedAction();
-    } else {
-        event->ignore();
     }
 }
 
 void VectorCanvas::dropEvent(QGraphicsSceneDragDropEvent *event)
 {
-    if (!event->mimeData()->hasFormat("application/x-lumina-asset")) {
-        event->ignore();
-        return;
+    if (!event->mimeData()->hasUrls()) return;
+
+    QString filePath = event->mimeData()->urls().first().toLocalFile();
+    QPointF position = event->scenePos();
+    QString suffix = QFileInfo(filePath).suffix().toLower();
+
+    if (suffix == "png" || suffix == "jpg" || suffix == "jpeg" ||
+        suffix == "svg" || suffix == "bmp" || suffix == "webp") {
+        emit referenceImageDropped(filePath, position);
+    }
+    else if (suffix == "mp3" || suffix == "wav" || suffix == "ogg" ||
+             suffix == "flac" || suffix == "m4a") {
+        emit audioDropped(filePath);
     }
 
-    // Get asset info from MIME data
-    QString assetType = event->mimeData()->data("application/x-lumina-asset-type");
-    QString assetPath = QString::fromUtf8(event->mimeData()->data("application/x-lumina-asset-path"));
+    event->acceptProposedAction();
+}
 
-    int typeInt = assetType.toInt();
+void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
+{
+    event->acceptProposedAction();
+}
 
-    if (typeInt == 0) {  // Image asset
-        ImageObject *imageObj = new ImageObject();
-        imageObj->setImagePath(assetPath);
-        imageObj->setPos(event->scenePos() - QPointF(imageObj->boundingRect().width() / 2,
-                                                     imageObj->boundingRect().height() / 2));
-        addObject(imageObj);
+void VectorCanvas::setCurrentTool(Tool *tool)
+{
+    m_currentTool = tool;
+}
 
-        event->acceptProposedAction();
+//void VectorCanvas::refreshFrame()
+//{
+    // Clear all graphic items from scene
+   // clear();
+
+    // DON'T reload strokes as scene items anymore - drawBackground handles all rendering
+    // Just force a complete redraw
+    //invalidate();
+//}
+
+//void VectorCanvas::onFrameChanged(int frame)
+//{
+   // Q_UNUSED(frame);
+   // refreshFrame();
+//}
+
+//void VectorCanvas::setupLayerConnections()
+//{
+  //  if (!m_project) return;
+  //  connect(m_project, &Project::currentFrameChanged,
+     //       this, &VectorCanvas::onFrameChanged);
+//}
+
+void VectorCanvas::addObject(VectorObject *obj)
+{
+    if (!obj || !m_project->currentLayer()) return;
+
+    // Add to scene for display
+    addItem(obj);
+
+    // CRITICAL FIX: Save to layer's frame data via undo command
+    m_undoStack->push(new AddObjectCommand(obj, m_project->currentLayer(),
+                                           m_project->currentFrame()));
+}
+
+void VectorCanvas::removeObject(VectorObject *obj)
+{
+    if (!obj || !m_project->currentLayer()) return;
+
+    removeItem(obj);
+
+    // Push undo command to remove from layer data
+    m_undoStack->push(new RemoveObjectCommand(obj, m_project->currentLayer(),
+                                              m_project->currentFrame()));
+}
+
+//void VectorCanvas::clearCurrentFrame()
+//{
+    //if (!m_project) return;
+    //clear();
+   // Frame &currentFrame = m_project->frame(m_project->currentFrame());
+   // currentFrame.strokes.clear();
+   // currentFrame.objects.clear();
+   // update();
+//}
+
+void VectorCanvas::clearCurrentFrame()
+{
+    if (!m_project || !m_project->currentLayer()) return;
+
+    clear();
+    m_project->currentLayer()->clearFrame(m_project->currentFrame());
+    update();
+}
+
+void VectorCanvas::mousePressEvent(QGraphicsSceneMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && m_currentTool) {
+        // Let the tool handle the event first
+        m_currentTool->mousePressEvent(event, this);
+
+        // Only set drawing mode if the tool accepted the event
+        // SelectTool will NOT accept, so it won't draw
+        if (event->isAccepted()) {
+            m_isDrawing = true;
+        } else {
+            // Let Qt's default selection handling work
+            QGraphicsScene::mousePressEvent(event);
+        }
     } else {
-        // Audio assets go to timeline, not canvas
-        event->ignore();
+        QGraphicsScene::mousePressEvent(event);
     }
+}
+
+void VectorCanvas::mouseMoveEvent(QGraphicsSceneMouseEvent* event) {
+    if (m_isDrawing && m_currentTool) {
+        m_currentTool->mouseMoveEvent(event, this);
+        update();
+    } else {
+        // Pass to scene for selection rectangle, etc.
+        QGraphicsScene::mouseMoveEvent(event);
+    }
+}
+
+void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        if (m_isDrawing && m_currentTool) {
+            m_currentTool->mouseReleaseEvent(event, this);
+
+            // Only save if we were actually drawing
+            saveCurrentFrameStrokes();
+        }
+        m_isDrawing = false;
+        update();
+    }
+    QGraphicsScene::mouseReleaseEvent(event);
+}
+
+void VectorCanvas::saveCurrentFrameStrokes()
+{
+    // No longer needed - objects saved via AddObjectCommand
+}
+
+//void VectorCanvas::saveCurrentFrameStrokes()
+//{
+  //  if (!m_project) return;
+
+  //  Frame &currentFrame = m_project->frame(m_project->currentFrame());
+   // currentFrame.strokes.clear();
+
+   // for (QGraphicsItem *item : items()) {
+     //   PathObject *pathObj = dynamic_cast<PathObject*>(item);
+      //  if (pathObj) {
+         //   VectorStroke stroke;
+         //   stroke.path = pathObj->path();
+         //   stroke.color = pathObj->strokeColor();
+          //  stroke.width = pathObj->strokeWidth();
+          //  stroke.texture = ToolTexture::Smooth;
+//currentFrame.strokes.append(stroke);
+      //  }
+    //}
+//}
+
+QImage VectorCanvas::currentImage()
+{
+    QRectF bounds = sceneRect();
+    if (bounds.isEmpty()) {
+        bounds = QRectF(0, 0, m_project->width(), m_project->height());
+    }
+
+    QImage image(bounds.size().toSize(), QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    render(&painter, QRectF(), bounds);
+
+    return image;
+}
+
+void VectorCanvas::updateCurrentImage(const QImage &image)
+{
+    Q_UNUSED(image);
+    update();
 }
