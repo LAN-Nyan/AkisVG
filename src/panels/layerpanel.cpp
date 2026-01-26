@@ -15,9 +15,28 @@
 #include <QMimeData>
 #include <QUrl>
 
+LayerPanel::LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent)
+    : QWidget(parent)
+    , m_project(project)
+    , m_undoStack(undoStack)
+{
+    if (!m_undoStack) {
+        qWarning("LayerPanel received null UndoStack! App will crash on action.");
+    }
+
+    setAcceptDrops(true); // Enable drag and drop for audio files
+
+    setupUI();
+    rebuildLayerList();
+
+    connect(m_project, &Project::layersChanged, this, &LayerPanel::rebuildLayerList, Qt::QueuedConnection);
+    connect(m_project, &Project::currentLayerChanged, this, &LayerPanel::updateSelection);
+}
+
 void LayerPanel::dragEnterEvent(QDragEnterEvent *event) {
-    // Only accept if it's a file (URL)
-    if (event->mimeData()->hasUrls()) {
+    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
+        event->acceptProposedAction();
+    } else if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
     }
 }
@@ -25,43 +44,33 @@ void LayerPanel::dragEnterEvent(QDragEnterEvent *event) {
 void LayerPanel::dropEvent(QDropEvent *event) {
     const QMimeData* mimeData = event->mimeData();
 
-    if (mimeData->hasUrls()) {
+    // Handle drag from asset library
+    if (mimeData->hasFormat("application/x-lumina-asset")) {
+        QString typeStr = mimeData->data("application/x-lumina-asset-type");
+        QString filePath = QString::fromUtf8(mimeData->data("application/x-lumina-asset-path"));
+
+        int assetType = typeStr.toInt();
+        if (assetType == 1) {  // Audio asset
+            // TODO: Attach audio to layer
+            qDebug() << "Audio dropped on layer panel:" << filePath;
+            event->acceptProposedAction();
+        }
+    }
+    // Handle direct file drop
+    else if (mimeData->hasUrls()) {
         QString filePath = mimeData->urls().at(0).toLocalFile();
 
-        // Simple check for audio extensions
-        if (filePath.endsWith(".mp3") || filePath.endsWith(".wav") || filePath.endsWith(".ogg")) {
+        if (filePath.endsWith(".mp3", Qt::CaseInsensitive) ||
+            filePath.endsWith(".wav", Qt::CaseInsensitive) ||
+            filePath.endsWith(".ogg", Qt::CaseInsensitive)) {
 
-            // Find which layer item we dropped it on
-            QWidget* child = childAt(event->position().toPoint());
-            // You'll need logic here to find the actual Layer* object associated with that widget
-
+            // TODO: Attach audio to current layer
             qDebug() << "Audio file dropped:" << filePath;
-
-            // TODO: Update the Layer's audio path and trigger waveform generation
+            event->acceptProposedAction();
         }
     }
 }
 
-LayerPanel::LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent)
-    : QWidget(parent)
-    , m_project(project)
-    , m_undoStack(undoStack)
-{
-    // SAFETY CHECK: Ensure undoStack is valid
-    if (!m_undoStack) {
-        qWarning("LayerPanel received null UndoStack! App will crash on action.");
-    }
-
-    setupUI();
-    rebuildLayerList(); // Initial build
-
-    // CRITICAL FIX: Split connections to avoid crashing
-    // Only rebuild the list if layers are actually added/removed/reordered
-    connect(m_project, &Project::layersChanged, this, &LayerPanel::rebuildLayerList, Qt::QueuedConnection);
-
-    // If just the SELECTION changes, do NOT destroy the list items. Just update them.
-    connect(m_project, &Project::currentLayerChanged, this, &LayerPanel::updateSelection);
-}
 void LayerPanel::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
@@ -81,7 +90,6 @@ void LayerPanel::setupUI()
     headerLayout->addWidget(title);
     headerLayout->addStretch();
 
-    // Add button
     m_addButton = new QPushButton("+");
     m_addButton->setFixedSize(28, 28);
     m_addButton->setToolTip("Add Layer");
@@ -188,104 +196,96 @@ void LayerPanel::setupUI()
 
 QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
 {
+    Q_UNUSED(index); // Clean up the compiler warning you saw earlier
     QWidget *itemWidget = new QWidget();
-    itemWidget->setFixedHeight(48);
+    itemWidget->setFixedHeight(54); // Increased slightly for two lines of text
 
     QHBoxLayout *layout = new QHBoxLayout(itemWidget);
-    layout->setContentsMargins(8, 6, 8, 6);
-    layout->setSpacing(8);
+    layout->setContentsMargins(8, 4, 8, 4);
+    layout->setSpacing(10);
 
-    // Color indicator
+    // 1. Color Indicator (Keep your existing logic)
     QLabel *colorLabel = new QLabel();
-    colorLabel->setFixedSize(6, 36);
-    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layer->color().name()));
-    layout->addWidget(colorLabel);
-
-    // Corrected logic for your switch statement
+    colorLabel->setFixedSize(4, 38);
     QString layerColor;
-    switch(layer->layerType()) { // Assuming type() returns your LayerType enum
+    QString typeLabelText;
+
+    switch(layer->layerType()) {
     case LayerType::Audio:
-        layerColor = "#9b59b6"; break; // Purple
+        layerColor = "#9b59b6";
+        typeLabelText = "AUDIO SEQUENCE";
+        break;
     case LayerType::Art:
-        layerColor = "#3498db"; break; // Blue
+        layerColor = "#3498db";
+        typeLabelText = "ART LAYER";
+        break;
     case LayerType::Reference:
-        layerColor = "#e74c3c"; break; // Red
+        layerColor = "#e74c3c";
+        typeLabelText = "REFERENCE";
+        break;
+    case LayerType::Background:
+        layerColor = "#2ecc71";
+        typeLabelText = "BACKGROUND";
+        break;
     default:
-        layerColor = "#2ecc71"; break; // Green
+        layerColor = "#3498db";
+        typeLabelText = "LAYER";
+        break;
     }
 
-    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layerColor));
+    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 2px;").arg(layerColor));
+    layout->addWidget(colorLabel);
 
-    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;")
-                                  .arg(layerColor));
+    // 2. TEXT CONTAINER (Stacking Name and Type)
+    QWidget *textContainer = new QWidget();
+    QVBoxLayout *textLayout = new QVBoxLayout(textContainer);
+    textLayout->setContentsMargins(0, 0, 0, 0);
+    textLayout->setSpacing(2);
 
-    colorLabel->setStyleSheet(QString("background-color: %1; border-radius: 3px;").arg(layerColor));
-
-    // Layer name
     QLabel *nameLabel = new QLabel(layer->name());
-    nameLabel->setStyleSheet("color: white; font-size: 12px; font-weight: 500;");
-    layout->addWidget(nameLabel, 1);
+    nameLabel->setStyleSheet("color: white; font-size: 12px; font-weight: bold;");
 
-    // Visibility toggle button
-    QPushButton *visBtn = new QPushButton(layer->isVisible() ? "👁" : "👁‍🗨");
-    visBtn->setFixedSize(28, 28);
-    visBtn->setToolTip(layer->isVisible() ? "Hide Layer" : "Show Layer");
-    visBtn->setCursor(Qt::PointingHandCursor);
-    visBtn->setStyleSheet(
-        "QPushButton {"
-        "   background-color: transparent;"
-        "   border: none;"
-        "   font-size: 16px;"
-        "}"
-        "QPushButton:hover {"
-        "   background-color: #3a3a3a;"
-        "   border-radius: 4px;"
-        "}"
-        );
+    QLabel *typeLabel = new QLabel(typeLabelText);
+    typeLabel->setStyleSheet("color: #888; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;");
 
-    connect(visBtn, &QPushButton::clicked, this, [this, layer, index]() {
+    textLayout->addWidget(nameLabel);
+    textLayout->addWidget(typeLabel);
+    layout->addWidget(textContainer, 1);
+
+    // 3. Visibility Button (Keep your existing logic)
+    QPushButton *visBtn = new QPushButton(layer->isVisible() ? "👁" : "◯");
+    visBtn->setFixedSize(24, 24);
+    visBtn->setStyleSheet("QPushButton { background: transparent; color: #aaa; border: none; font-size: 14px; } "
+                          "QPushButton:hover { background: #444; border-radius: 4px; }");
+    connect(visBtn, &QPushButton::clicked, this, [this, layer]() {
         layer->setVisible(!layer->isVisible());
         rebuildLayerList();
-        // Force canvas refresh when visibility changes
-        emit layer->visibilityChanged(layer->isVisible());
     });
     layout->addWidget(visBtn);
 
-    // Lock toggle button
+    // 4. Lock Button (Keep your existing logic)
     QPushButton *lockBtn = new QPushButton(layer->isLocked() ? "🔒" : "🔓");
-    lockBtn->setFixedSize(28, 28);
-    lockBtn->setToolTip(layer->isLocked() ? "Unlock Layer" : "Lock Layer");
-    lockBtn->setCursor(Qt::PointingHandCursor);
-    lockBtn->setStyleSheet(
-        "QPushButton {"
-        "   background-color: transparent;"
-        "   border: none;"
-        "   font-size: 14px;"
-        "}"
-        "QPushButton:hover {"
-        "   background-color: #3a3a3a;"
-        "   border-radius: 4px;"
-        "}"
-        );
-
-    connect(lockBtn, &QPushButton::clicked, this, [this, layer, index]() {
+    lockBtn->setFixedSize(24, 24);
+    visBtn->setStyleSheet("QPushButton { background: transparent; color: #aaa; border: none; font-size: 12px; } "
+                          "QPushButton:hover { background: #444; border-radius: 4px; }");
+    connect(lockBtn, &QPushButton::clicked, this, [this, layer]() {
         layer->setLocked(!layer->isLocked());
         rebuildLayerList();
     });
     layout->addWidget(lockBtn);
 
-    // Style based on visibility
+    // Gray out text if hidden
     if (!layer->isVisible()) {
-        nameLabel->setStyleSheet("color: #666; font-size: 12px; font-weight: 500;");
+        nameLabel->setStyleSheet("color: #555; font-size: 12px;");
+        typeLabel->setStyleSheet("color: #444; font-size: 9px;");
     }
 
     return itemWidget;
 }
 
-// Rename 'updateLayerList' to 'rebuildLayerList'
 void LayerPanel::rebuildLayerList()
 {
-    m_layerList->clear(); // Only safe to call when NOT triggered by a list item click
+    m_layerList->clear();
 
     auto layers = m_project->layers();
     for (int i = layers.size() - 1; i >= 0; --i) {
@@ -299,16 +299,13 @@ void LayerPanel::rebuildLayerList()
         m_layerList->setItemWidget(item, itemWidget);
     }
 
-    updateSelection(); // Apply selection after rebuilding
-    updateButtons();   // Update button states
+    updateSelection();
+    updateButtons();
 }
 
-// NEW FUNCTION: Updates visual state without deleting widgets
 void LayerPanel::updateSelection()
 {
-    // Block signals to prevent infinite loops during selection updates
     const QSignalBlocker blocker(m_layerList);
-
     Layer* current = m_project->currentLayer();
 
     for(int i = 0; i < m_layerList->count(); ++i) {
@@ -318,7 +315,6 @@ void LayerPanel::updateSelection()
 
         if (layer == current) {
             item->setSelected(true);
-            // Ensure the item is visible in scroll area
             m_layerList->scrollToItem(item);
         } else {
             item->setSelected(false);
@@ -337,7 +333,6 @@ void LayerPanel::updateButtons() {
     m_moveUpButton->setEnabled(hasLayers);
     m_moveDownButton->setEnabled(hasLayers);
 }
-
 
 void LayerPanel::onLayerItemClicked(QListWidgetItem *item)
 {
@@ -385,7 +380,6 @@ void LayerPanel::onDuplicateLayerClicked()
     if (!current) return;
 
     m_project->addLayer(current->name() + " Copy");
-    // TODO: Copy layer content
 }
 
 void LayerPanel::onMoveLayerUp()
@@ -436,14 +430,12 @@ void LayerPanel::showContextMenu(const QPoint &pos)
 
     menu.addSeparator();
 
-    // Layer type submenu
     QMenu *typeMenu = menu.addMenu("Change Layer Type");
     QAction *artAct = typeMenu->addAction("🎨 Art Layer");
     QAction *bgAct = typeMenu->addAction("🖼️ Background Layer");
     QAction *audioAct = typeMenu->addAction("🎵 Audio Layer");
     QAction *refAct = typeMenu->addAction("📐 Reference Layer");
 
-    // Mark current type
     switch (layer->layerType()) {
     case LayerType::Art: artAct->setCheckable(true); artAct->setChecked(true); break;
     case LayerType::Background: bgAct->setCheckable(true); bgAct->setChecked(true); break;

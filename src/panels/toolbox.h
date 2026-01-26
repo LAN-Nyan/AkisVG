@@ -4,6 +4,10 @@
 #include <QWidget>
 #include <QButtonGroup>
 #include <QMap>
+#include <QPushButton>
+#include <QComboBox>
+
+#include "toolsettingspanel.h"
 
 class Tool;
 enum class ToolType;
@@ -25,9 +29,15 @@ private slots:
     void onToolButtonClicked(int id);
 
 private:
+    ToolSettingsPanel *m_settingsPanel = nullptr;
+
     void createTools();
     void setupUI();
-    
+
+    QPushButton *m_colorButton; // Declare the button
+    void updateColorButton(const QColor &color);
+    QComboBox *m_textureSelector;
+
     QMap<ToolType, Tool*> m_tools;
     Tool *m_currentTool;
     QButtonGroup *m_toolButtons;

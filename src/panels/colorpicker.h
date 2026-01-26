@@ -6,6 +6,8 @@
 #include <QSlider>
 #include <QLineEdit>
 #include <QVector>
+#include <QComboBox>
+#include <QBitmap>
 
 class ColorWheel : public QWidget
 {
@@ -54,6 +56,7 @@ public:
 
 signals:
     void colorChanged(const QColor &color);
+    void textureChanged(int textureType);
 
 private slots:
     void onWheelColorChanged(const QColor &color);
@@ -65,10 +68,12 @@ private:
     void setupUI();
     void updateUI();
     void addToRecentColors(const QColor &color);
+    QPixmap generateTextureIcon(int textureType);
 
     ColorWheel *m_colorWheel;
     QSlider *m_opacitySlider;
     QLineEdit *m_hexInput;
+    QComboBox *m_textureCombo;
     QVector<QColor> m_recentColors;
     QWidget *m_recentColorsWidget;
     QColor m_currentColor;

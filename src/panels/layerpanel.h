@@ -51,4 +51,3 @@ private:
 };
 
 #endif // LAYERPANEL_H
-

@@ -11,6 +11,7 @@
 #include <QMouseEvent>
 #include <QPainterPath>
 #include <QtMath>
+#include <QBitmap>
 
 // ============= ColorWheel Implementation =============
 
@@ -44,70 +45,68 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     m_outerRadius = qMin(width(), height()) / 2.0 - 10;
     m_innerRadius = m_outerRadius * 0.7;
 
-    // Draw hue wheel
+    // Draw hue wheel with conical gradient
+    QConicalGradient hueGradient(m_center, -90);
     for (int i = 0; i < 360; ++i) {
-        qreal angle = i * M_PI / 180.0;
-        QColor hueColor = QColor::fromHsvF(i / 360.0, 1.0, 1.0);
-
-        QPainterPath path;
-        path.moveTo(m_center);
-        path.arcTo(m_center.x() - m_outerRadius, m_center.y() - m_outerRadius,
-                   m_outerRadius * 2, m_outerRadius * 2, i, 1);
-        path.lineTo(m_center);
-
-        QPainterPath innerPath;
-        innerPath.addEllipse(m_center, m_innerRadius, m_innerRadius);
-
-        path = path.subtracted(innerPath);
-
-        painter.fillPath(path, hueColor);
+        hueGradient.setColorAt(i / 360.0, QColor::fromHsvF(i / 360.0, 1.0, 1.0));
     }
 
-    // Draw SV triangle - FIXED COLORS
+    QPainterPath ring;
+    ring.addEllipse(m_center, m_outerRadius, m_outerRadius);
+    QPainterPath innerCircle;
+    innerCircle.addEllipse(m_center, m_innerRadius, m_innerRadius);
+    ring = ring.subtracted(innerCircle);
+
+    painter.fillPath(ring, hueGradient);
+
+    // Draw SV triangle
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    // Triangle points
-    qreal angle = hue * 2 * M_PI - M_PI / 2;  // Start at top
-    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
     angle += 2 * M_PI / 3;
-    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
     angle += 2 * M_PI / 3;
-    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    QPointF pPure = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
 
-    // Draw triangle with gradients
+    QColor pureHue = QColor::fromHsvF(hue, 1.0, 1.0);
+
     QPainterPath triangle;
     triangle.moveTo(pWhite);
+    triangle.lineTo(pPure);
     triangle.lineTo(pBlack);
-    triangle.lineTo(pColor);
     triangle.closeSubpath();
 
-    // Create gradient from white to pure color
-    QLinearGradient satGradient(pWhite, pColor);
-    satGradient.setColorAt(0, Qt::white);
-    satGradient.setColorAt(1, QColor::fromHsvF(hue, 1.0, 1.0));
-    painter.fillPath(triangle, satGradient);
+    // White to pure hue gradient
+    QLinearGradient whiteToHue(pWhite, pPure);
+    whiteToHue.setColorAt(0, Qt::white);
+    whiteToHue.setColorAt(1, pureHue);
+    painter.fillPath(triangle, whiteToHue);
 
-    // Overlay black gradient for value
-    QLinearGradient valGradient((pWhite + pColor) / 2, pBlack);
-    valGradient.setColorAt(0, QColor(0, 0, 0, 0));
-    valGradient.setColorAt(1, QColor(0, 0, 0, 255));
-    painter.fillPath(triangle, valGradient);
+    // Black overlay for value
+    QLinearGradient blackOverlay(pWhite, pBlack);
+    blackOverlay.setColorAt(0, QColor(0, 0, 0, 0));
+    blackOverlay.setColorAt(1, QColor(0, 0, 0, 255));
+    painter.fillPath(triangle, blackOverlay);
 
-    // Draw current color indicator
+    // SV indicator
     QPointF svPoint = svToPoint(m_currentColor.saturationF(), m_currentColor.valueF());
+    painter.setPen(QPen(QColor(0, 0, 0, 100), 2));
+    painter.drawEllipse(svPoint.x() - 7, svPoint.y() - 7, 14, 14);
     painter.setPen(QPen(Qt::white, 3));
-    painter.setBrush(Qt::NoBrush);
     painter.drawEllipse(svPoint, 6, 6);
-    painter.setPen(QPen(Qt::black, 1));
-    painter.drawEllipse(svPoint, 6, 6);
+    painter.setPen(QPen(Qt::black, 1.5));
+    painter.drawEllipse(svPoint, 5, 5);
 
-    // Draw hue indicator
+    // Hue indicator
     QPointF huePoint = hueToPoint(hue);
+    painter.setPen(QPen(QColor(0, 0, 0, 100), 2));
+    painter.drawEllipse(huePoint.x() - 9, huePoint.y() - 9, 18, 18);
     painter.setPen(QPen(Qt::white, 3));
-    painter.drawEllipse(huePoint, 8, 8);
-    painter.setPen(QPen(Qt::black, 1));
-    painter.drawEllipse(huePoint, 8, 8);
+    painter.drawEllipse(huePoint, 7, 7);
+    painter.setPen(QPen(Qt::black, 1.5));
+    painter.drawEllipse(huePoint, 6, 6);
 }
 
 void ColorWheel::mousePressEvent(QMouseEvent *event)
@@ -148,10 +147,9 @@ void ColorWheel::resizeEvent(QResizeEvent *event)
 void ColorWheel::updateColor(const QPoint &pos)
 {
     QPointF delta = pos - m_center;
-    qreal dist = QLineF(m_center, pos).length();
 
     if (m_isSelectingHue) {
-        qreal angle = qAtan2(delta.y(), delta.x()) + M_PI / 2;  // Adjust for top start
+        qreal angle = qAtan2(delta.y(), delta.x()) + M_PI / 2;
         if (angle < 0) angle += 2 * M_PI;
         qreal hue = angle / (2 * M_PI);
 
@@ -162,15 +160,13 @@ void ColorWheel::updateColor(const QPoint &pos)
         qreal hue = m_currentColor.hueF();
         if (hue < 0) hue = 0;
 
-        // Triangle points
         qreal angle = hue * 2 * M_PI - M_PI / 2;
-        QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+        QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
         angle += 2 * M_PI / 3;
-        QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+        QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
         angle += 2 * M_PI / 3;
-        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
 
-        // Convert to barycentric coordinates
         QPointF v0 = pColor - pWhite;
         QPointF v1 = pBlack - pWhite;
         QPointF v2 = pos - pWhite;
@@ -185,7 +181,6 @@ void ColorWheel::updateColor(const QPoint &pos)
         qreal u = (dot11 * dot02 - dot01 * dot12) * invDenom;
         qreal v = (dot00 * dot12 - dot01 * dot02) * invDenom;
 
-        // Clamp to triangle
         if (u < 0) u = 0;
         if (v < 0) v = 0;
         if (u + v > 1) {
@@ -194,8 +189,6 @@ void ColorWheel::updateColor(const QPoint &pos)
             v /= total;
         }
 
-        // u = distance along white->color (saturation)
-        // v = distance toward black (reduces value)
         qreal saturation = u;
         qreal value = 1.0 - v;
 
@@ -207,7 +200,7 @@ void ColorWheel::updateColor(const QPoint &pos)
 
 QPointF ColorWheel::hueToPoint(qreal hue) const
 {
-    qreal angle = hue * 2 * M_PI;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
     qreal radius = (m_outerRadius + m_innerRadius) / 2;
     return m_center + QPointF(qCos(angle), qSin(angle)) * radius;
 }
@@ -218,16 +211,13 @@ QPointF ColorWheel::svToPoint(qreal saturation, qreal value) const
     if (hue < 0) hue = 0;
 
     qreal angle = hue * 2 * M_PI - M_PI / 2;
-    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
     angle += 2 * M_PI / 3;
-    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
     angle += 2 * M_PI / 3;
-    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.9;
+    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
 
-    // Point along white->color edge (saturation)
     QPointF satPoint = pWhite + (pColor - pWhite) * saturation;
-
-    // Move toward black based on value
     QPointF finalPoint = satPoint + (pBlack - satPoint) * (1.0 - value);
 
     return finalPoint;
@@ -241,7 +231,6 @@ ColorPicker::ColorPicker(QWidget *parent)
 {
     setupUI();
 
-    // Add some default recent colors
     m_recentColors << Qt::black << Qt::white << Qt::red << Qt::green
                    << Qt::blue << Qt::yellow << Qt::cyan << Qt::magenta;
     updateUI();
@@ -253,12 +242,10 @@ void ColorPicker::setupUI()
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(12);
 
-    // Title
     QLabel *title = new QLabel("COLOR PICKER");
     title->setStyleSheet("font-weight: bold; font-size: 11px; color: #888; letter-spacing: 1px;");
     mainLayout->addWidget(title);
 
-    // Color wheel
     m_colorWheel = new ColorWheel();
     m_colorWheel->setFixedSize(220, 220);
     mainLayout->addWidget(m_colorWheel, 0, Qt::AlignCenter);
@@ -276,20 +263,19 @@ void ColorPicker::setupUI()
     m_opacitySlider->setValue(100);
     m_opacitySlider->setStyleSheet(
         "QSlider::groove:horizontal {"
-        "   background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
-        "       stop:0 transparent, stop:1 " + m_currentColor.name() + ");"
-                                  "   height: 20px;"
-                                  "   border-radius: 4px;"
-                                  "   border: 1px solid #555;"
-                                  "}"
-                                  "QSlider::handle:horizontal {"
-                                  "   background: white;"
-                                  "   width: 16px;"
-                                  "   height: 16px;"
-                                  "   margin: -8px 0;"
-                                  "   border-radius: 8px;"
-                                  "   border: 2px solid #2a82da;"
-                                  "}"
+        "   background: #3a3a3a;"
+        "   height: 20px;"
+        "   border-radius: 4px;"
+        "   border: 1px solid #555;"
+        "}"
+        "QSlider::handle:horizontal {"
+        "   background: white;"
+        "   width: 16px;"
+        "   height: 16px;"
+        "   margin: -8px 0;"
+        "   border-radius: 8px;"
+        "   border: 2px solid #2a82da;"
+        "}"
         );
 
     QLabel *opacityValue = new QLabel("100%");
@@ -338,10 +324,77 @@ void ColorPicker::setupUI()
     QGridLayout *recentGrid = new QGridLayout(m_recentColorsWidget);
     recentGrid->setSpacing(4);
     recentGrid->setContentsMargins(0, 0, 0, 0);
-    m_recentColorsWidget->setLayout(recentGrid);
 
     mainLayout->addWidget(m_recentColorsWidget);
+
+    // Texture selector
+    QLabel *textureLabel = new QLabel("Brush Texture");
+    textureLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 8px;");
+    mainLayout->addWidget(textureLabel);
+
+    m_textureCombo = new QComboBox();
+    m_textureCombo->setStyleSheet(
+        "QComboBox {"
+        "   background-color: #2d2d2d;"
+        "   border: 2px solid #3a3a3a;"
+        "   border-radius: 4px;"
+        "   padding: 6px;"
+        "   color: white;"
+        "}"
+        "QComboBox:hover {"
+        "   border-color: #2a82da;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "   background-color: #2d2d2d;"
+        "   color: white;"
+        "   selection-background-color: #2a82da;"
+        "}"
+        );
+
+    m_textureCombo->addItem("Smooth", 0);
+    m_textureCombo->addItem("Grainy", 1);
+    m_textureCombo->addItem("Chalk", 2);
+    m_textureCombo->addItem("Canvas", 3);
+
+    for (int i = 0; i < m_textureCombo->count(); ++i) {
+        QPixmap icon = generateTextureIcon(i);
+        m_textureCombo->setItemIcon(i, QIcon(icon));
+    }
+
+    connect(m_textureCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ColorPicker::textureChanged);
+
+    mainLayout->addWidget(m_textureCombo);
     mainLayout->addStretch();
+}
+
+QPixmap ColorPicker::generateTextureIcon(int textureType)
+{
+    QPixmap icon(48, 24);
+    icon.fill(Qt::transparent);
+
+    QPainter p(&icon);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QBrush brush(Qt::white);
+
+    if (textureType == 1) {
+        uchar bits[] = { 0x11, 0x44, 0x11, 0x44, 0x11, 0x44, 0x11, 0x44 };
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), bits));
+    } else if (textureType == 2) {
+        uchar bits[] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), bits));
+    } else if (textureType == 3) {
+        uchar bits[] = { 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00 };
+        brush.setTexture(QBitmap::fromData(QSize(8, 8), bits));
+    }
+
+    QPen pen(brush, 6);
+    pen.setCapStyle(Qt::RoundCap);
+    p.setPen(pen);
+    p.drawLine(4, 12, 44, 12);
+
+    return icon;
 }
 
 void ColorPicker::updateUI()
@@ -354,17 +407,14 @@ void ColorPicker::updateUI()
     m_opacitySlider->setValue(m_currentColor.alpha() * 100 / 255);
     m_opacitySlider->blockSignals(false);
 
-    // Update recent colors grid
     QGridLayout *grid = qobject_cast<QGridLayout*>(m_recentColorsWidget->layout());
     if (grid) {
-        // Clear existing
         while (grid->count() > 0) {
             QLayoutItem *item = grid->takeAt(0);
             delete item->widget();
             delete item;
         }
 
-        // Add recent colors
         for (int i = 0; i < m_recentColors.size() && i < 16; ++i) {
             QPushButton *colorBtn = new QPushButton();
             colorBtn->setFixedSize(28, 28);
