@@ -40,6 +40,9 @@ public:
     int totalFrames() const { return m_totalFrames; }
     void setTotalFrames(int frames);
 
+   // const Frame& frame(int index) const;
+   // Frame& frame(int index);
+
     // Layer management
     QList<Layer*> layers() const { return m_layers; }
     Layer* currentLayer() const;
@@ -49,6 +52,7 @@ public:
     void moveLayer(int fromIndex, int toIndex);
     Layer* layerAt(int index) const;
     int layerCount() const { return m_layers.size(); }
+
 
 signals:
     void modified();
@@ -64,6 +68,7 @@ private:
     int m_currentFrame;
     int m_totalFrames;
     int m_currentLayerIndex;
+
 
     QList<Layer*> m_layers;
 };

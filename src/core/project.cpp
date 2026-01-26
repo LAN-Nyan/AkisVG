@@ -1,5 +1,16 @@
 #include "project.h"
 #include "layer.h"
+#include "frame.h"
+
+//const Frame& Project::frame(int index) const {
+    // Returns a const reference to the frame
+   // return *(m_layers[m_currentLayerIndex]->frameAt(index));
+//}
+
+//Frame& Project::frame(int index) {
+// Returns a writable reference to the frame
+    //return *(m_layers[m_currentLayerIndex]->frameAt(index));
+//}
 
 Project::Project(QObject *parent)
     : QObject(parent)

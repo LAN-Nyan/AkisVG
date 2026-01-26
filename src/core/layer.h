@@ -17,6 +17,15 @@ enum class LayerType {
     Reference   // Reference layer for tracing, non-exportable
 };
 
+// NEW: Structure to track frame extensions/holds
+struct FrameExtension {
+    int keyFrame;       // The frame that contains the actual content
+    int extendToFrame;  // The last frame this content should be held to
+
+    FrameExtension() : keyFrame(-1), extendToFrame(-1) {}
+    FrameExtension(int key, int extend) : keyFrame(key), extendToFrame(extend) {}
+};
+
 class Layer : public QObject
 {
     Q_OBJECT
@@ -53,6 +62,14 @@ public:
     void clearFrame(int frameNumber);
     bool hasContentAtFrame(int frameNumber) const;
 
+    // NEW: Frame extension/hold functionality
+    void extendFrameTo(int fromFrame, int toFrame);
+    void clearFrameExtension(int frame);
+    bool isFrameExtended(int frameNumber) const;
+    int getKeyFrameFor(int frameNumber) const;  // Returns the key frame that this frame extends from
+    int getExtensionEnd(int frameNumber) const; // Returns the last frame of the extension
+    bool isKeyFrame(int frameNumber) const;     // True if this frame has actual content (not extended)
+
 signals:
     void modified();
     void visibilityChanged(bool visible);
@@ -69,6 +86,9 @@ private:
 
     // Frame data: frameNumber -> list of objects
     QMap<int, QList<VectorObject*>> m_frames;
+
+    // NEW: Frame extensions - maps a frame number to its extension info
+    QMap<int, FrameExtension> m_frameExtensions;
 };
 
 #endif // LAYER_H

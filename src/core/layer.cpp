@@ -95,6 +95,14 @@ QString Layer::layerTypeString() const
 
 QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
 {
+    // NEW: Check if this frame is extended from a key frame
+    int keyFrame = getKeyFrameFor(frameNumber);
+    if (keyFrame != -1 && keyFrame != frameNumber) {
+        // This is an extended frame, return objects from the key frame
+        return m_frames.value(keyFrame, QList<VectorObject*>());
+    }
+
+    // Return objects from this frame directly
     return m_frames.value(frameNumber, QList<VectorObject*>());
 }
 
@@ -128,6 +136,96 @@ void Layer::clearFrame(int frameNumber)
 
 bool Layer::hasContentAtFrame(int frameNumber) const
 {
-    return m_frames.contains(frameNumber) && !m_frames[frameNumber].isEmpty();
+    // NEW: Check if frame has actual content OR is extended from a key frame
+    if (m_frames.contains(frameNumber) && !m_frames[frameNumber].isEmpty()) {
+        return true; // Has actual content
+    }
+
+    // Check if this frame is extended from a key frame
+    int keyFrame = getKeyFrameFor(frameNumber);
+    if (keyFrame != -1 && keyFrame != frameNumber) {
+        return m_frames.contains(keyFrame) && !m_frames[keyFrame].isEmpty();
+    }
+
+    return false;
 }
 
+// ============= NEW: Frame Extension Methods =============
+
+void Layer::extendFrameTo(int fromFrame, int toFrame)
+{
+    if (fromFrame < 1 || toFrame < fromFrame) {
+        return; // Invalid range
+    }
+
+    // Only allow extending frames that have actual content
+    if (!m_frames.contains(fromFrame) || m_frames[fromFrame].isEmpty()) {
+        return;
+    }
+
+    // Store the extension info
+    m_frameExtensions[fromFrame] = FrameExtension(fromFrame, toFrame);
+    emit modified();
+}
+
+void Layer::clearFrameExtension(int frame)
+{
+    if (m_frameExtensions.contains(frame)) {
+        m_frameExtensions.remove(frame);
+        emit modified();
+    }
+}
+
+bool Layer::isFrameExtended(int frameNumber) const
+{
+    // Check if this frame is within any extension range
+    for (auto it = m_frameExtensions.constBegin(); it != m_frameExtensions.constEnd(); ++it) {
+        const FrameExtension &ext = it.value();
+        if (frameNumber > ext.keyFrame && frameNumber <= ext.extendToFrame) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int Layer::getKeyFrameFor(int frameNumber) const
+{
+    // If this frame has actual content, it IS the key frame
+    if (m_frames.contains(frameNumber) && !m_frames[frameNumber].isEmpty()) {
+        return frameNumber;
+    }
+
+    // Check if this frame is extended from a key frame
+    for (auto it = m_frameExtensions.constBegin(); it != m_frameExtensions.constEnd(); ++it) {
+        const FrameExtension &ext = it.value();
+        if (frameNumber >= ext.keyFrame && frameNumber <= ext.extendToFrame) {
+            return ext.keyFrame;
+        }
+    }
+
+    return -1; // No key frame found
+}
+
+int Layer::getExtensionEnd(int frameNumber) const
+{
+    // Check if this frame starts an extension
+    if (m_frameExtensions.contains(frameNumber)) {
+        return m_frameExtensions[frameNumber].extendToFrame;
+    }
+
+    // Check if this frame is within an extension
+    for (auto it = m_frameExtensions.constBegin(); it != m_frameExtensions.constEnd(); ++it) {
+        const FrameExtension &ext = it.value();
+        if (frameNumber >= ext.keyFrame && frameNumber <= ext.extendToFrame) {
+            return ext.extendToFrame;
+        }
+    }
+
+    return -1; // Not extended
+}
+
+bool Layer::isKeyFrame(int frameNumber) const
+{
+    // A frame is a key frame if it has actual content (not extended from elsewhere)
+    return m_frames.contains(frameNumber) && !m_frames[frameNumber].isEmpty();
+}
