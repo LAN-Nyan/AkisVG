@@ -1,46 +1,80 @@
-#include <QApplication>
-#include <QStyleFactory>
-#include "mainwindow.h"
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
 
-int main(int argc, char *argv[])
+#include <QMainWindow>
+#include <QToolBar>
+#include <QStatusBar>
+#include <QDockWidget>
+#include <QUndoStack>
+#include "panels/settingspanel.h"
+
+// Forward declarations
+class CanvasView;
+class VectorCanvas;
+class ToolBox;
+class LayerPanel;
+class ColorPicker;
+class AssetLibrary;
+class TimelineWidget;
+class Project;
+
+class MainWindow : public QMainWindow
 {
-    // High DPI support is automatic in Qt6
-    // QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);  // Deprecated in Qt6
-    // QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);     // Deprecated in Qt6
-    
-    QApplication app(argc, argv);
-    
-    // Set application metadata
-    app.setApplicationName("Lumina Studio");
-    app.setApplicationVersion("1.0.0");
-    app.setOrganizationName("Lumina");
-    
-    // Set dark fusion style for modern look
-    app.setStyle(QStyleFactory::create("Fusion"));
-    
-    // Dark palette
-    QPalette darkPalette;
-    darkPalette.setColor(QPalette::Window, QColor(53, 53, 53));
-    darkPalette.setColor(QPalette::WindowText, Qt::white);
-    darkPalette.setColor(QPalette::Base, QColor(25, 25, 25));
-    darkPalette.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
-    darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
-    darkPalette.setColor(QPalette::ToolTipText, Qt::white);
-    darkPalette.setColor(QPalette::Text, Qt::white);
-    darkPalette.setColor(QPalette::Button, QColor(53, 53, 53));
-    darkPalette.setColor(QPalette::ButtonText, Qt::white);
-    darkPalette.setColor(QPalette::BrightText, Qt::red);
-    darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::HighlightedText, Qt::black);
-    
-    app.setPalette(darkPalette);
-    
-    // Create and show main window
-    MainWindow window;
-    window.show();
-    
-    return app.exec();
-}
+    Q_OBJECT
+
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
+private slots:
+    void newProject();
+    void openProject();
+    void saveProject();
+    void saveProjectAs();
+    void exportFrame();
+    void about();
+    void exportToMp4();
+    void exportToMp4_Alternative();
+
+private:
+    void createActions();
+    void createMenus();
+    void createToolBars();
+    void createDockWindows();
+    void setupCanvas();
+    void updateWindowTitle();
+
+    // YOU I D I O T WHY DID I PUT THIS AT THE BOTTOM
+    QUndoStack *m_undoStack;
+
+
+    // Core components
+    Project *m_project;
+    VectorCanvas *m_canvas;
+    CanvasView *m_canvasView;
+    ToolBox *m_toolBox;
+    LayerPanel *m_layerPanel;
+    ColorPicker *m_colorPicker;
+    AssetLibrary *m_assetLibrary;
+    TimelineWidget *m_timeline;
+    ProjectSettings *m_projectSettings;
+
+    // UI elements
+    QMenu *m_fileMenu;
+    QMenu *m_editMenu;
+    QMenu *m_viewMenu;
+    QMenu *m_helpMenu;
+
+    QToolBar *m_mainToolBar;
+    QStatusBar *m_statusBar;
+
+    QString m_currentFile;
+    bool m_isModified;
+};
+
+#endif // MAINWINDOW_H
 
 
