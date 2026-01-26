@@ -8,6 +8,7 @@
 #include "panels/assetlibrary.h"
 #include "timeline/timelinewidget.h"
 #include "tools/tool.h"
+#include "panels/settingspanel.h"
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -22,11 +23,18 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSplitter>
+#include <QProcess>
+#include <QDir>
+#include <QProcess>
+#include <QProgressDialog>
+#include <QBuffer>
+#include <QPainter>
+#include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_project(new Project(this))
     , m_undoStack(new QUndoStack(this))
+    , m_project(new Project(this))
     , m_canvas(new VectorCanvas(m_project, m_undoStack, this))
     , m_canvasView(new CanvasView(m_canvas, this))
     , m_toolBox(new ToolBox(this))
@@ -106,12 +114,34 @@ MainWindow::MainWindow(QWidget *parent)
         updateWindowTitle();
     });
 
+   // connect(m_canvas, &VectorCanvas::audioDropped,
+     //       m_timeline, &TimelineWidget::loadAudioTrack);
+
     // Connect color picker to toolbox
     connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &color) {
         if (m_toolBox->currentTool()) {
             m_toolBox->currentTool()->setStrokeColor(color);
         }
     });
+
+    // Connect color picker texture to current tool
+    connect(m_colorPicker, &ColorPicker::textureChanged,
+            this, [this](int textureType) {
+                if (m_toolBox->currentTool()) {
+                    m_toolBox->currentTool()->setTexture(
+                        static_cast<ToolTexture>(textureType));
+                }
+            });
+
+    // Connect audio drop from canvas to timeline
+   // connect(m_canvas, &VectorCanvas::audioDropped,
+      //      m_timeline, &TimelineWidget::loadAudioTrack);
+
+    // Show audio loaded message
+    //connect(m_timeline, &TimelineWidget::audioLoaded,
+            //this, [this](const QString &name) {
+             //   statusBar()->showMessage("♪ Audio loaded: " + name, 3000);
+           // });
 
     statusBar()->showMessage("Ready - Use Pencil tool to draw", 5000);
     updateWindowTitle();
@@ -160,6 +190,10 @@ void MainWindow::createMenus()
 
     m_fileMenu->addSeparator();
 
+    QAction *exportVideoAct = m_fileMenu->addAction("Export to &Video (.mp4)...");
+    exportVideoAct->setShortcut(QKeySequence("Ctrl+Shift+E"));
+    connect(exportVideoAct, &QAction::triggered, this, &MainWindow::exportToMp4);
+
     QAction *exportAct = m_fileMenu->addAction("&Export Frame...", this, &MainWindow::exportFrame);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
 
@@ -199,6 +233,12 @@ void MainWindow::createMenus()
 
     QAction *resetZoomAct = m_viewMenu->addAction("Reset Zoom", m_canvasView, &CanvasView::resetZoom);
     resetZoomAct->setShortcut(QKeySequence("Ctrl+0"));
+
+    QAction *onionSkinAct = m_viewMenu->addAction("Show Onion Skin");
+    onionSkinAct->setCheckable(true);
+    onionSkinAct->setChecked(true);
+    onionSkinAct->setShortcut(QKeySequence("Ctrl+O"));
+    connect(onionSkinAct, &QAction::toggled, m_canvas, &VectorCanvas::setOnionSkinEnabled);
 
     m_viewMenu->addSeparator();
 
@@ -243,11 +283,24 @@ void MainWindow::createToolBars()
 
     QAction *resetZoomAct = m_mainToolBar->addAction("Reset", m_canvasView, &CanvasView::resetZoom);
     resetZoomAct->setToolTip("Reset Zoom (Ctrl+0)");
+
+    m_mainToolBar->addSeparator();
+
+    // NEW: Project Settings Shortcut
+    QAction *settingsAct = m_mainToolBar->addAction("⚙️");
+    settingsAct->setToolTip("Project Settings");
+
+    // Logic to jump to the Settings Tab (Index 3)
+    connect(settingsAct, &QAction::triggered, this, [this]() {
+        // Find the QTabWidget we created in createDockWindows
+        QTabWidget* tabs = findChild<QTabWidget*>("rightPanelTabs");
+        if (tabs) tabs->setCurrentIndex(3);
+    });
 }
 
 void MainWindow::createDockWindows()
 {
-    // Left side - Toolbox
+    // --- LEFT SIDE: TOOLBOX ---
     QDockWidget *toolDock = new QDockWidget("Tools", this);
     toolDock->setWidget(m_toolBox);
     toolDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -256,44 +309,73 @@ void MainWindow::createDockWindows()
     addDockWidget(Qt::LeftDockWidgetArea, toolDock);
     m_viewMenu->addAction(toolDock->toggleViewAction());
 
-    // Right side - Tab widget for Layers, Colors, Assets
+    // --- RIGHT SIDE: UTILITY TABS ---
+    // We create a container tab widget to hold Layers, Colors, Assets, and Settings
     QTabWidget *rightTabs = new QTabWidget();
+    rightTabs->setObjectName("rightPanelTabs"); // Named so the Toolbar can find it
+
     rightTabs->setStyleSheet(
         "QTabWidget::pane {"
-        "   border: none;"
-        "   background-color: #2d2d2d;"
+        "    border: none;"
+        "    background-color: #2d2d2d;"
         "}"
         "QTabBar::tab {"
-        "   background-color: #3a3a3a;"
-        "   color: #aaa;"
-        "   padding: 8px 16px;"
-        "   border: none;"
-        "   border-top-left-radius: 4px;"
-        "   border-top-right-radius: 4px;"
-        "   margin-right: 2px;"
+        "    background-color: #3a3a3a;"
+        "    color: #aaa;"
+        "    padding: 8px 16px;"
+        "    border: none;"
+        "    border-top-left-radius: 4px;"
+        "    border-top-right-radius: 4px;"
+        "    margin-right: 2px;"
         "}"
         "QTabBar::tab:selected {"
-        "   background-color: #2d2d2d;"
-        "   color: white;"
+        "    background-color: #2d2d2d;"
+        "    color: white;"
         "}"
         "QTabBar::tab:hover {"
-        "   background-color: #4a4a4a;"
+        "    background-color: #4a4a4a;"
         "}"
         );
 
+    // 1. Layers Tab
     rightTabs->addTab(m_layerPanel, "Layers");
+
+    // 2. Colors Tab
     rightTabs->addTab(m_colorPicker, "Colors");
+
+    // 3. Assets Tab
     rightTabs->addTab(m_assetLibrary, "Assets");
 
+    // 4. Project Settings Tab (INTEGRATION)
+    // We initialize it here and pass the project pointer so it can edit data
+    m_projectSettings = new ProjectSettings(m_project, this);
+    rightTabs->addTab(m_projectSettings, "Settings");
+
+    // --- LOGIC: CONNECT SETTINGS TO CANVAS ---
+    connect(m_projectSettings, &ProjectSettings::settingsChanged, this, [this]() {
+        // Update the drawing area size based on the new project width/height
+        m_canvasView->setFixedSize(m_project->width(), m_project->height());
+        m_canvas->update(); // Tells the internal canvas to redraw for the new size
+
+        // Refresh the canvas and timeline
+        m_canvas->update();
+        m_timeline->update();
+
+        // Mark project as edited
+        m_isModified = true;
+        updateWindowTitle();
+    });
+
+    // Wrap the tabs in a Dock Widget
     QDockWidget *rightDock = new QDockWidget("Panel", this);
     rightDock->setWidget(rightTabs);
     rightDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     rightDock->setMinimumWidth(300);
     rightDock->setMaximumWidth(450);
-    rightDock->setTitleBarWidget(new QWidget()); // Hide title bar
+    rightDock->setTitleBarWidget(new QWidget()); // Hides the bulky "Panel" title bar
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
-    // Bottom - Timeline
+    // --- BOTTOM: TIMELINE ---
     QDockWidget *timelineDock = new QDockWidget("Timeline", this);
     timelineDock->setWidget(m_timeline);
     timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
@@ -419,4 +501,247 @@ void MainWindow::updateWindowTitle()
         title += " *";
     }
     setWindowTitle(title);
+}
+
+void MainWindow::exportToMp4() {
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Export MP4", "", "Video Files (*.mp4)");
+
+    if (fileName.isEmpty()) return;
+
+    if (!fileName.endsWith(".mp4", Qt::CaseInsensitive)) {
+        fileName += ".mp4";
+    }
+
+    // Verify FFmpeg is installed
+    QProcess testProcess;
+    testProcess.start("ffmpeg", QStringList() << "-version");
+    if (!testProcess.waitForFinished(3000) || testProcess.exitCode() != 0) {
+        QMessageBox::critical(this, "FFmpeg Not Found",
+                              "FFmpeg is not installed.\n\n"
+                              "Install it with:\nsudo pacman -S ffmpeg");
+        return;
+    }
+
+    // Get project settings
+    int fps = m_project->fps();
+    int width = m_project->width();
+    int height = m_project->height();
+    int totalFrames = m_project->totalFrames();
+
+    if (totalFrames == 0) {
+        QMessageBox::warning(this, "No Frames",
+                             "The project has no frames to export.");
+        return;
+    }
+
+    // Ensure dimensions are even (required for H.264)
+    if (width % 2 != 0) width++;
+    if (height % 2 != 0) height++;
+
+    // Create progress dialog
+    QProgressDialog progress("Rendering frames...", "Cancel", 0, totalFrames, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+
+    // Start FFmpeg process
+    QProcess ffmpeg;
+    QStringList args;
+    args << "-y"                            // Overwrite output
+         << "-f" << "image2pipe"            // Read images from pipe
+         << "-vcodec" << "png"              // Input format
+         << "-r" << QString::number(fps)    // Frame rate
+         << "-i" << "-"                     // Read from stdin
+         << "-vcodec" << "libx264"          // H.264 codec
+         << "-preset" << "medium"           // Encoding speed/quality
+         << "-pix_fmt" << "yuv420p"         // Pixel format
+         << "-crf" << "18"                  // Quality (0-51, lower=better)
+         << fileName;
+
+    ffmpeg.start("ffmpeg", args);
+
+    if (!ffmpeg.waitForStarted(5000)) {
+        QMessageBox::critical(this, "Error",
+                              "Failed to start FFmpeg process.");
+        return;
+    }
+
+    // Save current frame to restore later
+    int originalFrame = m_project->currentFrame();
+    bool exportSuccess = true;
+
+    // Render each frame
+    for (int i = 0; i < totalFrames; ++i) {
+        if (progress.wasCanceled()) {
+            ffmpeg.kill();
+            ffmpeg.waitForFinished();
+            exportSuccess = false;
+            break;
+        }
+
+        progress.setValue(i);
+        progress.setLabelText(QString("Rendering frame %1 of %2...")
+                                  .arg(i + 1).arg(totalFrames));
+        QApplication::processEvents();
+
+        // Set project to this frame
+        m_project->setCurrentFrame(i);
+        m_canvas->refreshFrame();
+
+        // Create image and render canvas to it
+        QImage frameImage(width, height, QImage::Format_ARGB32);
+        frameImage.fill(Qt::white);
+
+        QPainter painter(&frameImage);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+        // Render the canvas scene to the image
+        m_canvas->render(&painter,
+                                  QRectF(0, 0, width, height),
+                                  QRectF(0, 0, m_project->width(), m_project->height()));
+
+        painter.end();
+
+        // Convert to PNG and write to FFmpeg
+        QByteArray pngData;
+        QBuffer buffer(&pngData);
+        buffer.open(QIODevice::WriteOnly);
+
+        if (!frameImage.save(&buffer, "PNG")) {
+            QMessageBox::critical(this, "Error",
+                                  QString("Failed to encode frame %1").arg(i));
+            exportSuccess = false;
+            break;
+        }
+
+        qint64 written = ffmpeg.write(pngData);
+        if (written != pngData.size()) {
+            QMessageBox::critical(this, "Error",
+                                  "Failed to write frame data to FFmpeg");
+            exportSuccess = false;
+            break;
+        }
+
+        ffmpeg.waitForBytesWritten(5000);
+    }
+
+    // Close FFmpeg input and wait for completion
+    if (exportSuccess) {
+        progress.setLabelText("Finalizing video...");
+        progress.setRange(0, 0); // Indeterminate
+
+        ffmpeg.closeWriteChannel();
+
+        if (!ffmpeg.waitForFinished(30000)) {
+            QMessageBox::critical(this, "Error",
+                                  "FFmpeg timed out while finalizing video");
+            exportSuccess = false;
+        } else if (ffmpeg.exitCode() != 0) {
+            QString errorOutput = QString::fromUtf8(ffmpeg.readAllStandardError());
+            QMessageBox::critical(this, "FFmpeg Error",
+                                  "FFmpeg failed:\n\n" + errorOutput);
+            exportSuccess = false;
+        }
+    }
+
+    progress.close();
+
+    // Restore original frame
+    m_project->setCurrentFrame(originalFrame);
+    m_canvas->refreshFrame();
+
+    if (exportSuccess) {
+        QMessageBox::information(this, "Export Complete",
+                                 QString("Video exported successfully!\n\n%1\n\n"
+                                         "Duration: %2 frames at %3 FPS")
+                                     .arg(fileName)
+                                     .arg(totalFrames)
+                                     .arg(fps));
+    }
+}
+
+void MainWindow::exportToMp4_Alternative() {
+    QString fileName = QFileDialog::getSaveFileName(
+        this, "Export MP4", "", "Video Files (*.mp4)");
+
+    if (fileName.isEmpty()) return;
+    if (!fileName.endsWith(".mp4")) fileName += ".mp4";
+
+    // Check FFmpeg
+    QProcess test;
+    test.start("ffmpeg", QStringList() << "-version");
+    if (!test.waitForFinished(3000)) {
+        QMessageBox::critical(this, "Error",
+                              "FFmpeg not found. Install: sudo pacman -S ffmpeg");
+        return;
+    }
+
+    int fps = m_project->fps();
+    int totalFrames = m_project->totalFrames();
+
+    if (totalFrames == 0) {
+        QMessageBox::warning(this, "No Frames", "No frames to export.");
+        return;
+    }
+
+    QProgressDialog progress("Exporting...", "Cancel", 0, totalFrames, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.show();
+
+    // Start FFmpeg
+    QProcess ffmpeg;
+    ffmpeg.start("ffmpeg", QStringList()
+                               << "-y" << "-f" << "image2pipe" << "-vcodec" << "png"
+                               << "-r" << QString::number(fps) << "-i" << "-"
+                               << "-vcodec" << "libx264" << "-preset" << "medium"
+                               << "-pix_fmt" << "yuv420p" << "-crf" << "18"
+                               << fileName);
+
+    if (!ffmpeg.waitForStarted()) {
+        QMessageBox::critical(this, "Error", "Failed to start FFmpeg");
+        return;
+    }
+
+    int originalFrame = m_project->currentFrame();
+
+    for (int i = 0; i < totalFrames; ++i) {
+        if (progress.wasCanceled()) {
+            ffmpeg.kill();
+            break;
+        }
+
+        progress.setValue(i);
+        QApplication::processEvents();
+
+        m_project->setCurrentFrame(i);
+        m_canvas->update();
+        QApplication::processEvents();
+
+        // Grab canvas as image
+        QImage frame = m_canvasView->grab().toImage();
+
+        QByteArray ba;
+        QBuffer buf(&ba);
+        buf.open(QIODevice::WriteOnly);
+        frame.save(&buf, "PNG");
+
+        ffmpeg.write(ba);
+    }
+
+    ffmpeg.closeWriteChannel();
+    ffmpeg.waitForFinished(30000);
+
+    m_project->setCurrentFrame(originalFrame);
+    m_canvas->update();
+
+    if (ffmpeg.exitCode() == 0) {
+        QMessageBox::information(this, "Success",
+                                 "Video exported to:\n" + fileName);
+    } else {
+        QMessageBox::critical(this, "Error",
+                              "Export failed:\n" +
+                                  QString::fromUtf8(ffmpeg.readAllStandardError()));
+    }
 }
