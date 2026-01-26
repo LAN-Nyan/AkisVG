@@ -1,6 +1,7 @@
 #include "brushtool.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/pathobject.h"
+#include <QGraphicsSceneMouseEvent>
 
 BrushTool::BrushTool(QObject *parent)
     : Tool(ToolType::Brush, parent)
