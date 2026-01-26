@@ -2,6 +2,29 @@
 #include <QPainter>
 #include <QFontMetrics>
 
+VectorObject* TextObject::clone() const {
+    TextObject* copy = new TextObject();
+
+    // Copy Text-specific data
+    copy->setText(this->m_text);
+    copy->setFontSize(this->m_fontSize);
+    copy->setFontFamily(this->m_fontFamily);
+
+    // Copy base VectorObject properties
+    copy->setStrokeColor(this->strokeColor());
+    copy->setFillColor(this->fillColor());
+    copy->setStrokeWidth(this->strokeWidth());
+    copy->setObjectOpacity(this->objectOpacity());
+
+    // Copy QGraphicsItem transformations
+    copy->setPos(this->pos());
+    copy->setRotation(this->rotation());
+    copy->setScale(this->scale());
+    copy->setZValue(this->zValue());
+
+    return copy;
+}
+
 TextObject::TextObject(QGraphicsItem *parent)
     : VectorObject(parent)
     , m_text("Text")
@@ -64,5 +87,3 @@ void TextObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
         painter->drawRect(boundingRect());
     }
 }
-
-

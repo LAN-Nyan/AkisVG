@@ -9,6 +9,7 @@ class TextObject : public VectorObject
 {
 public:
     explicit TextObject(QGraphicsItem *parent = nullptr);
+    virtual VectorObject* clone() const override;
 
     VectorObjectType objectType() const override { return VectorObjectType::Text; }
 

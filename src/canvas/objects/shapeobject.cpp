@@ -8,6 +8,26 @@ ShapeObject::ShapeObject(Type type, QGraphicsItem *parent)
 {
 }
 
+VectorObject* ShapeObject::clone() const {
+    // Assuming your constructor takes the shape type
+    ShapeObject* copy = new ShapeObject(this->m_shapeType);
+
+    // Copy Shape-specific geometry (e.g., the rectangle bounds)
+    copy->setRect(this->m_rect);
+
+    // Copy base VectorObject properties
+    copy->setStrokeColor(this->strokeColor());
+    copy->setFillColor(this->fillColor());
+    copy->setStrokeWidth(this->strokeWidth());
+    copy->setObjectOpacity(this->objectOpacity());
+
+    copy->setPos(this->pos());
+    copy->setRotation(this->rotation());
+    copy->setScale(this->scale());
+
+    return copy;
+}
+
 void ShapeObject::setRect(const QRectF &rect)
 {
     prepareGeometryChange();

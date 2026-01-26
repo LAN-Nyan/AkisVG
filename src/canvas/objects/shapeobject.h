@@ -11,7 +11,7 @@ public:
         Rectangle,
         Ellipse
     };
-
+    virtual VectorObject* clone() const override;
     explicit ShapeObject(Type type, QGraphicsItem *parent = nullptr);
 
     VectorObjectType objectType() const override {
