@@ -1,70 +1,58 @@
-#include "filltool.h"
+#include "penciltool.h"
 #include "canvas/vectorcanvas.h"
-#include <QMouseEvent>
-#include <QStack>
+#include "canvas/objects/pathobject.h"
 #include <QGraphicsSceneMouseEvent>
 
-FillTool::FillTool(QObject *parent)
-    : Tool(ToolType::Fill, parent) // Pass ToolType::Fill here
+PencilTool::PencilTool(QObject *parent)
+    : Tool(ToolType::Pencil, parent)
+    , m_currentPath(nullptr)
 {
 }
 
-void FillTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
+void PencilTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    if (event->button() != Qt::LeftButton) {
-        event->setAccepted(false);
-        return;
-    }
-
-    // Accept the event so canvas knows we handled it
+    // CRITICAL: Accept the event so canvas knows we're handling it
     event->setAccepted(true);
 
-    QImage image = canvas->currentImage();
-    qreal dpr = image.devicePixelRatio();
+    // 1. Safety check: ensure we don't have a path already
+    m_currentPath = new PathObject();
+    m_currentPath->setStrokeColor(m_strokeColor);
+    m_currentPath->setStrokeWidth(m_strokeWidth);
 
-    // Convert scene coordinate to image coordinate
-    QPointF scenePos = event->scenePos() - canvas->sceneRect().topLeft();
-    QPoint startPoint = (scenePos * dpr).toPoint();
+    // 2. Start the path at the mouse position
+    QPainterPath path;
+    path.moveTo(event->scenePos());
+    m_currentPath->setPath(path);
 
-    if (!image.rect().contains(startPoint)) return;
-
-    // Perform flood fill
-    floodFill(image, startPoint, m_fillColor);
-
-    // Convert the filled image back to a path/object
-    // For now, we'll create a rectangle with the fill color
-    // A better approach would be to convert the filled region to a vector shape
-    canvas->updateCurrentImage(image);
-    canvas->update();
-
-    // TODO: Convert filled raster image to vector objects
-    // For a proper implementation, you'd want to trace the filled region
-    // and create vector shapes from it
+    // 3. Add to canvas (which handles the UndoStack)
+    canvas->addObject(m_currentPath);
 }
 
-void FillTool::floodFill(QImage &image, const QPoint &start, const QColor &fillColor)
+void PencilTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    QColor targetColor = image.pixelColor(start);
+    if (!m_currentPath) return;
 
-    if (targetColor == fillColor) return;
-    if (start.x() < 0 || start.y() < 0 || start.x() >= image.width() || start.y() >= image.height()) return;
+    QPainterPath path = m_currentPath->path();
+    QPointF newPoint = event->scenePos();
+    QPointF lastPoint = path.currentPosition();
 
-    QStack<QPoint> stack;
-    stack.push(start);
+    // 4. Distance threshold (prevents jitter and bloated path data)
+    if (QLineF(lastPoint, newPoint).length() > 2.0) {
+        // Simple linear approach for a "Pencil":
+        path.lineTo(newPoint);
 
-    while (!stack.isEmpty()) {
-        QPoint p = stack.pop();
-        int x = p.x();
-        int y = p.y();
-
-        if (x < 0 || y < 0 || x >= image.width() || y >= image.height()) continue;
-        if (image.pixelColor(x, y) != targetColor) continue;
-
-        image.setPixelColor(x, y, fillColor);
-
-        stack.push(QPoint(x + 1, y));
-        stack.push(QPoint(x - 1, y));
-        stack.push(QPoint(x, y + 1));
-        stack.push(QPoint(x, y - 1));
+        // Update the object and trigger a scene update
+        m_currentPath->setPath(path);
+        canvas->update();
     }
+}
+
+void PencilTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
+{
+    if (!m_currentPath) return;
+
+    // Finalize the path
+    m_currentPath = nullptr;
+
+    Tool::mouseReleaseEvent(event, canvas);
 }

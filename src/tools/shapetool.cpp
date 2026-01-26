@@ -88,4 +88,3 @@ void ShapeTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas 
 
     Tool::mouseReleaseEvent(event, canvas);
 }
-
