@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QScrollBar>
 #include <QAction>
+#include <QInputDialog>
 
 // --- Internal Helper: LayerListWidget ---
 // Kept internal because only Timeline uses it
@@ -109,9 +110,9 @@ private:
 FrameGridWidget::FrameGridWidget(Project *project, QWidget *parent)
     : QWidget(parent)
     , m_project(project)
-    , m_onionFrames(2)        // Listed 1st in .h
-    , m_isDragging(false)     // Listed 2nd in .h
-    , m_onionSkinEnabled(false) // Listed 3rd in .h
+    , m_onionFrames(2)
+    , m_isDragging(false)
+    , m_onionSkinEnabled(false)
 {
     setMinimumHeight(200);
     connect(project, &Project::currentFrameChanged, this, QOverload<>::of(&QWidget::update));
@@ -119,7 +120,6 @@ FrameGridWidget::FrameGridWidget(Project *project, QWidget *parent)
 }
 
 QSize FrameGridWidget::sizeHint() const {
-    // Now valid because we included project.h
     return QSize(m_project->totalFrames() * 16, 200);
 }
 
@@ -174,22 +174,53 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
             }
         }
 
-
-        // Frames
+        // Frames - NEW: Enhanced to show extended frames in construction yellow
         for (int frame = 1; frame <= m_project->totalFrames(); ++frame) {
             int x = (frame - 1) * cellWidth;
             QRect cellRect(x, y, cellWidth, rowHeight);
 
+            // Highlight current frame
             if (frame == m_project->currentFrame()) {
                 painter.fillRect(cellRect, QColor(42, 130, 218, 20));
             }
 
-            if (layer->hasContentAtFrame(frame)) {
+            // NEW: Check if this is a key frame or an extended frame
+            bool isKeyFrame = layer->isKeyFrame(frame);
+            bool isExtended = layer->isFrameExtended(frame);
+
+            if (isKeyFrame) {
+                // This frame has actual content - draw in layer color
                 QColor col = layer->color();
                 painter.fillRect(cellRect.adjusted(2, 8, -2, -8), col);
                 painter.setPen(col.lighter(120));
                 painter.drawRect(cellRect.adjusted(2, 8, -2, -8));
+
+                // NEW: If this key frame is extended, draw a marker
+                int extendEnd = layer->getExtensionEnd(frame);
+                if (extendEnd > frame) {
+                    // Draw a small triangle in the corner to indicate extension
+                    QPolygon triangle;
+                    triangle << QPoint(x + cellWidth - 2, y + 8)
+                             << QPoint(x + cellWidth - 2, y + 13)
+                             << QPoint(x + cellWidth - 7, y + 8);
+                    painter.setBrush(QColor(255, 193, 7)); // Yellow
+                    painter.setPen(Qt::NoPen);
+                    painter.drawPolygon(triangle);
+                }
+            } else if (isExtended) {
+                // NEW: This frame is extended from a key frame - draw in construction yellow
+                QColor yellowExtended(255, 193, 7, 180); // Construction yellow with transparency
+                painter.fillRect(cellRect.adjusted(2, 8, -2, -8), yellowExtended);
+                painter.setPen(yellowExtended.darker(110));
+                painter.drawRect(cellRect.adjusted(2, 8, -2, -8));
+
+                // Draw diagonal lines to show it's extended (hatching pattern)
+                painter.setPen(QPen(QColor(255, 193, 7, 100), 1));
+                for (int dx = 0; dx < cellWidth; dx += 4) {
+                    painter.drawLine(x + dx, y + 8, x + dx + 8, y + rowHeight - 8);
+                }
             }
+
             painter.setPen(QColor(25, 25, 25));
             painter.drawRect(cellRect);
         }
@@ -213,19 +244,17 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
 void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
     const int cellWidth = 16;
-    // Now valid because we included QMouseEvent header
     int frame = (event->pos().x() / cellWidth) + 1;
     if (frame >= 1 && frame <= m_project->totalFrames()) {
         m_project->setCurrentFrame(frame);
         m_isDragging = true;
     }
 }
+
 void FrameGridWidget::mouseMoveEvent(QMouseEvent *event) {
     if (m_isDragging) {
         const int cellWidth = 16;
         int frame = (event->pos().x() / cellWidth) + 1;
-
-        // Use qBound to keep the frame within project limits
         frame = qBound(1, frame, m_project->totalFrames());
 
         if (frame != m_project->currentFrame()) {
@@ -237,22 +266,107 @@ void FrameGridWidget::mouseMoveEvent(QMouseEvent *event) {
 
 void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
     QMenu menu(this);
-    QAction *add10 = menu.addAction("Add 10 Frames");
-    QAction *add24 = menu.addAction("Add 24 Frames");
 
-    QAction *selected = menu.exec(event->globalPos());
-    if (selected) {
-        if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
-        else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+    // Calculate which frame and layer was clicked
+    const int cellWidth = 16;
+    const int headerHeight = 32;
+    const int rowHeight = 36;
 
-        // This is the magic line:
-        updateGeometry();
-        // This forces the ScrollArea to re-read sizeHint() and update scrollbars
+    int clickedFrame = (event->pos().x() / cellWidth) + 1;
+    int y = event->pos().y();
 
-        update();
+    if (y < headerHeight) {
+        // Clicked in header - show frame count menu
+        QAction *add10 = menu.addAction("Add 10 Frames");
+        QAction *add24 = menu.addAction("Add 24 Frames");
+
+        QAction *selected = menu.exec(event->globalPos());
+        if (selected) {
+            if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
+            else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+            updateGeometry();
+            update();
+        }
+        return;
+    }
+
+    // Calculate which layer was clicked
+    auto layers = m_project->layers();
+    int layerRow = (y - headerHeight) / rowHeight;
+    int layerIndex = layers.size() - 1 - layerRow;
+
+    if (layerIndex < 0 || layerIndex >= layers.size()) {
+        return;
+    }
+
+    Layer *layer = layers[layerIndex];
+
+    // NEW: Frame extension menu
+    bool hasContent = layer->isKeyFrame(clickedFrame);
+    bool isExtended = layer->isFrameExtended(clickedFrame);
+    int keyFrame = layer->getKeyFrameFor(clickedFrame);
+
+    if (hasContent) {
+        // This is a key frame - offer to extend it
+        QAction *extendAction = menu.addAction("🎬 Extend Frame...");
+        int currentExtension = layer->getExtensionEnd(clickedFrame);
+        if (currentExtension > clickedFrame) {
+            QAction *clearExtendAction = menu.addAction(QString("✂️ Clear Extension (currently to frame %1)").arg(currentExtension));
+
+            QAction *selected = menu.exec(event->globalPos());
+            if (selected == extendAction) {
+                bool ok;
+                int toFrame = QInputDialog::getInt(this, "Extend Frame",
+                                                   QString("Extend frame %1 to frame:").arg(clickedFrame),
+                                                   currentExtension > clickedFrame ? currentExtension : clickedFrame + 10,
+                                                   clickedFrame + 1, m_project->totalFrames(), 1, &ok);
+                if (ok) {
+                    layer->extendFrameTo(clickedFrame, toFrame);
+                    update();
+                }
+            } else if (selected == clearExtendAction) {
+                layer->clearFrameExtension(clickedFrame);
+                update();
+            }
+        } else {
+            QAction *selected = menu.exec(event->globalPos());
+            if (selected == extendAction) {
+                bool ok;
+                int toFrame = QInputDialog::getInt(this, "Extend Frame",
+                                                   QString("Extend frame %1 to frame:").arg(clickedFrame),
+                                                   clickedFrame + 10, clickedFrame + 1, m_project->totalFrames(), 1, &ok);
+                if (ok) {
+                    layer->extendFrameTo(clickedFrame, toFrame);
+                    update();
+                }
+            }
+        }
+    } else if (isExtended) {
+        // This is an extended frame - show info and option to go to key frame
+        QAction *gotoKeyAction = menu.addAction(QString("📍 Go to Key Frame %1").arg(keyFrame));
+        QAction *clearAction = menu.addAction(QString("✂️ Clear Extension"));
+
+        QAction *selected = menu.exec(event->globalPos());
+        if (selected == gotoKeyAction) {
+            m_project->setCurrentFrame(keyFrame);
+        } else if (selected == clearAction) {
+            layer->clearFrameExtension(keyFrame);
+            update();
+        }
+    } else {
+        // Empty frame - show standard options
+        QAction *add10 = menu.addAction("Add 10 Frames");
+        QAction *add24 = menu.addAction("Add 24 Frames");
+
+        QAction *selected = menu.exec(event->globalPos());
+        if (selected) {
+            if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
+            else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+            updateGeometry();
+            update();
+        }
     }
 }
-
 
 void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
     Q_UNUSED(event);
@@ -260,6 +374,7 @@ void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 // --- TimelineWidget Implementation ---
+// (Rest of the implementation remains the same as before)
 
 TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     : QWidget(parent)
@@ -421,12 +536,11 @@ void TimelineWidget::timerEvent(QTimerEvent *event) {
         }
     }
 }
+
 void TimelineWidget::setOnionSkinEnabled(bool enabled) {
     m_onionSkinEnabled = enabled;
-    // Find the grid child and update it
     FrameGridWidget *grid = findChild<FrameGridWidget*>();
     if (grid) {
-        grid->setOnionSkin(enabled, 3); // Default to 3 frames
+        grid->setOnionSkin(enabled, 3);
     }
 }
-
