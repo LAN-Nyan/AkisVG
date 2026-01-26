@@ -1,4 +1,5 @@
 #include "tool.h"
+#include "canvas/vectorcanvas.h"
 
 Tool::Tool(ToolType type, QObject *parent)
     : QObject(parent)
@@ -9,13 +10,14 @@ Tool::Tool(ToolType type, QObject *parent)
     , m_isDrawing(false)
 {
     switch (type) {
-    case ToolType::Select:   m_name = "Select"; break;
-    case ToolType::Pencil:   m_name = "Pencil"; break;
-    case ToolType::Brush:    m_name = "Brush"; break;
-    case ToolType::Eraser:   m_name = "Eraser"; break;
+    case ToolType::Select:    m_name = "Select"; break;
+    case ToolType::Pencil:    m_name = "Pencil"; break;
+    case ToolType::Brush:     m_name = "Brush"; break;
+    case ToolType::Eraser:    m_name = "Eraser"; break;
     case ToolType::Rectangle: m_name = "Rectangle"; break;
-    case ToolType::Ellipse:  m_name = "Ellipse"; break;
-    case ToolType::Text:     m_name = "Text"; break;
+    case ToolType::Ellipse:   m_name = "Ellipse"; break;
+    case ToolType::Text:      m_name = "Text"; break;
+    case ToolType::Fill:      m_name = "Fill"; break; // Added this line
     }
 }
 
@@ -45,8 +47,9 @@ void Tool::setStrokeWidth(qreal width)
 
 void Tool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    Q_UNUSED(event)
     Q_UNUSED(canvas)
+    // By default, drawing tools accept events (SelectTool overrides this)
+    event->setAccepted(true);
     m_isDrawing = true;
 }
 
