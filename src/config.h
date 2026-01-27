@@ -26,12 +26,12 @@ inline QMap<QString, QString> toolIcons() {
     return {
             // Tool Name         Icon Filename
             {"select",          "select.svg"},
-            {"pencil",          "pencil.svg"},
+            {"pencil",          "assets/Pencil.svg"},
             {"brush",           "assets/Brush.svg"},
-            {"eraser",          "eraser.svg"},
-            {"fill",            "fill.svg"},
-            {"rectangle",       "rectangle.svg"},
-            {"ellipse",         "ellipse.svg"},
+            {"eraser",          "assets/Eraser.svg"},
+            {"fill",            "assets/Fill.svg"},
+            {"rectangle",       "assets/Square.svg"},
+            {"ellipse",         "assets/Circle.svg"},
             {"text",            "text.svg"},
 
             // Add more tools here as needed:
