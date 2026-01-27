@@ -9,6 +9,11 @@ VectorObject::VectorObject(QGraphicsItem *parent)
 {
     setFlag(QGraphicsItem::ItemIsSelectable, true);
     setFlag(QGraphicsItem::ItemIsMovable, true);
+    
+    // PERFORMANCE: Enable caching for static objects
+    // This caches the rendered item in device coordinates
+    // Comment out if objects change frequently or if it causes issues
+    setCacheMode(QGraphicsItem::DeviceCoordinateCache);
 }
 
 void VectorObject::setStrokeColor(const QColor &color)

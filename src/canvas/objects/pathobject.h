@@ -3,6 +3,15 @@
 
 #include "vectorobject.h"
 #include <QPainterPath>
+#include <QVector>
+#include <QPointF>
+
+enum class PathTexture {
+    Smooth,
+    Grainy,
+    Chalk,
+    Canvas
+};
 
 class PathObject : public VectorObject
 {
@@ -22,8 +31,24 @@ public:
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
                QWidget *widget = nullptr) override;
 
+    // Smooth path settings
+    void setSmoothPaths(bool smooth) { m_smoothPaths = smooth; }
+    bool smoothPaths() const { return m_smoothPaths; }
+    void setMinPointDistance(qreal distance) { m_minPointDistance = distance; }
+    qreal minPointDistance() const { return m_minPointDistance; }
+    
+    // Texture support
+    void setTexture(PathTexture texture) { m_texture = texture; }
+    PathTexture texture() const { return m_texture; }
+
 private:
+    void rebuildSmoothPath(); // Rebuild the smooth path from raw points
+
     QPainterPath m_path;
+    bool m_smoothPaths;
+    qreal m_minPointDistance;
+    QVector<QPointF> m_rawPoints; // Store the actual input points
+    PathTexture m_texture;
 };
 
 #endif // PATHOBJECT_H
