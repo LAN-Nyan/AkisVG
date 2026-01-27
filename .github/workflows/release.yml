@@ -34,8 +34,16 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.5.3'
-          arch: 'win64_msvc2019_64' # Explicitly set architecture
-          modules: 'qtmultimedia qtsvg' # Try lowercase, no spaces after comma
+          arch: 'win64_msvc2019_64'
+          # We use the specific names that aqt looks for in the XML
+          modules: 'qtmultimedia qtsvg'
+          # If the above fails, try: modules: 'qtmultimedia' (and see if svg is included)
+          setup-python: 'true'
+
+      # ADD THIS STEP TO DEBUG IF IT FAILS AGAIN
+      - name: List available modules (Debug)
+        if: failure()
+        run: python -m aqt list-qt windows desktop --modules 6.5.3 win64_msvc2019_64
 
       - name: Install Ninja & Tools
         shell: bash
