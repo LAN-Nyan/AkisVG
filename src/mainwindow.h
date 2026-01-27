@@ -1,78 +1,69 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#ifndef ICONCONFIG_H
+#define ICONCONFIG_H
 
-#include <QMainWindow>
-#include <QToolBar>
-#include <QStatusBar>
-#include <QDockWidget>
-#include <QUndoStack>
-#include "panels/settingspanel.h"
+#include <QString>
+#include <QMap>
 
-// Forward declarations
-class CanvasView;
-class VectorCanvas;
-class ToolBox;
-class LayerPanel;
-class ColorPicker;
-class AssetLibrary;
-class TimelineWidget;
-class Project;
+/**
+ * Icon Configuration
+ *
+ * This file contains all icon paths used in the application.
+ * Edit these paths to change which icons are used for each tool.
+ *
+ * Icon files should be placed in the assets/icons/ directory.
+ * You can use any SVG file - just update the path here.
+ */
 
-class MainWindow : public QMainWindow
-{
-    Q_OBJECT
+namespace IconConfig {
 
-public:
-    explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+// Get full path for a tool icon using Qt resources
+inline QString getToolIconPath(const QString &toolName) {
+    // Map tool names to resource paths
+    static QMap<QString, QString> iconMap = {
+        {"select", ":/icons/select.svg"},  // Will need to be added
+        {"pencil", ":/icons/pencil.svg"},
+        {"brush", ":/icons/brush.svg"},
+        {"eraser", ":/icons/eraser.svg"},
+        {"fill", ":/icons/fill.svg"},
+        {"rectangle", ":/icons/rectangle.svg"},
+        {"ellipse", ":/icons/ellipse.svg"},
+        {"text", ":/icons/text.svg"},  // Will need to be added
+        {"line", ":/icons/line.svg"},
+        {"eyedropper", ":/icons/eyedropper.svg"},
+        {"blend", ":/icons/brush.svg"},  // Reuse brush icon for now
+    };
+    
+    return iconMap.value(toolName, "");
+}
 
-protected:
-    void closeEvent(QCloseEvent *event) override;
+// Legacy functions kept for compatibility
+inline QString iconBasePath() {
+    return ":/icons/";
+}
 
-private slots:
-    void newProject();
-    void openProject();
-    void saveProject();
-    void saveProjectAs();
-    void exportFrame();
-    void about();
-    void exportToMp4();
-    void exportToMp4_Alternative();
+inline QMap<QString, QString> toolIcons() {
+    return {
+        {"select",          "select.svg"},
+        {"pencil",          "pencil.svg"},
+        {"brush",           "brush.svg"},
+        {"eraser",          "eraser.svg"},
+        {"fill",            "fill.svg"},
+        {"rectangle",       "rectangle.svg"},
+        {"ellipse",         "ellipse.svg"},
+        {"text",            "text.svg"},
+    };
+}
 
-private:
-    void createActions();
-    void createMenus();
-    void createToolBars();
-    void createDockWindows();
-    void setupCanvas();
-    void updateWindowTitle();
+// Alternative icon sets (optional - for future use)
+namespace AlternativeIcons {
+inline QString iconBasePath() {
+    return ":/icons/alternative/";
+}
 
-    // YOU I D I O T WHY DID I PUT THIS AT THE BOTTOM
-    QUndoStack *m_undoStack;
+// You can define alternative icon sets here
+// For example, a "minimal" style or "outlined" style
+}
 
+} // namespace IconConfig
 
-    // Core components
-    Project *m_project;
-    VectorCanvas *m_canvas;
-    CanvasView *m_canvasView;
-    ToolBox *m_toolBox;
-    LayerPanel *m_layerPanel;
-    ColorPicker *m_colorPicker;
-    AssetLibrary *m_assetLibrary;
-    TimelineWidget *m_timeline;
-    ProjectSettings *m_projectSettings;
-
-    // UI elements
-    QMenu *m_fileMenu;
-    QMenu *m_editMenu;
-    QMenu *m_viewMenu;
-    QMenu *m_helpMenu;
-
-    QToolBar *m_mainToolBar;
-    QStatusBar *m_statusBar;
-
-    QString m_currentFile;
-    bool m_isModified;
-};
-
-#endif // MAINWINDOW_H
+#endif // ICONCONFIG_H
