@@ -2,16 +2,16 @@ name: Build and Release v0.1
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # Needed to upload artifacts
     strategy:
       fail-fast: false
       matrix:
@@ -34,10 +34,12 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.5.3'
-          # Use the 'additional' naming if the short names fail
+          # Fixed module names for Qt6
           modules: 'qtmultimedia qtsvg'
+          # This ensures windeployqt is added to PATH automatically
+          setup-python: 'true'
 
-      - name: Install Dependencies & Ninja
+      - name: Install Ninja & Tools
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -52,6 +54,7 @@ jobs:
       - name: Configure and Build
         shell: bash
         run: |
+          # Use the QT_ROOT_DIR provided by the install-qt-action
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
@@ -60,7 +63,8 @@ jobs:
         shell: pwsh
         run: |
           cd build
-          windeployqt --release LuminaStudio.exe
+          # Use the environment variable set by jurplel/install-qt-action
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --release LuminaStudio.exe
           Compress-Archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
 
       - name: Package Linux/Mac
@@ -80,19 +84,21 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Critical: Allows creating the release
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            LuminaStudio-Linux/LuminaStudio-Linux.tar.gz
-            LuminaStudio-Windows/LuminaStudio-Windows.zip
-            LuminaStudio-Mac/LuminaStudio-Mac.dmg
-          tag_name: v0.1-${{ github.run_number }}
+          # Use wildcards to find the files inside the downloaded artifact folders
+          files: artifacts/**/*
+          tag_name: v0.1.${{ github.run_number }}
           name: Release v0.1 (Build ${{ github.run_number }})
           draft: false
           prerelease: false
