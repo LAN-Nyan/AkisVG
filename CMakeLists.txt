@@ -47,6 +47,7 @@ set(SOURCES
     src/canvas/objects/textobject.cpp
     src/core/commands.cpp
     src/canvas/objects/imageobject.cpp
+    src/tools/filltool.cpp
 )
 
 set(HEADERS
@@ -66,7 +67,13 @@ set(HEADERS
     src/canvas/objects/imageobject.h
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
+    src/panels/settingspanel.h src/panels/settingspanel.cpp
+    src/tools/filltool.h src/tools/filltool.cpp
+    src/panels/toolsettingspanel.h src/panels/toolsettingspanel.cpp
+    src/panels/toolbutton.h src/panels/toolbutton.cpp
+    src/config.h
+    src/tools/blendtool.h src/tools/blendtool.cpp)
 
 # Link Qt libraries - Added Qt6::Multimedia here
 target_link_libraries(${PROJECT_NAME} PRIVATE
