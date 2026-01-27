@@ -1,7 +1,7 @@
-## Lumina – Your Lightweight Animation Companion
+## AkisVG - Your Lightweight Animation Companion
 Hey there! We know you’re looking for something that’s lightweight, packed with crucial animation features, and built to grow with you. While we’re still in the early stages, this is just the beginning of what we’re creating—something you can rely on as it evolves.
 
- # Why Lumina?
+ # Why AkisVG?
 
 - Lightweight & Fast
 - Designed to run smoothly without slowing down your workflow.
