@@ -34,8 +34,8 @@ inline QMap<QString, QString> toolIcons() {
             {"ellipse",         "assets/Circle.svg"},
             {"text",            "text.svg"},
 
-            // Add more tools here as needed:
-            // {"your_tool",    "your_icon.svg"},
+            // Add more tools here as needed, if you fork this feel free to go wild:
+            // {"your_tool",    "your_icon.svg"}, 
             };
 }
 
