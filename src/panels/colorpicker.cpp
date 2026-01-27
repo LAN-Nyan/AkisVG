@@ -59,7 +59,7 @@ void ColorWheel::paintEvent(QPaintEvent *event)
 
     painter.fillPath(ring, hueGradient);
 
-    // Draw SV triangle
+    // Draw SV triangle with proper gradient
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
@@ -78,17 +78,64 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     triangle.lineTo(pBlack);
     triangle.closeSubpath();
 
-    // White to pure hue gradient
-    QLinearGradient whiteToHue(pWhite, pPure);
-    whiteToHue.setColorAt(0, Qt::white);
-    whiteToHue.setColorAt(1, pureHue);
-    painter.fillPath(triangle, whiteToHue);
-
-    // Black overlay for value
-    QLinearGradient blackOverlay(pWhite, pBlack);
-    blackOverlay.setColorAt(0, QColor(0, 0, 0, 0));
-    blackOverlay.setColorAt(1, QColor(0, 0, 0, 255));
-    painter.fillPath(triangle, blackOverlay);
+    // Create a proper HSV triangle:
+    // - Top vertex (pWhite) = White (S=0, V=1)
+    // - Bottom right (pPure) = Pure hue (S=1, V=1)
+    // - Bottom left (pBlack) = Black (S=0, V=0)
+    
+    // Draw using a raster approach for accurate gradient
+    QImage triangleImage(width(), height(), QImage::Format_ARGB32);
+    triangleImage.fill(Qt::transparent);
+    
+    QPainter imagePainter(&triangleImage);
+    imagePainter.setRenderHint(QPainter::Antialiasing);
+    
+    // For each pixel in the triangle, calculate the correct HSV color
+    QRect boundingRect = triangle.boundingRect().toRect();
+    boundingRect = boundingRect.intersected(triangleImage.rect());
+    
+    for (int y = boundingRect.top(); y <= boundingRect.bottom(); ++y) {
+        for (int x = boundingRect.left(); x <= boundingRect.right(); ++x) {
+            QPointF point(x, y);
+            if (!triangle.contains(point)) continue;
+            
+            // Calculate barycentric coordinates
+            QPointF v0 = pPure - pWhite;
+            QPointF v1 = pBlack - pWhite;
+            QPointF v2 = point - pWhite;
+            
+            qreal dot00 = QPointF::dotProduct(v0, v0);
+            qreal dot01 = QPointF::dotProduct(v0, v1);
+            qreal dot02 = QPointF::dotProduct(v0, v2);
+            qreal dot11 = QPointF::dotProduct(v1, v1);
+            qreal dot12 = QPointF::dotProduct(v1, v2);
+            
+            qreal denom = dot00 * dot11 - dot01 * dot01;
+            if (qAbs(denom) < 0.0001) continue;
+            
+            qreal invDenom = 1.0 / denom;
+            qreal u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+            qreal v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+            
+            // Clamp to triangle
+            if (u < 0 || v < 0 || u + v > 1) continue;
+            
+            // u = saturation (0 at white vertex, 1 at pure hue vertex)
+            // v = inverse value (0 at top/bottom edge, 1 at black vertex)
+            qreal saturation = u;
+            qreal value = 1.0 - v;
+            
+            QColor pixelColor = QColor::fromHsvF(hue, saturation, value);
+            imagePainter.setPen(pixelColor);
+            imagePainter.drawPoint(x, y);
+        }
+    }
+    
+    painter.drawImage(0, 0, triangleImage);
+    
+    // Draw triangle outline
+    painter.setPen(QPen(QColor(80, 80, 80), 1));
+    painter.drawPath(triangle);
 
     // SV indicator
     QPointF svPoint = svToPoint(m_currentColor.saturationF(), m_currentColor.valueF());
@@ -315,9 +362,56 @@ void ColorPicker::setupUI()
     connect(m_hexInput, &QLineEdit::editingFinished, this, &ColorPicker::onHexChanged);
     mainLayout->addWidget(m_hexInput);
 
+    // Color Palettes
+    QLabel *paletteLabel = new QLabel("Color Palettes");
+    paletteLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 4px;");
+    mainLayout->addWidget(paletteLabel);
+    
+    m_paletteCombo = new QComboBox();
+    m_paletteCombo->setStyleSheet(
+        "QComboBox {"
+        "   background-color: #2d2d2d;"
+        "   border: 2px solid #3a3a3a;"
+        "   border-radius: 4px;"
+        "   padding: 6px;"
+        "   color: white;"
+        "   font-size: 10px;"
+        "}"
+        "QComboBox:hover {"
+        "   border-color: #2a82da;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "   background-color: #2d2d2d;"
+        "   color: white;"
+        "   selection-background-color: #2a82da;"
+        "}"
+    );
+    
+    loadPalettes();  // Load palette data
+    
+    // Populate palette dropdown
+    for (const QString &paletteName : m_palettes.keys()) {
+        m_paletteCombo->addItem(paletteName);
+    }
+    
+    connect(m_paletteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ColorPicker::onPaletteChanged);
+    
+    mainLayout->addWidget(m_paletteCombo);
+    
+    // Palette colors display
+    m_paletteWidget = new QWidget();
+    QGridLayout *paletteGrid = new QGridLayout(m_paletteWidget);
+    paletteGrid->setSpacing(4);
+    paletteGrid->setContentsMargins(0, 0, 0, 0);
+    mainLayout->addWidget(m_paletteWidget);
+    
+    // Initialize palette display
+    updatePaletteDisplay();
+
     // Recent colors
     QLabel *recentLabel = new QLabel("Recent Colors");
-    recentLabel->setStyleSheet("font-size: 10px; color: #aaa;");
+    recentLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 8px;");
     mainLayout->addWidget(recentLabel);
 
     m_recentColorsWidget = new QWidget();
@@ -499,4 +593,127 @@ void ColorPicker::addToRecentColors(const QColor &color)
         m_recentColors.resize(16);
     }
     updateUI();
+}
+
+void ColorPicker::loadPalettes()
+{
+    // Default palette
+    m_palettes["Default"] = {
+        Qt::black, Qt::white, QColor("#808080"), QColor("#C0C0C0"),
+        Qt::red, QColor("#FF8080"), QColor("#800000"), QColor("#FF0080"),
+        Qt::green, QColor("#80FF80"), QColor("#008000"), QColor("#00FF80"),
+        Qt::blue, QColor("#8080FF"), QColor("#000080"), QColor("#0080FF"),
+        Qt::yellow, QColor("#FFFF80"), QColor("#808000"), QColor("#FF8000")
+    };
+    
+    // Skin Tones
+    m_palettes["Skin Tones"] = {
+        QColor("#8D5524"), QColor("#C68642"), QColor("#E0AC69"),QColor("#F1C27D"),
+        QColor("#FFDBAC"), QColor("#FFF0DC"), QColor("#4A312C"), QColor("#3E2723"),
+        QColor("#6D4C41"), QColor("#A1887F"), QColor("#D7CCC8"), QColor("#EFEBE9"),
+        QColor("#5D4037"), QColor("#795548"), QColor("#A0826D"), QColor("#DDB5A2")
+    };
+    
+    // Pastel
+    m_palettes["Pastel"] = {
+        QColor("#FFB3BA"), QColor("#FFDFBA"), QColor("#FFFFBA"), QColor("#BAFFC9"),
+        QColor("#BAE1FF"), QColor("#D4BAFF"), QColor("#FFBAF3"), QColor("#FFE5BA"),
+        QColor("#FFC1CC"), QColor("#FFDAB9"), QColor("#E6E6FA"), QColor("#B0E0E6"),
+        QColor("#FFE4E1"), QColor("#F0E68C"), QColor("#DDA0DD"), QColor("#F5DEB3")
+    };
+    
+    // Vibrant
+    m_palettes["Vibrant"] = {
+        QColor("#FF0000"), QColor("#FF7F00"), QColor("#FFFF00"), QColor("#00FF00"),
+        QColor("#00FFFF"), QColor("#0000FF"), QColor("#8B00FF"), QColor("#FF00FF"),
+        QColor("#FF1493"), QColor("#FF4500"), QColor("#FFD700"), QColor("#32CD32"),
+        QColor("#1E90FF"), QColor("#9400D3"), QColor("#FF69B4"), QColor("#FF8C00")
+    };
+    
+    // Earth Tones
+    m_palettes["Earth Tones"] = {
+        QColor("#8B4513"), QColor("#A0522D"), QColor("#D2691E"), QColor("#CD853F"),
+        QColor("#DEB887"), QColor("#F5DEB3"), QColor("#556B2F"), QColor("#6B8E23"),
+        QColor("#808000"), QColor("#BDB76B"), QColor("#BC8F8F"), QColor("#CD5C5C"),
+        QColor("#A52A2A"), QColor("#8B0000"), QColor("#B8860B"), QColor("#DAA520")
+    };
+    
+    // Grayscale
+    m_palettes["Grayscale"] = {
+        QColor("#000000"), QColor("#111111"), QColor("#222222"), QColor("#333333"),
+        QColor("#444444"), QColor("#555555"), QColor("#666666"), QColor("#777777"),
+        QColor("#888888"), QColor("#999999"), QColor("#AAAAAA"), QColor("#BBBBBB"),
+        QColor("#CCCCCC"), QColor("#DDDDDD"), QColor("#EEEEEE"), QColor("#FFFFFF")
+    };
+    
+    // Ocean Blues
+    m_palettes["Ocean Blues"] = {
+        QColor("#001f3f"), QColor("#003d5c"), QColor("#005b7f"), QColor("#0074a3"),
+        QColor("#008dc7"), QColor("#00a6ed"), QColor("#40c4ff"), QColor("#80d8ff"),
+        QColor("#00838f"), QColor("#00acc1"), QColor("#00bcd4"), QColor("#26c6da"),
+        QColor("#4dd0e1"), QColor("#b2ebf2"), QColor("#e0f7fa"), QColor("#006064")
+    };
+}
+
+void ColorPicker::updatePaletteDisplay()
+{
+    QGridLayout *grid = qobject_cast<QGridLayout*>(m_paletteWidget->layout());
+    if (!grid) return;
+    
+    // Clear existing buttons
+    while (grid->count() > 0) {
+        QLayoutItem *item = grid->takeAt(0);
+        if (item->widget()) {
+            delete item->widget();
+        }
+        delete item;
+    }
+    
+    // Get current palette
+    QString paletteName = m_paletteCombo->currentText();
+    if (!m_palettes.contains(paletteName)) return;
+    
+    const QVector<QColor> &colors = m_palettes[paletteName];
+    
+    // Add color buttons in a 8-column grid
+    for (int i = 0; i < colors.size(); ++i) {
+        QPushButton *btn = new QPushButton();
+        btn->setFixedSize(24, 24);
+        btn->setProperty("colorIndex", i);
+        btn->setStyleSheet(
+            QString("QPushButton {"
+                    "   background-color: %1;"
+                    "   border: 2px solid #555;"
+                    "   border-radius: 3px;"
+                    "}"
+                    "QPushButton:hover {"
+                    "   border-color: white;"
+                    "   border-width: 2px;"
+                    "}"
+                    ).arg(colors[i].name()));
+        
+        connect(btn, &QPushButton::clicked, this, &ColorPicker::onPaletteColorClicked);
+        
+        grid->addWidget(btn, i / 8, i % 8);
+    }
+}
+
+void ColorPicker::onPaletteChanged(int index)
+{
+    Q_UNUSED(index);
+    updatePaletteDisplay();
+}
+
+void ColorPicker::onPaletteColorClicked()
+{
+    QPushButton *btn = qobject_cast<QPushButton*>(sender());
+    if (btn) {
+        int index = btn->property("colorIndex").toInt();
+        QString paletteName = m_paletteCombo->currentText();
+        
+        if (m_palettes.contains(paletteName) && index >= 0 && index < m_palettes[paletteName].size()) {
+            setColor(m_palettes[paletteName][index]);
+            emit colorChanged(m_currentColor);
+        }
+    }
 }

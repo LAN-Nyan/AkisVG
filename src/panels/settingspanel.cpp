@@ -191,6 +191,109 @@ void ProjectSettings::setupUI()
 
     contentLayout->addWidget(canvasGroup);
 
+    // === DRAWING SETTINGS ===
+    QGroupBox *drawingGroup = new QGroupBox("Drawing");
+    drawingGroup->setStyleSheet(playbackGroup->styleSheet());
+
+    QVBoxLayout *drawingLayout = new QVBoxLayout(drawingGroup);
+
+    m_smoothPathsCheck = new QCheckBox("✨ Enable Smooth Paths (Fix Dotted Lines)");
+    m_smoothPathsCheck->setChecked(true);  // Enabled by default
+    m_smoothPathsCheck->setStyleSheet(
+        "QCheckBox {"
+        "   color: white;"
+        "   font-weight: normal;"
+        "   spacing: 8px;"
+        "}"
+        "QCheckBox::indicator {"
+        "   width: 18px;"
+        "   height: 18px;"
+        "   border: 2px solid #555;"
+        "   border-radius: 3px;"
+        "   background-color: #1e1e1e;"
+        "}"
+        "QCheckBox::indicator:checked {"
+        "   background-color: #2a82da;"
+        "   border-color: #2a82da;"
+        "}"
+        );
+
+    connect(m_smoothPathsCheck, &QCheckBox::toggled,
+            this, &ProjectSettings::onSmoothPathsToggled);
+
+    drawingLayout->addWidget(m_smoothPathsCheck);
+    
+    // Onion Skinning Toggle
+    m_onionSkinCheck = new QCheckBox("👁️ Enable Onion Skinning");
+    m_onionSkinCheck->setChecked(false);  // Disabled by default
+    m_onionSkinCheck->setStyleSheet(m_smoothPathsCheck->styleSheet());
+    connect(m_onionSkinCheck, &QCheckBox::toggled,
+            this, &ProjectSettings::onOnionSkinToggled);
+    drawingLayout->addWidget(m_onionSkinCheck);
+    
+    // Onion Skin Settings (indent these)
+    QWidget *onionSkinSettings = new QWidget();
+    QVBoxLayout *onionSettingsLayout = new QVBoxLayout(onionSkinSettings);
+    onionSettingsLayout->setContentsMargins(24, 4, 0, 0);
+    onionSettingsLayout->setSpacing(6);
+    
+    // Frames Before
+    QHBoxLayout *beforeLayout = new QHBoxLayout();
+    QLabel *beforeLabel = new QLabel("Previous Frames:");
+    beforeLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+    m_onionBeforeSpin = new QSpinBox();
+    m_onionBeforeSpin->setRange(0, 5);
+    m_onionBeforeSpin->setValue(1);
+    m_onionBeforeSpin->setStyleSheet(
+        "QSpinBox { background-color: #1e1e1e; color: white; border: 1px solid #555; "
+        "border-radius: 3px; padding: 4px; min-width: 60px; }"
+        "QSpinBox:hover { border-color: #2a82da; }");
+    connect(m_onionBeforeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &ProjectSettings::onOnionBeforeChanged);
+    beforeLayout->addWidget(beforeLabel);
+    beforeLayout->addWidget(m_onionBeforeSpin);
+    beforeLayout->addStretch();
+    onionSettingsLayout->addLayout(beforeLayout);
+    
+    // Frames After
+    QHBoxLayout *afterLayout = new QHBoxLayout();
+    QLabel *afterLabel = new QLabel("Next Frames:");
+    afterLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+    m_onionAfterSpin = new QSpinBox();
+    m_onionAfterSpin->setRange(0, 5);
+    m_onionAfterSpin->setValue(1);
+    m_onionAfterSpin->setStyleSheet(m_onionBeforeSpin->styleSheet());
+    connect(m_onionAfterSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &ProjectSettings::onOnionAfterChanged);
+    afterLayout->addWidget(afterLabel);
+    afterLayout->addWidget(m_onionAfterSpin);
+    afterLayout->addStretch();
+    onionSettingsLayout->addLayout(afterLayout);
+    
+    // Opacity Slider
+    QHBoxLayout *opacityLayout = new QHBoxLayout();
+    QLabel *opacityLabel = new QLabel("Opacity:");
+    opacityLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+    m_onionOpacitySlider = new QSlider(Qt::Horizontal);
+    m_onionOpacitySlider->setRange(10, 80);
+    m_onionOpacitySlider->setValue(30);
+    m_onionOpacitySlider->setStyleSheet(
+        "QSlider::groove:horizontal { background: #1e1e1e; height: 6px; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #2a82da; width: 14px; margin: -4px 0; border-radius: 7px; }"
+        "QSlider::handle:horizontal:hover { background: #3a92ea; }");
+    m_onionOpacityLabel = new QLabel("30%");
+    m_onionOpacityLabel->setStyleSheet("color: white; font-size: 11px; min-width: 35px;");
+    connect(m_onionOpacitySlider, &QSlider::valueChanged,
+            this, &ProjectSettings::onOnionOpacityChanged);
+    opacityLayout->addWidget(opacityLabel);
+    opacityLayout->addWidget(m_onionOpacitySlider);
+    opacityLayout->addWidget(m_onionOpacityLabel);
+    onionSettingsLayout->addLayout(opacityLayout);
+    
+    drawingLayout->addWidget(onionSkinSettings);
+
+    contentLayout->addWidget(drawingGroup);
+
     // === AUDIO SETTINGS ===
     QGroupBox *audioGroup = new QGroupBox("Audio");
     audioGroup->setStyleSheet(playbackGroup->styleSheet());
@@ -254,5 +357,35 @@ void ProjectSettings::onAudioMuteToggled(bool muted)
     emit settingsChanged();
 }
 
+void ProjectSettings::onSmoothPathsToggled(bool enabled)
+{
+    m_project->setSmoothPathsEnabled(enabled);
+    emit settingsChanged();
+}
+
+void ProjectSettings::onOnionSkinToggled(bool enabled)
+{
+    m_project->setOnionSkinEnabled(enabled);
+    emit settingsChanged();
+}
+
+void ProjectSettings::onOnionBeforeChanged(int frames)
+{
+    m_project->setOnionSkinBefore(frames);
+    emit settingsChanged();
+}
+
+void ProjectSettings::onOnionAfterChanged(int frames)
+{
+    m_project->setOnionSkinAfter(frames);
+    emit settingsChanged();
+}
+
+void ProjectSettings::onOnionOpacityChanged(int value)
+{
+    m_project->setOnionSkinOpacity(value / 100.0);
+    m_onionOpacityLabel->setText(QString("%1%").arg(value));
+    emit settingsChanged();
+}
 
 

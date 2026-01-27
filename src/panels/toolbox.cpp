@@ -7,6 +7,8 @@
 #include "tools/shapetool.h"
 #include "tools/texttool.h"
 #include "tools/filltool.h"
+#include "tools/blendtool.h"
+#include "tools/linetool.h"  // ADD LINE TOOL
 #include "toolsettingspanel.h"
 #include "toolbutton.h"
 #include "config.h"
@@ -23,6 +25,7 @@
 #include <QColorDialog>
 #include <QCoreApplication>
 #include <QFile>
+#include <QScrollArea>
 
 ToolBox::ToolBox(QWidget *parent)
     : QWidget(parent)
@@ -51,8 +54,10 @@ void ToolBox::createTools()
     m_tools[ToolType::Eraser] = new EraserTool(this);
     m_tools[ToolType::Rectangle] = new ShapeTool(ShapeType::Rectangle, this);
     m_tools[ToolType::Ellipse] = new ShapeTool(ShapeType::Ellipse, this);
+    m_tools[ToolType::Line] = new LineTool(this);  // ADD LINE TOOL
     m_tools[ToolType::Text] = new TextTool(this);
     m_tools[ToolType::Fill] = new FillTool(this);
+    m_tools[ToolType::Blend] = new BlendTool(this);
     m_textureSelector = new QComboBox(this);
     m_textureSelector->addItem("Smooth", (int)ToolTexture::Smooth);
     m_textureSelector->addItem("Grainy", (int)ToolTexture::Grainy);
@@ -66,7 +71,32 @@ void ToolBox::setupUI()
     mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // Scrollable content
+    // Scrollable content wrapper
+    QScrollArea *scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setStyleSheet(
+        "QScrollArea { background-color: #2d2d2d; border: none; }"
+        "QScrollBar:vertical {"
+        "   background: #2d2d2d;"
+        "   width: 12px;"
+        "   border-radius: 6px;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "   background: #555;"
+        "   border-radius: 6px;"
+        "   min-height: 20px;"
+        "}"
+        "QScrollBar::handle:vertical:hover {"
+        "   background: #666;"
+        "}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+        "   height: 0px;"
+        "}"
+    );
+    
     QWidget *contentWidget = new QWidget();
     QVBoxLayout *layout = new QVBoxLayout(contentWidget);
     layout->setSpacing(8);
@@ -148,6 +178,7 @@ void ToolBox::setupUI()
     addToolButton(ToolType::Brush, "brush", "Brush", "B");
     addToolButton(ToolType::Eraser, "eraser", "Eraser", "E");
     addToolButton(ToolType::Fill, "fill", "Fill", "G");
+    addToolButton(ToolType::Blend, "blend", "Blend", "H");  // ADD BLEND TOOL BUTTON
 
     layout->addSpacing(4);
 
@@ -158,6 +189,7 @@ void ToolBox::setupUI()
 
     addToolButton(ToolType::Rectangle, "rectangle", "Rectangle", "R");
     addToolButton(ToolType::Ellipse, "ellipse", "Ellipse", "C");
+    addToolButton(ToolType::Line, "line", "Line", "L");  // ADD LINE TOOL BUTTON
     addToolButton(ToolType::Text, "text", "Text", "T");
 
     // --- COLOR PICKER (OVERLAP STYLE) ---
@@ -256,7 +288,10 @@ void ToolBox::setupUI()
     layout->addWidget(helpLabel);
 
     contentWidget->setStyleSheet("background-color: #2d2d2d;");
-    mainLayout->addWidget(contentWidget);
+    
+    // Set contentWidget as the scroll area's widget
+    scrollArea->setWidget(contentWidget);
+    mainLayout->addWidget(scrollArea);
 
     connect(m_toolButtons, &QButtonGroup::idClicked, this, &ToolBox::onToolButtonClicked);
 }

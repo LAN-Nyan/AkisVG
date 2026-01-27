@@ -8,6 +8,7 @@
 #include <QVector>
 #include <QComboBox>
 #include <QBitmap>
+#include <QMap>
 
 class ColorWheel : public QWidget
 {
@@ -63,20 +64,29 @@ private slots:
     void onOpacityChanged(int value);
     void onHexChanged();
     void onRecentColorClicked();
+    void onPaletteChanged(int index);
+    void onPaletteColorClicked();
 
 private:
     void setupUI();
     void updateUI();
     void addToRecentColors(const QColor &color);
     QPixmap generateTextureIcon(int textureType);
+    void loadPalettes();
+    void updatePaletteDisplay();
 
     ColorWheel *m_colorWheel;
     QSlider *m_opacitySlider;
     QLineEdit *m_hexInput;
     QComboBox *m_textureCombo;
+    QComboBox *m_paletteCombo;
     QVector<QColor> m_recentColors;
     QWidget *m_recentColorsWidget;
+    QWidget *m_paletteWidget;
     QColor m_currentColor;
+    
+    // Predefined color palettes
+    QMap<QString, QVector<QColor>> m_palettes;
 };
 
 #endif // COLORPICKER_H
