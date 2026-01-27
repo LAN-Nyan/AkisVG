@@ -22,6 +22,8 @@ public:
 
     void setCurrentTool(Tool *tool);
     Tool* currentTool() const { return m_currentTool; }
+    
+    QUndoStack* undoStack() const { return m_undoStack; }
 
     void setOnionSkinEnabled(bool enabled);
     bool onionSkinEnabled() const { return m_onionSkinEnabled; }

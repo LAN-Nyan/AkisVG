@@ -26,9 +26,21 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     , m_zoomMin(0.01)
     , m_zoomMax(50.0)
 {
+    // PERFORMANCE: Enable high-quality rendering
     setRenderHint(QPainter::Antialiasing);
     setRenderHint(QPainter::SmoothPixmapTransform);
+    setRenderHint(QPainter::TextAntialiasing);
+    
+    // PERFORMANCE: Smart viewport updates (only redraw changed areas)
     setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
+    
+    // PERFORMANCE: Enable OpenGL acceleration (optional, comment out if causes issues)
+    // Note: Requires Qt compiled with OpenGL support
+    // setViewport(new QOpenGLWidget());  // Uncomment to enable OpenGL
+    
+    // PERFORMANCE: Cache background
+    setCacheMode(QGraphicsView::CacheBackground);
+    
     setDragMode(QGraphicsView::NoDrag);
 
     // Use AnchorUnderMouse for proper zoom behavior

@@ -29,9 +29,15 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
 
     setSceneRect(0, 0, project->width(), project->height());
     setBackgroundBrush(QBrush(Qt::white));
+    
+    // PERFORMANCE: Use BspTree for faster item lookup
     setItemIndexMethod(QGraphicsScene::BspTreeIndex);
+    
+    // PERFORMANCE: Enable optimizations
+    // Note: OpenGL rendering must be enabled in the view, not the scene
 
     connect(project, &Project::currentFrameChanged, this, &VectorCanvas::onFrameChanged);
+    connect(project, &Project::onionSkinSettingsChanged, this, &VectorCanvas::refreshFrame);
     setupLayerConnections();
 
     connect(project, &Project::layersChanged, this, [this]() {
@@ -78,14 +84,59 @@ void VectorCanvas::refreshFrame()
 
     if (!m_project) return;
 
-    // Add objects from all visible layers - WORKING VERSION LOGIC
     int currentFrame = m_project->currentFrame();
+    
+    // Render onion skins if enabled
+    if (m_project->onionSkinEnabled()) {
+        // Render previous frames (onion skin before)
+        for (int i = 1; i <= m_project->onionSkinBefore(); ++i) {
+            int prevFrame = currentFrame - i;
+            if (prevFrame < 1) continue;
+            
+            qreal opacity = m_project->onionSkinOpacity() * (1.0 - (i - 1) * 0.3);
+            if (opacity <= 0.05) continue;
+            
+            for (Layer *layer : m_project->layers()) {
+                if (!layer->isVisible()) continue;
+                
+                for (VectorObject *obj : layer->objectsAtFrame(prevFrame)) {
+                    addItem(obj);
+                    obj->setOpacity(opacity * layer->opacity());
+                    // Tint previous frames red
+                    obj->setObjectOpacity(opacity);
+                }
+            }
+        }
+        
+        // Render future frames (onion skin after)
+        for (int i = 1; i <= m_project->onionSkinAfter(); ++i) {
+            int nextFrame = currentFrame + i;
+            if (nextFrame > m_project->totalFrames()) continue;
+            
+            qreal opacity = m_project->onionSkinOpacity() * 0.6 * (1.0 - (i - 1) * 0.3);
+            if (opacity <= 0.05) continue;
+            
+            for (Layer *layer : m_project->layers()) {
+                if (!layer->isVisible()) continue;
+                
+                for (VectorObject *obj : layer->objectsAtFrame(nextFrame)) {
+                    addItem(obj);
+                    // Tint future frames blue by reducing opacity more
+                    obj->setOpacity(opacity * 0.7 * layer->opacity());
+                    obj->setObjectOpacity(opacity * 0.7);
+                }
+            }
+        }
+    }
+    
+    // Add objects from current frame (full opacity)
     for (Layer *layer : m_project->layers()) {
         if (!layer->isVisible()) continue;
 
         for (VectorObject *obj : layer->objectsAtFrame(currentFrame)) {
             addItem(obj);
             obj->setOpacity(layer->opacity());
+            obj->setObjectOpacity(1.0);
         }
     }
 }
