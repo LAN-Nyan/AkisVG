@@ -1,0 +1,39 @@
+<RCC>
+    <qresource prefix="/icons">
+        <!-- Tool Icons -->
+        <file alias="brush.svg">src/tools/assets/Brush/Brush.svg</file>
+        <file alias="pencil.svg">src/tools/assets/pencil/Pencil.svg</file>
+        <file alias="eraser.svg">src/tools/assets/Eraser/Eraser.svg</file>
+        <file alias="fill.svg">src/tools/assets/Fill/Fill/Fill.svg</file>
+        <file alias="eyedropper.svg">src/tools/assets/Eyedropper/Eyedropper.svg</file>
+        
+        <!-- Shape Icons -->
+        <file alias="rectangle.svg">src/tools/assets/Shapes/Square/Square.svg</file>
+        <file alias="ellipse.svg">src/tools/assets/Shapes/Circle/Circle.svg</file>
+        <file alias="line.svg">src/tools/assets/Shapes/Line/Line.svg</file>
+        
+        <!-- Timeline Icons -->
+        <file alias="addframe.svg">src/tools/assets/AddFrame/AddFrame.svg</file>
+        <file alias="removeframe.svg">src/tools/assets/RemoveFrame/RemoveFrame.svg</file>
+        <file alias="duplicateframe.svg">src/tools/assets/DuplicateFrame/DuplicateFrame.svg</file>
+        <file alias="nextframe.svg">src/tools/assets/Nextframe/Nextframe.svg</file>
+        <file alias="play.svg">src/tools/assets/Play/#Play/Play.svg</file>
+        <file alias="pause.svg">src/tools/assets/Play/Pause/Pause.svg</file>
+        <file alias="gotofirstlast.svg">src/tools/assets/Goto FirstLast/GotoFLframe.svg</file>
+        
+        <!-- Layer Icons -->
+        <file alias="newlayer.svg">src/tools/assets/Folder/Newlayer/Newlayer.svg</file>
+        <file alias="deletelayer.svg">src/tools/assets/Folder/DeleteLayer/DeleteLayer.svg</file>
+        <file alias="duplicatelayer.svg">src/tools/assets/Folder/DuplicateLayer/DuplicateLayer.svg</file>
+        <file alias="group.svg">src/tools/assets/Folder/group/Group.svg</file>
+        
+        <!-- Visibility/Lock Icons -->
+        <file alias="hide.svg">src/tools/assets/HideUnhide/Hide/Hide.svg</file>
+        <file alias="unhide.svg">src/tools/assets/HideUnhide/UnHide/UnHide.svg</file>
+        <file alias="lock.svg">src/tools/assets/LockUnlock/Lock/Lock.svg</file>
+        <file alias="unlock.svg">src/tools/assets/LockUnlock/Unlock/Unlock.svg</file>
+        
+        <!-- Gradient -->
+        <file alias="gradient.svg">src/tools/assets/Fill/Gradient/Gradient.svg</file>
+    </qresource>
+</RCC>
