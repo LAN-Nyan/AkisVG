@@ -34,10 +34,8 @@ jobs:
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.5.3'
-          # Fixed module names for Qt6
-          modules: 'qtmultimedia qtsvg'
-          # This ensures windeployqt is added to PATH automatically
-          setup-python: 'true'
+          arch: 'win64_msvc2019_64' # Explicitly set architecture
+          modules: 'qtmultimedia qtsvg' # Try lowercase, no spaces after comma
 
       - name: Install Ninja & Tools
         shell: bash
