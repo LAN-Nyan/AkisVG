@@ -544,3 +544,4 @@ void TimelineWidget::setOnionSkinEnabled(bool enabled) {
         grid->setOnionSkin(enabled, 3);
     }
 }
+
