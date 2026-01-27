@@ -3,6 +3,7 @@
 
 #include <QUndoCommand>
 #include <QString>
+#include <QColor>
 
 // Forward declarations
 class VectorObject;
@@ -86,6 +87,24 @@ private:
     Layer *m_layer;
     int m_layerIndex;
     bool m_ownsLayer;
+};
+
+/**
+ * Command for changing the fill color of an object
+ */
+class FillColorCommand : public QUndoCommand
+{
+public:
+    FillColorCommand(VectorObject *object, const QColor &newColor,
+                     QUndoCommand *parent = nullptr);
+
+    void undo() override;
+    void redo() override;
+
+private:
+    VectorObject *m_object;
+    QColor m_oldColor;
+    QColor m_newColor;
 };
 
 #endif // COMMANDS_H

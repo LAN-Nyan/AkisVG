@@ -21,6 +21,11 @@ Project::Project(QObject *parent)
     , m_currentFrame(1)
     , m_totalFrames(100)
     , m_currentLayerIndex(0)
+    , m_smoothPathsEnabled(true)  // Enable smooth paths by default
+    , m_onionSkinEnabled(false)   // Onion skinning disabled by default
+    , m_onionSkinBefore(1)        // Show 1 frame before
+    , m_onionSkinAfter(1)         // Show 1 frame after
+    , m_onionSkinOpacity(0.3)     // 30% opacity for onion skins
 {
     // Create default layer
     addLayer("Layer 1");
@@ -79,6 +84,50 @@ void Project::setFps(int fps)
 {
     if (m_fps != fps) {
         m_fps = fps;
+        emit modified();
+    }
+}
+
+void Project::setSmoothPathsEnabled(bool enabled)
+{
+    if (m_smoothPathsEnabled != enabled) {
+        m_smoothPathsEnabled = enabled;
+        emit modified();
+    }
+}
+
+void Project::setOnionSkinEnabled(bool enabled)
+{
+    if (m_onionSkinEnabled != enabled) {
+        m_onionSkinEnabled = enabled;
+        emit onionSkinSettingsChanged();
+        emit modified();
+    }
+}
+
+void Project::setOnionSkinBefore(int frames)
+{
+    if (frames >= 0 && m_onionSkinBefore != frames) {
+        m_onionSkinBefore = frames;
+        emit onionSkinSettingsChanged();
+        emit modified();
+    }
+}
+
+void Project::setOnionSkinAfter(int frames)
+{
+    if (frames >= 0 && m_onionSkinAfter != frames) {
+        m_onionSkinAfter = frames;
+        emit onionSkinSettingsChanged();
+        emit modified();
+    }
+}
+
+void Project::setOnionSkinOpacity(qreal opacity)
+{
+    if (opacity >= 0.0 && opacity <= 1.0 && m_onionSkinOpacity != opacity) {
+        m_onionSkinOpacity = opacity;
+        emit onionSkinSettingsChanged();
         emit modified();
     }
 }

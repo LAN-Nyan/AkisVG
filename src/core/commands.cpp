@@ -147,3 +147,25 @@ void RemoveLayerCommand::redo()
     m_project->removeLayerSilent(m_layerIndex);
     m_ownsLayer = true;
 }
+
+// ============= FillColorCommand =============
+
+FillColorCommand::FillColorCommand(VectorObject *object, const QColor &newColor,
+                                   QUndoCommand *parent)
+    : QUndoCommand(parent)
+    , m_object(object)
+    , m_oldColor(object->fillColor())
+    , m_newColor(newColor)
+{
+    setText("Fill Color");
+}
+
+void FillColorCommand::undo()
+{
+    m_object->setFillColor(m_oldColor);
+}
+
+void FillColorCommand::redo()
+{
+    m_object->setFillColor(m_newColor);
+}

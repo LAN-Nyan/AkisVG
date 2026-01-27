@@ -104,6 +104,43 @@ QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
 void Layer::addObjectToFrame(int frameNumber, VectorObject *obj)
 {
     if (obj) {
+        // CRITICAL FIX: Check if this frame is extended from a key frame
+        int keyFrame = getKeyFrameFor(frameNumber);
+        
+        // If we're adding to an extended frame (not the key frame itself)
+        if (keyFrame != -1 && keyFrame != frameNumber) {
+            // Break the extension - this frame becomes its own key frame
+            // We need to:
+            // 1. Copy all objects from the key frame to this frame
+            // 2. Clear any extension that includes this frame
+            // 3. If the extension goes beyond this frame, create a new extension from this frame
+            
+            // Get the extension info before we modify it
+            int extensionEnd = getExtensionEnd(frameNumber);
+            
+            // Copy objects from key frame to make this an independent frame
+            QList<VectorObject*> keyFrameObjects = m_frames.value(keyFrame, QList<VectorObject*>());
+            for (VectorObject *keyObj : keyFrameObjects) {
+                // Clone the object so this frame has its own copy
+                VectorObject *clonedObj = keyObj->clone();
+                m_frames[frameNumber].append(clonedObj);
+            }
+            
+            // Clear the old extension from the key frame
+            clearFrameExtension(keyFrame);
+            
+            // If the key frame was extended beyond this frame, re-extend it to just before this frame
+            if (keyFrame < frameNumber - 1) {
+                extendFrameTo(keyFrame, frameNumber - 1);
+            }
+            
+            // If there were frames after this one in the old extension, extend from this frame
+            if (extensionEnd > frameNumber) {
+                extendFrameTo(frameNumber, extensionEnd);
+            }
+        }
+        
+        // Now add the new object to this frame
         m_frames[frameNumber].append(obj);
         emit modified();
     }

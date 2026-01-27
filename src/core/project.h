@@ -30,6 +30,20 @@ public:
     void setHeight(int height);
     void setFps(int fps);
 
+    // Drawing settings
+    bool smoothPathsEnabled() const { return m_smoothPathsEnabled; }
+    void setSmoothPathsEnabled(bool enabled);
+
+    // Onion skinning settings
+    bool onionSkinEnabled() const { return m_onionSkinEnabled; }
+    void setOnionSkinEnabled(bool enabled);
+    int onionSkinBefore() const { return m_onionSkinBefore; }
+    void setOnionSkinBefore(int frames);
+    int onionSkinAfter() const { return m_onionSkinAfter; }
+    void setOnionSkinAfter(int frames);
+    qreal onionSkinOpacity() const { return m_onionSkinOpacity; }
+    void setOnionSkinOpacity(qreal opacity);
+
     void addLayerSilent(Layer *layer);
     void removeLayerSilent(int index);
     void insertLayerSilent(int index, Layer *layer);
@@ -59,6 +73,7 @@ signals:
     void currentFrameChanged(int frame);
     void currentLayerChanged(Layer *layer);
     void layersChanged();
+    void onionSkinSettingsChanged();
 
 private:
     QString m_name;
@@ -68,7 +83,13 @@ private:
     int m_currentFrame;
     int m_totalFrames;
     int m_currentLayerIndex;
-
+    bool m_smoothPathsEnabled;
+    
+    // Onion skinning settings
+    bool m_onionSkinEnabled;
+    int m_onionSkinBefore;  // Number of frames to show before current
+    int m_onionSkinAfter;   // Number of frames to show after current
+    qreal m_onionSkinOpacity; // Base opacity for onion skins
 
     QList<Layer*> m_layers;
 };
