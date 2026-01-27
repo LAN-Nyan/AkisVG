@@ -1,3 +1,108 @@
+name: Build and Release v0.3 RC1
 
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: LuminaStudio-Linux
+            asset_name: LuminaStudio-Linux.tar.gz
+          - os: windows-latest
+            artifact_name: LuminaStudio-Windows
+            asset_name: LuminaStudio-Windows.zip
+          - os: macos-latest
+            artifact_name: LuminaStudio-Mac
+            asset_name: LuminaStudio-Mac.dmg
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || '' }}
+          modules: 'qtmultimedia'
+          archives: 'qtbase qtsvg'
+
+      # Critical: Force Windows to use MSVC instead of MinGW/GCC
+      - name: Set up MSVC (Windows Only)
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            brew install ninja
+          else
+            choco install ninja
+          fi
+
+      - name: Configure and Build
+        shell: bash
+        run: |
+          # The -DCMAKE_PREFIX_PATH helps CMake find the Qt installation
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+          cmake --build build
+
+      - name: Package Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd build
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release LuminaStudio.exe
+          Compress-Archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
+
+      - name: Package Linux/Mac
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cd build
+          tar -czvf ../${{ matrix.asset_name }} .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          tag_name: v0.1.${{ github.run_number }}
+          name: Release v0.1 (Build ${{ github.run_number }})
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
