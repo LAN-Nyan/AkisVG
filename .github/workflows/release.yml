@@ -31,14 +31,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v3
+        uses: jurplel/install-qt-action@v4
         with:
           version: '6.5.3'
+        # Multimedia is a module (extra addon)
+          modules: 'qtmultimedia'
+          # SVG is often an archive (core component)
+          archives: 'qtbase qtsvg'
+          # This ensures it finds the right MSVC version for 6.5.3
           arch: 'win64_msvc2019_64'
-          # We use the specific names that aqt looks for in the XML
-          modules: 'qtmultimedia qtsvg'
-          # If the above fails, try: modules: 'qtmultimedia' (and see if svg is included)
-          setup-python: 'true'
 
       # ADD THIS STEP TO DEBUG IF IT FAILS AGAIN
       - name: List available modules (Debug)
