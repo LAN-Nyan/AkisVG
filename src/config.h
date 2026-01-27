@@ -27,7 +27,7 @@ inline QMap<QString, QString> toolIcons() {
             // Tool Name         Icon Filename
             {"select",          "select.svg"},
             {"pencil",          "pencil.svg"},
-            {"brush",           "tools/Brush.svg"},
+            {"brush",           "assets/Brush.svg"},
             {"eraser",          "eraser.svg"},
             {"fill",            "fill.svg"},
             {"rectangle",       "rectangle.svg"},
