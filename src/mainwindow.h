@@ -29,6 +29,9 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private slots:
+    private slots:
+    void exportToMp4();               // Fixes error C2039
+    void exportToMp4_Alternative();   // Fixes error C2039
     void newProject();
     void openProject();
     void saveProject();
@@ -37,6 +40,10 @@ private slots:
     void about();
 
 private:
+    Project* m_project;                // Needed for error C2065
+    VectorCanvas* m_canvas;           // Needed for error C2065
+    CanvasView* m_canvasView;         // Needed for error C2065
+    ProjectSettings* m_projectSettings;
     void createActions();
     void createMenus();
     void createToolBars();
