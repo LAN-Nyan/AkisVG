@@ -1,4 +1,4 @@
-name: Build and Release v0.1
+name: Build and Release v0.2
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: write # Needed to upload artifacts
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -34,35 +34,32 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.5.3'
-        # Multimedia is a module (extra addon)
+          arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || '' }}
           modules: 'qtmultimedia'
-          # SVG is often an archive (core component)
           archives: 'qtbase qtsvg'
-          # This ensures it finds the right MSVC version for 6.5.3
-          arch: 'win64_msvc2019_64'
 
-      # ADD THIS STEP TO DEBUG IF IT FAILS AGAIN
-      - name: List available modules (Debug)
-        if: failure()
-        run: python -m aqt list-qt windows desktop --modules 6.5.3 win64_msvc2019_64
+      # Critical: Force Windows to use MSVC instead of MinGW/GCC
+      - name: Set up MSVC (Windows Only)
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install Ninja & Tools
+      - name: Install Dependencies
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            choco install ninja
-          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             sudo apt-get update
             sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
-          else
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             brew install ninja
+          else
+            choco install ninja
           fi
 
       - name: Configure and Build
         shell: bash
         run: |
-          # Use the QT_ROOT_DIR provided by the install-qt-action
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          # The -DCMAKE_PREFIX_PATH helps CMake find the Qt installation
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           cmake --build build
 
       - name: Package Windows
@@ -70,8 +67,7 @@ jobs:
         shell: pwsh
         run: |
           cd build
-          # Use the environment variable set by jurplel/install-qt-action
-          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --release LuminaStudio.exe
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release LuminaStudio.exe
           Compress-Archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
 
       - name: Package Linux/Mac
@@ -92,7 +88,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Critical: Allows creating the release
+      contents: write
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Download all artifacts
@@ -103,7 +99,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          # Use wildcards to find the files inside the downloaded artifact folders
           files: artifacts/**/*
           tag_name: v0.1.${{ github.run_number }}
           name: Release v0.1 (Build ${{ github.run_number }})
