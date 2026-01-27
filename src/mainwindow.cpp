@@ -745,3 +745,4 @@ void MainWindow::exportToMp4_Alternative() {
                                   QString::fromUtf8(ffmpeg.readAllStandardError()));
     }
 }
+
