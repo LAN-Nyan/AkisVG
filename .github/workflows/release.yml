@@ -17,14 +17,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: LuminaStudio-Linux
-            asset_name: LuminaStudio-Linux.tar.gz
+            artifact_name: AkisVG-Linux
+            asset_name: AkisVG-Linux.tar.gz
           - os: windows-latest
-            artifact_name: LuminaStudio-Windows
-            asset_name: LuminaStudio-Windows.zip
+            artifact_name: AkisVG-Windows
+            asset_name: AkisVG-Windows.zip
           - os: macos-latest
-            artifact_name: LuminaStudio-Mac
-            asset_name: LuminaStudio-Mac.dmg
+            artifact_name: AkisVG-Mac
+            asset_name: AkisVG-Mac.dmg
 
     steps:
       - name: Checkout code
@@ -67,8 +67,8 @@ jobs:
         shell: pwsh
         run: |
           cd build
-          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release LuminaStudio.exe
-          Compress-Archive -Path * -DestinationPath ../LuminaStudio-Windows.zip
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release AkisVG.exe
+          Compress-Archive -Path * -DestinationPath ../AkisVG-Windows.zip
 
       - name: Package Linux/Mac
         if: matrix.os != 'windows-latest'
