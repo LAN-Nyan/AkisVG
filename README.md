@@ -13,8 +13,7 @@ Hey there! We know you’re looking for something that’s lightweight, packed w
 
 # Example Animations
 
-<video src="https://github.com/LAN-Nyan/AkisVG/raw/main/DearGod.mp4" controls="controls" style="max-width: 100%;">
-</video>
+[▶️ Click here to watch the example](https://github.com/LAN-Nyan/AkisVG/blob/main/DearGod.mp4)
 
 # What’s Next?
 
