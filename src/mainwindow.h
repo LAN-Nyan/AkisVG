@@ -2,21 +2,23 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QToolBar>
-#include <QStatusBar>
-#include <QDockWidget>
 #include <QUndoStack>
-#include "panels/settingspanel.h"
 
-// Forward declarations
-class CanvasView;
+class Project;
 class VectorCanvas;
+class CanvasView;
 class ToolBox;
 class LayerPanel;
 class ColorPicker;
 class AssetLibrary;
 class TimelineWidget;
-class Project;
+class QMenu;
+class QToolBar;
+class InterpolationManager;
+class VectorObject;
+class QPushButton;
+class QWidget;
+class ProjectSettings;
 
 class MainWindow : public QMainWindow
 {
@@ -36,8 +38,22 @@ private slots:
     void saveProjectAs();
     void exportFrame();
     void about();
+    void updateWindowTitle();
+
+    // Import functions
+    void importAudio();
+    void importImage();
+
+    // Export functions
     void exportToMp4();
-    void exportToMp4_Alternative();
+    void exportGifKeyframes();
+    void exportGifAllFrames();
+
+    // Interpolation slots
+    void onGroupForInterpolation(const QList<VectorObject*> &objects);
+    void onCreateKeyframe();
+    void onFinishInterpolation();
+    void onFrameChanged(int frame);
 
 private:
     void createActions();
@@ -45,13 +61,11 @@ private:
     void createToolBars();
     void createDockWindows();
     void setupCanvas();
-    void updateWindowTitle();
+    void createInterpolationControls();
 
-    // YOU I D I O T WHY DID I PUT THIS AT THE BOTTOM
+    bool maybeSave();
+
     QUndoStack *m_undoStack;
-
-
-    // Core components
     Project *m_project;
     VectorCanvas *m_canvas;
     CanvasView *m_canvasView;
@@ -62,17 +76,20 @@ private:
     TimelineWidget *m_timeline;
     ProjectSettings *m_projectSettings;
 
-    // UI elements
     QMenu *m_fileMenu;
     QMenu *m_editMenu;
     QMenu *m_viewMenu;
     QMenu *m_helpMenu;
-
     QToolBar *m_mainToolBar;
-    QStatusBar *m_statusBar;
 
     QString m_currentFile;
     bool m_isModified;
+
+    // Interpolation system
+    InterpolationManager *m_interpolationManager;
+    QPushButton *m_createKeyframeBtn;
+    QPushButton *m_finishInterpBtn;
+    QWidget *m_interpControlWidget;
 };
 
 #endif // MAINWINDOW_H

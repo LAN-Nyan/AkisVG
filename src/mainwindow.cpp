@@ -2,12 +2,16 @@
 #include "core/project.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/canvasview.h"
+#include "canvas/objects/imageobject.h"
 #include "panels/toolbox.h"
 #include "panels/layerpanel.h"
 #include "panels/colorpicker.h"
 #include "panels/assetlibrary.h"
 #include "timeline/timelinewidget.h"
 #include "tools/tool.h"
+#include "tools/selecttool.h"  // ADDED
+#include "core/interpolationmanager.h" // ADDED
+#include "io/gifexporter.h"
 #include "panels/settingspanel.h"
 
 #include <QMenuBar>
@@ -30,6 +34,13 @@
 #include <QBuffer>
 #include <QPainter>
 #include <QApplication>
+#include <QMediaPlayer>
+#include <QAudioOutput> // ADDED
+#include <QTimer>
+#include <QEventLoop>
+#include <QUrl>
+#include <QPushButton> // ADDED
+#include <QMessageBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -43,8 +54,12 @@ MainWindow::MainWindow(QWidget *parent)
     , m_assetLibrary(new AssetLibrary(this))
     , m_timeline(new TimelineWidget(m_project, this))
     , m_isModified(false)
+    , m_interpolationManager(nullptr)        // ADDED
+    , m_createKeyframeBtn(nullptr)           // ADDED
+    , m_finishInterpBtn(nullptr)             // ADDED
+    , m_interpControlWidget(nullptr)         // ADDED
 {
-    setWindowTitle("Lumina Studio");
+    setWindowTitle("AkisVG");
     resize(1800, 1000);
     setMinimumSize(1200, 700);
 
@@ -101,6 +116,15 @@ MainWindow::MainWindow(QWidget *parent)
         }
     )");
 
+    // CREATE INTERPOLATION MANAGER (BEFORE menus/UI setup)
+    m_interpolationManager = new InterpolationManager(m_project, this);
+
+    // Connect interpolation manager to canvas for purple rim
+    connect(m_interpolationManager, &InterpolationManager::interpolationModeChanged,
+            m_canvas, &VectorCanvas::setInterpolationMode);
+
+    createInterpolationControls(); // Create the UI widget
+
     createActions();
     createMenus();
     createToolBars();
@@ -113,9 +137,6 @@ MainWindow::MainWindow(QWidget *parent)
         m_isModified = true;
         updateWindowTitle();
     });
-
-   // connect(m_canvas, &VectorCanvas::audioDropped,
-     //       m_timeline, &TimelineWidget::loadAudioTrack);
 
     // Connect color picker to toolbox
     connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &color) {
@@ -133,15 +154,16 @@ MainWindow::MainWindow(QWidget *parent)
                 }
             });
 
-    // Connect audio drop from canvas to timeline
-   // connect(m_canvas, &VectorCanvas::audioDropped,
-      //      m_timeline, &TimelineWidget::loadAudioTrack);
+    // CONNECT SELECT TOOL FOR INTERPOLATION
+    SelectTool *selectTool = dynamic_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select));
+    if (selectTool) {
+        connect(selectTool, &SelectTool::requestGroupForInterpolation,
+                this, &MainWindow::onGroupForInterpolation);
+    }
 
-    // Show audio loaded message
-    //connect(m_timeline, &TimelineWidget::audioLoaded,
-            //this, [this](const QString &name) {
-             //   statusBar()->showMessage("♪ Audio loaded: " + name, 3000);
-           // });
+    // Connect frame changes to update interpolation
+    connect(m_project, &Project::currentFrameChanged,
+            this, &MainWindow::onFrameChanged);
 
     statusBar()->showMessage("Ready - Use Pencil tool to draw", 5000);
     updateWindowTitle();
@@ -158,6 +180,11 @@ void MainWindow::setupCanvas()
     QVBoxLayout *layout = new QVBoxLayout(centralWidget);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
+
+    // ADD THIS: Add interpolation control panel at top (hidden by default)
+    if (m_interpControlWidget) {
+        layout->addWidget(m_interpControlWidget);
+    }
 
     // Canvas area with grey background (infinite canvas feel)
     m_canvasView->setStyleSheet("QGraphicsView { background-color: #3c3c3c; border: none; }");
@@ -190,9 +217,25 @@ void MainWindow::createMenus()
 
     m_fileMenu->addSeparator();
 
+    QAction *importAudioAct = m_fileMenu->addAction("Import &Audio...");
+    importAudioAct->setShortcut(QKeySequence("Ctrl+Shift+A"));
+    connect(importAudioAct, &QAction::triggered, this, &MainWindow::importAudio);
+
+    QAction *importImageAct = m_fileMenu->addAction("Import &Image...");
+    importImageAct->setShortcut(QKeySequence("Ctrl+Shift+I"));
+    connect(importImageAct, &QAction::triggered, this, &MainWindow::importImage);
+
+    m_fileMenu->addSeparator();
+
     QAction *exportVideoAct = m_fileMenu->addAction("Export to &Video (.mp4)...");
     exportVideoAct->setShortcut(QKeySequence("Ctrl+Shift+E"));
     connect(exportVideoAct, &QAction::triggered, this, &MainWindow::exportToMp4);
+
+    QAction *exportGifKeyframesAct = m_fileMenu->addAction("Export to GIF (Keyframes)...");
+    connect(exportGifKeyframesAct, &QAction::triggered, this, &MainWindow::exportGifKeyframes);
+
+    QAction *exportGifAllAct = m_fileMenu->addAction("Export to GIF (All Frames)...");
+    connect(exportGifAllAct, &QAction::triggered, this, &MainWindow::exportGifAllFrames);
 
     QAction *exportAct = m_fileMenu->addAction("&Export Frame...", this, &MainWindow::exportFrame);
     exportAct->setShortcut(QKeySequence("Ctrl+E"));
@@ -285,17 +328,6 @@ void MainWindow::createToolBars()
     resetZoomAct->setToolTip("Reset Zoom (Ctrl+0)");
 
     m_mainToolBar->addSeparator();
-
-    // NEW: Project Settings Shortcut
-    QAction *settingsAct = m_mainToolBar->addAction("⚙️");
-    settingsAct->setToolTip("Project Settings");
-
-    // Logic to jump to the Settings Tab (Index 3)
-    connect(settingsAct, &QAction::triggered, this, [this]() {
-        // Find the QTabWidget we created in createDockWindows
-        QTabWidget* tabs = findChild<QTabWidget*>("rightPanelTabs");
-        if (tabs) tabs->setCurrentIndex(3);
-    });
 }
 
 void MainWindow::createDockWindows()
@@ -310,32 +342,15 @@ void MainWindow::createDockWindows()
     m_viewMenu->addAction(toolDock->toggleViewAction());
 
     // --- RIGHT SIDE: UTILITY TABS ---
-    // We create a container tab widget to hold Layers, Colors, Assets, and Settings
     QTabWidget *rightTabs = new QTabWidget();
-    rightTabs->setObjectName("rightPanelTabs"); // Named so the Toolbar can find it
+    rightTabs->setObjectName("rightPanelTabs");
 
     rightTabs->setStyleSheet(
-        "QTabWidget::pane {"
-        "    border: none;"
-        "    background-color: #2d2d2d;"
-        "}"
-        "QTabBar::tab {"
-        "    background-color: #3a3a3a;"
-        "    color: #aaa;"
-        "    padding: 8px 16px;"
-        "    border: none;"
-        "    border-top-left-radius: 4px;"
-        "    border-top-right-radius: 4px;"
-        "    margin-right: 2px;"
-        "}"
-        "QTabBar::tab:selected {"
-        "    background-color: #2d2d2d;"
-        "    color: white;"
-        "}"
-        "QTabBar::tab:hover {"
-        "    background-color: #4a4a4a;"
-        "}"
-        );
+        "QTabWidget::pane { border: none; background-color: #2d2d2d; }"
+        "QTabBar::tab { background-color: #3a3a3a; color: #aaa; padding: 8px 16px; border: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }"
+        "QTabBar::tab:selected { background-color: #2d2d2d; color: white; }"
+        "QTabBar::tab:hover { background-color: #4a4a4a; }"
+    );
 
     // 1. Layers Tab
     rightTabs->addTab(m_layerPanel, "Layers");
@@ -346,22 +361,14 @@ void MainWindow::createDockWindows()
     // 3. Assets Tab
     rightTabs->addTab(m_assetLibrary, "Assets");
 
-    // 4. Project Settings Tab (INTEGRATION)
-    // We initialize it here and pass the project pointer so it can edit data
     m_projectSettings = new ProjectSettings(m_project, this);
     rightTabs->addTab(m_projectSettings, "Settings");
 
-    // --- LOGIC: CONNECT SETTINGS TO CANVAS ---
+    // Connect the settings changed signal so the canvas updates in real-time
     connect(m_projectSettings, &ProjectSettings::settingsChanged, this, [this]() {
-        // Update the drawing area size based on the new project width/height
         m_canvasView->setFixedSize(m_project->width(), m_project->height());
-        m_canvas->update(); // Tells the internal canvas to redraw for the new size
-
-        // Refresh the canvas and timeline
         m_canvas->update();
         m_timeline->update();
-
-        // Mark project as edited
         m_isModified = true;
         updateWindowTitle();
     });
@@ -409,15 +416,28 @@ void MainWindow::newProject()
 
 void MainWindow::openProject()
 {
-    QString fileName = QFileDialog::getOpenFileName(this,
-                                                    "Open Project", "", "Lumina Projects (*.lumina);;All Files (*)");
+    QString fileName = QFileDialog::getOpenFileName(
+        this,
+        "Open Project",
+        "",
+        "AkisVG Projects (*.akisvg);;All Files (*)",
+        nullptr,
+        QFileDialog::DontUseNativeDialog  // ADD THIS - ensures consistent dialog
+    );
 
     if (!fileName.isEmpty()) {
-        // TODO: Implement project loading
-        m_currentFile = fileName;
-        m_isModified = false;
-        updateWindowTitle();
-        statusBar()->showMessage("Project opened: " + fileName, 3000);
+        if (m_project->loadFromFile(fileName)) {
+            m_currentFile = fileName;
+            m_isModified = false;
+            updateWindowTitle();
+            m_canvas->refreshFrame();
+            m_layerPanel->rebuildLayerList();
+            statusBar()->showMessage("Project opened: " + fileName, 3000);
+        } else {
+            QMessageBox::critical(this, "Load Error",
+                                "Failed to open project from:\n" + fileName +
+                                "\n\nPlease ensure the file is a valid AkisVG project.");  // IMPROVED MESSAGE
+        }
     }
 }
 
@@ -426,19 +446,28 @@ void MainWindow::saveProject()
     if (m_currentFile.isEmpty()) {
         saveProjectAs();
     } else {
-        // TODO: Implement project saving
-        m_isModified = false;
-        updateWindowTitle();
-        statusBar()->showMessage("Project saved", 3000);
+        if (m_project->saveToFile(m_currentFile)) {
+            m_isModified = false;
+            updateWindowTitle();
+            statusBar()->showMessage("Project saved: " + m_currentFile, 3000);
+        } else {
+            QMessageBox::critical(this, "Save Error",
+                                "Failed to save project to:\n" + m_currentFile);
+        }
     }
 }
 
 void MainWindow::saveProjectAs()
 {
     QString fileName = QFileDialog::getSaveFileName(this,
-                                                    "Save Project As", "", "Lumina Projects (*.lumina)");
+                                                    "Save Project As", "",
+                                                    "AkisVG Projects (*.akisvg);;All Files (*)");
 
     if (!fileName.isEmpty()) {
+        // ADD THIS: Ensure .akisvg extension is added if not present
+        if (!fileName.endsWith(".akisvg", Qt::CaseInsensitive)) {
+            fileName += ".akisvg";
+        }
         m_currentFile = fileName;
         saveProject();
     }
@@ -457,17 +486,22 @@ void MainWindow::exportFrame()
 
 void MainWindow::about()
 {
-    QMessageBox::about(this, "About Lumina Studio",
-                       "<h2>Lumina Studio 1.0</h2>"
-                       "<p>Professional vector animation suite</p>"
-                       "<p>Built with Qt 6 and C++17</p>"
-                       "<p><b>Features:</b></p>"
-                       "<ul>"
-                       "<li>Vector drawing with multiple tools</li>"
-                       "<li>Layer-based animation</li>"
-                       "<li>Frame-by-frame timeline</li>"
-                       "<li>Hardware-accelerated rendering</li>"
-                       "</ul>");
+  QMessageBox::about(this, "About AkisVG",
+      "<h2>AkisVG 0.3</h2>"
+      "<p><i>A high-performance, lightweight vector animation suite.</i></p>"
+      "<hr noshade size='1'>"
+      "<p>AkisVG combines the speed of <b>C++17</b> with the flexibility of <b>Qt 6</b> "
+      "to provide a fluid, hardware-accelerated creative environment.</p>"
+
+      "<p><b>Core Capabilities:</b></p>"
+      "<ul>"
+      "<li><b>Expressive Drawing:</b> Versatile vector tools with rich brush textures.</li>"
+      "<li><b>Smart Animation:</b> Layer-based workflow with automated interpolation.</li>"
+      "<li><b>Precise Control:</b> Frame-by-frame timeline for traditional workflows.</li>"
+      "<li><b>High Performance:</b> GPU-accelerated rendering for real-time previews.</li>"
+      "</ul>"
+
+      "<p><small>Optimized for efficiency and creative freedom.</small></p>");
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -493,7 +527,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::updateWindowTitle()
 {
-    QString title = "Lumina Studio";
+    QString title = "AkisVG";
     if (!m_currentFile.isEmpty()) {
         title += " - " + QFileInfo(m_currentFile).fileName();
     }
@@ -662,87 +696,340 @@ void MainWindow::exportToMp4() {
     }
 }
 
-void MainWindow::exportToMp4_Alternative() {
-    QString fileName = QFileDialog::getSaveFileName(
-        this, "Export MP4", "", "Video Files (*.mp4)");
+void MainWindow::exportGifKeyframes() {
+    QString filePath = QFileDialog::getSaveFileName(
+        this, "Export GIF (Keyframes Only)", QString(), "GIF Files (*.gif)");
 
-    if (fileName.isEmpty()) return;
-    if (!fileName.endsWith(".mp4")) fileName += ".mp4";
+    if (filePath.isEmpty()) return;
 
-    // Check FFmpeg
-    QProcess test;
-    test.start("ffmpeg", QStringList() << "-version");
-    if (!test.waitForFinished(3000)) {
-        QMessageBox::critical(this, "Error",
-                              "FFmpeg not found. Install: sudo pacman -S ffmpeg");
-        return;
-    }
+    GifExporter exporter(m_project);
+    exporter.setFrameDelay(1000 / m_project->fps());
+    exporter.setLoop(true);
 
-    int fps = m_project->fps();
-    int totalFrames = m_project->totalFrames();
-
-    if (totalFrames == 0) {
-        QMessageBox::warning(this, "No Frames", "No frames to export.");
-        return;
-    }
-
-    QProgressDialog progress("Exporting...", "Cancel", 0, totalFrames, this);
+    QProgressDialog progress("Exporting GIF (Keyframes Only)...", "Cancel", 0, 100, this);
     progress.setWindowModality(Qt::WindowModal);
-    progress.show();
+    progress.setMinimumDuration(0);
 
-    // Start FFmpeg
-    QProcess ffmpeg;
-    ffmpeg.start("ffmpeg", QStringList()
-                               << "-y" << "-f" << "image2pipe" << "-vcodec" << "png"
-                               << "-r" << QString::number(fps) << "-i" << "-"
-                               << "-vcodec" << "libx264" << "-preset" << "medium"
-                               << "-pix_fmt" << "yuv420p" << "-crf" << "18"
-                               << fileName);
+    connect(&exporter, &GifExporter::exportStarted, [&progress](int totalFrames) {
+        progress.setMaximum(totalFrames);
+        progress.setValue(0);
+    });
 
-    if (!ffmpeg.waitForStarted()) {
-        QMessageBox::critical(this, "Error", "Failed to start FFmpeg");
-        return;
-    }
+    connect(&exporter, &GifExporter::frameExported, [&progress](int current, int /*total*/) { // FIXED
+        progress.setValue(current);
+    });
 
-    int originalFrame = m_project->currentFrame();
+    bool success = exporter.exportToGif(filePath, GifExporter::ExportMode::KeyframesOnly);
 
-    for (int i = 0; i < totalFrames; ++i) {
-        if (progress.wasCanceled()) {
-            ffmpeg.kill();
-            break;
-        }
+    progress.close();
 
-        progress.setValue(i);
-        QApplication::processEvents();
-
-        m_project->setCurrentFrame(i);
-        m_canvas->update();
-        QApplication::processEvents();
-
-        // Grab canvas as image
-        QImage frame = m_canvasView->grab().toImage();
-
-        QByteArray ba;
-        QBuffer buf(&ba);
-        buf.open(QIODevice::WriteOnly);
-        frame.save(&buf, "PNG");
-
-        ffmpeg.write(ba);
-    }
-
-    ffmpeg.closeWriteChannel();
-    ffmpeg.waitForFinished(30000);
-
-    m_project->setCurrentFrame(originalFrame);
-    m_canvas->update();
-
-    if (ffmpeg.exitCode() == 0) {
-        QMessageBox::information(this, "Success",
-                                 "Video exported to:\n" + fileName);
+    if (success) {
+        QMessageBox::information(this, "Export Successful",
+            QString("GIF exported successfully to:\n%1").arg(filePath));
+        statusBar()->showMessage("GIF exported successfully", 5000);
     } else {
-        QMessageBox::critical(this, "Error",
-                              "Export failed:\n" +
-                                  QString::fromUtf8(ffmpeg.readAllStandardError()));
+        QMessageBox::warning(this, "Export Failed",
+            QString("Failed to export GIF:\n%1").arg(exporter.lastError()));
     }
 }
 
+void MainWindow::exportGifAllFrames() {
+    QString filePath = QFileDialog::getSaveFileName(
+        this, "Export GIF (All Frames)", QString(), "GIF Files (*.gif)");
+
+    if (filePath.isEmpty()) return;
+
+    GifExporter exporter(m_project);
+    exporter.setFrameDelay(1000 / m_project->fps());
+    exporter.setLoop(true);
+
+    QProgressDialog progress("Exporting GIF (All Frames)...", "Cancel", 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    connect(&exporter, &GifExporter::exportStarted, [&progress](int totalFrames) {
+        progress.setMaximum(totalFrames);
+        progress.setValue(0);
+    });
+
+    connect(&exporter, &GifExporter::frameExported, [&progress](int current, int /*total*/) { // FIXED
+        progress.setValue(current);
+    });
+
+    bool success = exporter.exportToGif(filePath, GifExporter::ExportMode::EveryFrame);
+
+    progress.close();
+
+    if (success) {
+        QMessageBox::information(this, "Export Successful",
+            QString("GIF exported successfully to:\n%1").arg(filePath));
+        statusBar()->showMessage("GIF exported successfully", 5000);
+    } else {
+        QMessageBox::warning(this, "Export Failed",
+            QString("Failed to export GIF:\n%1").arg(exporter.lastError()));
+    }
+}
+
+void MainWindow::importAudio()
+{
+    QString fileName = QFileDialog::getOpenFileName(
+        this, "Import Audio", "",
+        "Audio Files (*.mp3 *.wav *.ogg *.m4a *.flac *.aac);;All Files (*)");
+
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    // Check if file exists
+    if (!QFile::exists(fileName)) {
+        QMessageBox::warning(this, "Import Error",
+            "Audio file not found: " + fileName);
+        return;
+    }
+
+    Layer *currentLayer = m_project->currentLayer();
+    if (!currentLayer) {
+        QMessageBox::warning(this, "Import Error",
+            "No layer selected. Please create or select a layer first.");
+        return;
+    }
+
+    // Create a media player to get duration
+    QMediaPlayer *player = new QMediaPlayer(this);
+    QAudioOutput *audioOutput = new QAudioOutput(this); // Required for Qt6
+    player->setAudioOutput(audioOutput);
+    player->setSource(QUrl::fromLocalFile(fileName));
+
+    // Wait for media to load
+    QEventLoop loop;
+    bool loaded = false;
+
+    connect(player, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::InvalidMedia) {
+            loaded = true;
+            loop.quit();
+        }
+    });
+
+    // Timeout after 5 seconds
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    if (!loaded || player->mediaStatus() == QMediaPlayer::InvalidMedia) {
+        QMessageBox::warning(this, "Import Error",
+            "Failed to load audio file. The file may be corrupted or in an unsupported format.");
+        delete player;
+        return;
+    }
+
+    // Calculate duration in frames
+    qint64 durationMs = player->duration();
+    int fps = m_project->fps();
+    int durationFrames = (durationMs * fps) / 1000;
+
+    // Create audio data
+    AudioData audioData(fileName, m_project->currentFrame(), durationFrames);
+    audioData.volume = 1.0f;
+    audioData.muted = false;
+
+    // Set audio data to layer
+    currentLayer->setAudioData(audioData);
+
+    // Update UI
+    m_canvas->refreshFrame();
+    m_layerPanel->rebuildLayerList();
+
+    statusBar()->showMessage(QString("Audio imported: %1 (%2 frames)")
+        .arg(QFileInfo(fileName).fileName())
+        .arg(durationFrames), 5000);
+
+    QMessageBox::information(this, "Audio Imported",
+        QString("Audio file imported successfully!\n\n"
+                "File: %1\n"
+                "Duration: %2 seconds (%3 frames at %4 FPS)\n"
+                "Starting at frame: %5")
+        .arg(QFileInfo(fileName).fileName())
+        .arg(durationMs / 1000.0, 0, 'f', 2)
+        .arg(durationFrames)
+        .arg(fps)
+        .arg(m_project->currentFrame()));
+
+    delete player;
+}
+
+void MainWindow::importImage()
+{
+    QString fileName = QFileDialog::getOpenFileName(
+        this, "Import Image", "",
+        "Image Files (*.png *.jpg *.jpeg *.bmp *.svg *.webp *.gif);;All Files (*)");
+
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QImage image(fileName);
+    if (image.isNull()) {
+        QMessageBox::warning(this, "Import Error",
+            "Failed to load image: " + fileName + "\n\n"
+            "The file may be corrupted or in an unsupported format.");
+        return;
+    }
+
+    Layer *currentLayer = m_project->currentLayer();
+    if (!currentLayer) {
+        QMessageBox::warning(this, "Import Error",
+            "No layer selected. Please create or select a layer first.");
+        return;
+    }
+
+    // Create ImageObject
+    ImageObject *imgObj = new ImageObject();
+    imgObj->setImage(QPixmap::fromImage(image));
+
+    // Center the image on the canvas
+    qreal x = (m_project->width() - image.width()) / 2.0;
+    qreal y = (m_project->height() - image.height()) / 2.0;
+    imgObj->setPos(x, y);
+
+    // Add to current layer at current frame
+    currentLayer->addObjectToFrame(m_project->currentFrame(), imgObj);
+
+    // Update canvas
+    m_canvas->refreshFrame();
+    m_isModified = true;
+    updateWindowTitle();
+
+    statusBar()->showMessage(QString("Image imported: %1 (%2x%3)")
+        .arg(QFileInfo(fileName).fileName())
+        .arg(image.width())
+        .arg(image.height()), 5000);
+}
+
+// =========================================================================
+// NEW INTERPOLATION METHODS
+// =========================================================================
+
+void MainWindow::createInterpolationControls()
+{
+    m_interpControlWidget = new QWidget(this);
+    m_interpControlWidget->setStyleSheet(
+        "QWidget { "
+        "  background-color: #8B2BE2; "
+        "  border: 2px solid #6A1DB0; "
+        "  border-radius: 5px; "
+        "  padding: 10px; "
+        "}"
+        "QPushButton { "
+        "  background-color: white; "
+        "  color: #8B2BE2; "
+        "  border: 2px solid white; "
+        "  border-radius: 3px; "
+        "  padding: 5px 15px; "
+        "  font-weight: bold; "
+        "}"
+        "QPushButton:hover { "
+        "  background-color: #f0f0f0; "
+        "}"
+    );
+
+    QHBoxLayout *layout = new QHBoxLayout(m_interpControlWidget);
+
+    QLabel *label = new QLabel("🎬 INTERPOLATION MODE", m_interpControlWidget);
+    label->setStyleSheet("QLabel { color: white; font-weight: bold; font-size: 14px; }");
+    layout->addWidget(label);
+
+    layout->addStretch();
+
+    m_createKeyframeBtn = new QPushButton("Create Keyframe", m_interpControlWidget);
+    layout->addWidget(m_createKeyframeBtn);
+
+    m_finishInterpBtn = new QPushButton("Finish & Save", m_interpControlWidget);
+    layout->addWidget(m_finishInterpBtn);
+
+    connect(m_createKeyframeBtn, &QPushButton::clicked,
+            this, &MainWindow::onCreateKeyframe);
+    connect(m_finishInterpBtn, &QPushButton::clicked,
+            this, &MainWindow::onFinishInterpolation);
+
+    m_interpControlWidget->hide();
+
+    connect(m_interpolationManager, &InterpolationManager::interpolationModeChanged,
+            m_interpControlWidget, &QWidget::setVisible);
+}
+
+void MainWindow::onGroupForInterpolation(const QList<VectorObject*> &objects)
+{
+    if (objects.isEmpty()) {
+        statusBar()->showMessage("No objects selected for interpolation", 3000);
+        return;
+    }
+
+    QString groupId = m_interpolationManager->createGroup(objects);
+
+    if (!groupId.isEmpty()) {
+        statusBar()->showMessage(
+            QString("Created interpolation group with %1 object(s). "
+                    "Position them and create keyframes.").arg(objects.size()),
+            5000
+        );
+    }
+}
+
+void MainWindow::onCreateKeyframe()
+{
+    if (!m_interpolationManager->isInInterpolationMode()) {
+        return;
+    }
+
+    QString groupId = m_interpolationManager->activeGroupId();
+    int currentFrame = m_project->currentFrame();
+
+    if (m_interpolationManager->addKeyframe(groupId, currentFrame)) {
+        int keyframeCount = m_interpolationManager->getKeyframes(groupId).size();
+        statusBar()->showMessage(
+            QString("Keyframe %1 created at frame %2").arg(keyframeCount).arg(currentFrame),
+            3000
+        );
+
+        if (m_timeline) {
+            m_timeline->update();
+        }
+    }
+}
+
+void MainWindow::onFinishInterpolation()
+{
+    if (!m_interpolationManager->isInInterpolationMode()) {
+        return;
+    }
+
+    QString groupId = m_interpolationManager->activeGroupId();
+    int keyframeCount = m_interpolationManager->getKeyframes(groupId).size();
+
+    if (keyframeCount < 2) {
+        QMessageBox::warning(this, "Interpolation Incomplete",
+                           "You need at least 2 keyframes to complete interpolation.\n"
+                           "Create more keyframes or cancel.");
+        return;
+    }
+
+    m_interpolationManager->finishInterpolation();
+
+    statusBar()->showMessage(
+        QString("Interpolation completed with %1 keyframes!").arg(keyframeCount),
+        5000
+    );
+}
+
+void MainWindow::onFrameChanged(int frame)
+{
+    // Auto-update positions when scrubbing timeline
+    if (m_interpolationManager && m_interpolationManager->isInInterpolationMode()) {
+        QString groupId = m_interpolationManager->activeGroupId();
+        m_interpolationManager->updateObjectPositions(groupId, frame);
+
+        if (m_canvas) {
+            m_canvas->update();
+        }
+    }
+}
