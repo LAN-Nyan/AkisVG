@@ -19,7 +19,9 @@ class ToolBox : public QWidget
 public:
     explicit ToolBox(QWidget *parent = nullptr);
     ~ToolBox();
-    
+
+    Tool* getTool(ToolType type) const;
+
     Tool* currentTool() const { return m_currentTool; }
 
 signals:

@@ -82,57 +82,57 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     // - Top vertex (pWhite) = White (S=0, V=1)
     // - Bottom right (pPure) = Pure hue (S=1, V=1)
     // - Bottom left (pBlack) = Black (S=0, V=0)
-    
+
     // Draw using a raster approach for accurate gradient
     QImage triangleImage(width(), height(), QImage::Format_ARGB32);
     triangleImage.fill(Qt::transparent);
-    
+
     QPainter imagePainter(&triangleImage);
     imagePainter.setRenderHint(QPainter::Antialiasing);
-    
+
     // For each pixel in the triangle, calculate the correct HSV color
     QRect boundingRect = triangle.boundingRect().toRect();
     boundingRect = boundingRect.intersected(triangleImage.rect());
-    
+
     for (int y = boundingRect.top(); y <= boundingRect.bottom(); ++y) {
         for (int x = boundingRect.left(); x <= boundingRect.right(); ++x) {
             QPointF point(x, y);
             if (!triangle.contains(point)) continue;
-            
+
             // Calculate barycentric coordinates
             QPointF v0 = pPure - pWhite;
             QPointF v1 = pBlack - pWhite;
             QPointF v2 = point - pWhite;
-            
+
             qreal dot00 = QPointF::dotProduct(v0, v0);
             qreal dot01 = QPointF::dotProduct(v0, v1);
             qreal dot02 = QPointF::dotProduct(v0, v2);
             qreal dot11 = QPointF::dotProduct(v1, v1);
             qreal dot12 = QPointF::dotProduct(v1, v2);
-            
+
             qreal denom = dot00 * dot11 - dot01 * dot01;
             if (qAbs(denom) < 0.0001) continue;
-            
+
             qreal invDenom = 1.0 / denom;
             qreal u = (dot11 * dot02 - dot01 * dot12) * invDenom;
             qreal v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-            
+
             // Clamp to triangle
             if (u < 0 || v < 0 || u + v > 1) continue;
-            
+
             // u = saturation (0 at white vertex, 1 at pure hue vertex)
             // v = inverse value (0 at top/bottom edge, 1 at black vertex)
             qreal saturation = u;
             qreal value = 1.0 - v;
-            
+
             QColor pixelColor = QColor::fromHsvF(hue, saturation, value);
             imagePainter.setPen(pixelColor);
             imagePainter.drawPoint(x, y);
         }
     }
-    
+
     painter.drawImage(0, 0, triangleImage);
-    
+
     // Draw triangle outline
     painter.setPen(QPen(QColor(80, 80, 80), 1));
     painter.drawPath(triangle);
@@ -366,7 +366,7 @@ void ColorPicker::setupUI()
     QLabel *paletteLabel = new QLabel("Color Palettes");
     paletteLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 4px;");
     mainLayout->addWidget(paletteLabel);
-    
+
     m_paletteCombo = new QComboBox();
     m_paletteCombo->setStyleSheet(
         "QComboBox {"
@@ -386,26 +386,26 @@ void ColorPicker::setupUI()
         "   selection-background-color: #2a82da;"
         "}"
     );
-    
+
     loadPalettes();  // Load palette data
-    
+
     // Populate palette dropdown
     for (const QString &paletteName : m_palettes.keys()) {
         m_paletteCombo->addItem(paletteName);
     }
-    
+
     connect(m_paletteCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ColorPicker::onPaletteChanged);
-    
+
     mainLayout->addWidget(m_paletteCombo);
-    
+
     // Palette colors display
     m_paletteWidget = new QWidget();
     QGridLayout *paletteGrid = new QGridLayout(m_paletteWidget);
     paletteGrid->setSpacing(4);
     paletteGrid->setContentsMargins(0, 0, 0, 0);
     mainLayout->addWidget(m_paletteWidget);
-    
+
     // Initialize palette display
     updatePaletteDisplay();
 
@@ -564,7 +564,7 @@ void ColorPicker::onOpacityChanged(int value)
 void ColorPicker::onHexChanged()
 {
     QString hex = m_hexInput->text();
-    if (QColor::isValidColor(hex)) {
+    if (QColor::isValidColorName(hex)) {
         QColor color(hex);
         color.setAlpha(m_currentColor.alpha());
         setColor(color);
@@ -605,7 +605,7 @@ void ColorPicker::loadPalettes()
         Qt::blue, QColor("#8080FF"), QColor("#000080"), QColor("#0080FF"),
         Qt::yellow, QColor("#FFFF80"), QColor("#808000"), QColor("#FF8000")
     };
-    
+
     // Skin Tones
     m_palettes["Skin Tones"] = {
         QColor("#8D5524"), QColor("#C68642"), QColor("#E0AC69"),QColor("#F1C27D"),
@@ -613,7 +613,7 @@ void ColorPicker::loadPalettes()
         QColor("#6D4C41"), QColor("#A1887F"), QColor("#D7CCC8"), QColor("#EFEBE9"),
         QColor("#5D4037"), QColor("#795548"), QColor("#A0826D"), QColor("#DDB5A2")
     };
-    
+
     // Pastel
     m_palettes["Pastel"] = {
         QColor("#FFB3BA"), QColor("#FFDFBA"), QColor("#FFFFBA"), QColor("#BAFFC9"),
@@ -621,7 +621,7 @@ void ColorPicker::loadPalettes()
         QColor("#FFC1CC"), QColor("#FFDAB9"), QColor("#E6E6FA"), QColor("#B0E0E6"),
         QColor("#FFE4E1"), QColor("#F0E68C"), QColor("#DDA0DD"), QColor("#F5DEB3")
     };
-    
+
     // Vibrant
     m_palettes["Vibrant"] = {
         QColor("#FF0000"), QColor("#FF7F00"), QColor("#FFFF00"), QColor("#00FF00"),
@@ -629,7 +629,7 @@ void ColorPicker::loadPalettes()
         QColor("#FF1493"), QColor("#FF4500"), QColor("#FFD700"), QColor("#32CD32"),
         QColor("#1E90FF"), QColor("#9400D3"), QColor("#FF69B4"), QColor("#FF8C00")
     };
-    
+
     // Earth Tones
     m_palettes["Earth Tones"] = {
         QColor("#8B4513"), QColor("#A0522D"), QColor("#D2691E"), QColor("#CD853F"),
@@ -637,7 +637,7 @@ void ColorPicker::loadPalettes()
         QColor("#808000"), QColor("#BDB76B"), QColor("#BC8F8F"), QColor("#CD5C5C"),
         QColor("#A52A2A"), QColor("#8B0000"), QColor("#B8860B"), QColor("#DAA520")
     };
-    
+
     // Grayscale
     m_palettes["Grayscale"] = {
         QColor("#000000"), QColor("#111111"), QColor("#222222"), QColor("#333333"),
@@ -645,7 +645,7 @@ void ColorPicker::loadPalettes()
         QColor("#888888"), QColor("#999999"), QColor("#AAAAAA"), QColor("#BBBBBB"),
         QColor("#CCCCCC"), QColor("#DDDDDD"), QColor("#EEEEEE"), QColor("#FFFFFF")
     };
-    
+
     // Ocean Blues
     m_palettes["Ocean Blues"] = {
         QColor("#001f3f"), QColor("#003d5c"), QColor("#005b7f"), QColor("#0074a3"),
@@ -659,7 +659,7 @@ void ColorPicker::updatePaletteDisplay()
 {
     QGridLayout *grid = qobject_cast<QGridLayout*>(m_paletteWidget->layout());
     if (!grid) return;
-    
+
     // Clear existing buttons
     while (grid->count() > 0) {
         QLayoutItem *item = grid->takeAt(0);
@@ -668,13 +668,13 @@ void ColorPicker::updatePaletteDisplay()
         }
         delete item;
     }
-    
+
     // Get current palette
     QString paletteName = m_paletteCombo->currentText();
     if (!m_palettes.contains(paletteName)) return;
-    
+
     const QVector<QColor> &colors = m_palettes[paletteName];
-    
+
     // Add color buttons in a 8-column grid
     for (int i = 0; i < colors.size(); ++i) {
         QPushButton *btn = new QPushButton();
@@ -691,9 +691,9 @@ void ColorPicker::updatePaletteDisplay()
                     "   border-width: 2px;"
                     "}"
                     ).arg(colors[i].name()));
-        
+
         connect(btn, &QPushButton::clicked, this, &ColorPicker::onPaletteColorClicked);
-        
+
         grid->addWidget(btn, i / 8, i % 8);
     }
 }
@@ -710,7 +710,7 @@ void ColorPicker::onPaletteColorClicked()
     if (btn) {
         int index = btn->property("colorIndex").toInt();
         QString paletteName = m_paletteCombo->currentText();
-        
+
         if (m_palettes.contains(paletteName) && index >= 0 && index < m_palettes[paletteName].size()) {
             setColor(m_palettes[paletteName][index]);
             emit colorChanged(m_currentColor);

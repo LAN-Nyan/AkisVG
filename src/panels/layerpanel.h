@@ -16,11 +16,9 @@ class LayerPanel : public QWidget
 
 public:
     explicit LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent = nullptr);
-
-private slots:
-    // Structural updates (Safe to call when layers are added/removed)
     void rebuildLayerList();
 
+private slots:
     // State updates (Safe to call during mouse clicks/selection changes)
     void updateSelection();
     void updateButtons();

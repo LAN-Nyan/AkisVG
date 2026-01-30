@@ -96,7 +96,7 @@ void ToolBox::setupUI()
         "   height: 0px;"
         "}"
     );
-    
+
     QWidget *contentWidget = new QWidget();
     QVBoxLayout *layout = new QVBoxLayout(contentWidget);
     layout->setSpacing(8);
@@ -288,7 +288,7 @@ void ToolBox::setupUI()
     layout->addWidget(helpLabel);
 
     contentWidget->setStyleSheet("background-color: #2d2d2d;");
-    
+
     // Set contentWidget as the scroll area's widget
     scrollArea->setWidget(contentWidget);
     mainLayout->addWidget(scrollArea);
@@ -308,4 +308,8 @@ void ToolBox::onToolButtonClicked(int id)
         m_currentTool = m_tools[type];
         emit toolChanged(m_currentTool);
     }
+}
+
+Tool* ToolBox::getTool(ToolType type) const {
+    return m_tools.value(type, nullptr);
 }
