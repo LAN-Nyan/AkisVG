@@ -27,6 +27,7 @@ set(SOURCES
     src/core/project.cpp
     src/core/layer.cpp
     src/core/frame.cpp
+    src/core/interpolation.cpp
     src/canvas/vectorcanvas.cpp
     src/canvas/canvasview.cpp
     src/canvas/objects/vectorobject.cpp
@@ -49,6 +50,8 @@ set(SOURCES
     src/core/commands.cpp
     src/canvas/objects/imageobject.cpp
     src/tools/filltool.cpp
+    src/io/gifexporter.cpp
+    src/core/interpolationmanager.cpp
 )
 
 set(HEADERS
@@ -56,6 +59,7 @@ set(HEADERS
     src/core/project.h
     src/core/layer.h
     src/core/frame.h
+    src/core/interpolation.h
     src/canvas/vectorcanvas.h
     src/canvas/canvasview.h
     src/canvas/objects/vectorobject.h
@@ -66,6 +70,7 @@ set(HEADERS
     src/panels/toolbox.h
     src/timeline/timelinewidget.h
     src/canvas/objects/imageobject.h
+    src/io/gifexporter.h
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
