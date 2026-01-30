@@ -9,6 +9,22 @@ ImageObject::ImageObject(QGraphicsItem *parent)
     setFlag(QGraphicsItem::ItemIsMovable, true);
 }
 
+VectorObject* ImageObject::clone() const
+{
+    ImageObject *copy = new ImageObject();
+    copy->setImage(m_pixmap);
+    copy->setSize(m_size);
+    copy->setImagePath(m_imagePath);
+    copy->setPos(pos());
+    copy->setRotation(rotation());
+    copy->setScale(scale());
+    copy->setStrokeColor(strokeColor());
+    copy->setFillColor(fillColor());
+    copy->setStrokeWidth(strokeWidth());
+    copy->setObjectOpacity(objectOpacity());
+    return copy;
+}
+
 void ImageObject::setImage(const QPixmap &pixmap)
 {
     prepareGeometryChange();

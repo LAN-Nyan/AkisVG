@@ -10,6 +10,7 @@ class ImageObject : public VectorObject
 public:
     explicit ImageObject(QGraphicsItem *parent = nullptr);
 
+    VectorObject* clone() const override;
     VectorObjectType objectType() const override { return VectorObjectType::Image; }
 
     void setImage(const QPixmap &pixmap);
