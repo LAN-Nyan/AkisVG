@@ -17,6 +17,6 @@ Hey there! We know you’re looking for something that’s lightweight, packed w
 
 # What’s Next?
 
-working hard to release v0.3 by January 29, 2026 and v0.4 by February 20, 2026—so stay tuned! This is just the start of a journey we’re excited to share with you.
+working hard to release v0.4 by February 20, 2026—so stay tuned! This is just the start of a journey we’re excited to share with you.
 
 Join us in shaping the future of animation—one frame at a time! 
