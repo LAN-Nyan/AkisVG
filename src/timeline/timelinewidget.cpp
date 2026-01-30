@@ -21,6 +21,7 @@
 #include <QAudioOutput>
 #include <QAudioDecoder>
 #include <cmath>
+#include <QEventLoop>
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
