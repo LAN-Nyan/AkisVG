@@ -66,6 +66,10 @@ public:
     void moveLayer(int fromIndex, int toIndex);
     Layer* layerAt(int index) const;
     int layerCount() const { return m_layers.size(); }
+    
+    // Save/Load
+    bool saveToFile(const QString &filePath);
+    bool loadFromFile(const QString &filePath);
 
 
 signals:
