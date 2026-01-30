@@ -15,6 +15,12 @@
 #include <QScrollBar>
 #include <QAction>
 #include <QInputDialog>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QMediaPlayer>
+#include <QAudioOutput>
+#include <QAudioDecoder>
+#include <cmath>
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
@@ -59,8 +65,19 @@ protected:
 
             painter.setPen(layer->isVisible() ? QColor(220, 220, 220) : QColor(100, 100, 100));
             painter.setFont(QFont("Arial", 10));
+
+            // Show layer type indicator
+            QString layerText = layer->name();
+            if (layer->layerType() == LayerType::Audio) {
+                layerText = " " + layerText;
+            } else if (layer->layerType() == LayerType::Reference) {
+                layerText = " " + layerText;
+            } else if (layer->layerType() == LayerType::Background) {
+                layerText = " " + layerText;
+            }
+
             painter.drawText(QRect(20, y, width() - 80, rowHeight),
-                             Qt::AlignLeft | Qt::AlignVCenter, layer->name());
+                             Qt::AlignLeft | Qt::AlignVCenter, layerText);
 
             QString visIcon = layer->isVisible() ? "👁" : "○";
             painter.setFont(QFont("Arial", 12));
@@ -127,6 +144,7 @@ void FrameGridWidget::setOnionSkin(bool enabled, int frames) {
 void FrameGridWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), QColor(20, 20, 20));
 
     const int cellWidth = 16;
@@ -159,9 +177,67 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
         painter.fillRect(0, y, width(), rowHeight, QColor(30, 30, 30));
 
-        // Onion Skin - show previous AND next frames
+        // Highlight active layer row
+        if (layer == m_project->currentLayer()) {
+            painter.fillRect(0, y, width(), rowHeight, QColor(42, 130, 218, 20));
+        }
+
+        // === AUDIO LAYER RENDERING WITH REAL WAVEFORM ===
+        if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
+            AudioData audio = layer->getAudioData();
+
+            int startX = (audio.startFrame - 1) * cellWidth;
+            int widthPx = audio.durationFrames * cellWidth;
+
+            QRect audioRect(startX, y + 4, widthPx, rowHeight - 8);
+            QColor audioGreen(83, 138, 63);
+
+            if (audio.muted) {
+                audioGreen = QColor(100, 100, 100);
+            }
+
+            painter.setBrush(audioGreen);
+            painter.setPen(audioGreen.darker(150));
+            painter.drawRoundedRect(audioRect, 4, 4);
+
+            // Draw waveform from audio data
+            if (audio.waveformData.size() > 0) {
+                painter.setPen(QColor(20, 60, 20, 180));
+                int centerY = y + rowHeight / 2;
+                int samplesPerPixel = qMax(1, audio.waveformData.size() / widthPx);
+
+                for (int px = 0; px < widthPx && px < width(); px++) {
+                    int sampleIdx = px * samplesPerPixel;
+                    if (sampleIdx < audio.waveformData.size()) {
+                        float amplitude = audio.waveformData[sampleIdx];
+                        int waveHeight = qAbs(amplitude * (rowHeight / 2 - 4));
+                        int wx = startX + px;
+                        painter.drawLine(wx, centerY - waveHeight, wx, centerY + waveHeight);
+                    }
+                }
+            } else {
+                // Fallback to simulated waveform if no data
+                painter.setPen(QColor(20, 60, 20, 150));
+                int centerY = y + rowHeight / 2;
+                for (int wx = startX; wx < startX + widthPx && wx < width(); wx += 2) {
+                    int waveHeight = 2 + (std::sin(wx * 0.1) * std::cos(wx * 0.05) * 10);
+                    painter.drawLine(wx, centerY - waveHeight, wx, centerY + waveHeight);
+                }
+            }
+
+            // Volume indicator
+            if (audio.volume < 0.99f) {
+                painter.setPen(Qt::white);
+                painter.setFont(QFont("Arial", 7));
+                QString volText = QString("%1%").arg(qRound(audio.volume * 100));
+                painter.drawText(audioRect, Qt::AlignCenter, volText);
+            }
+
+            continue;
+        }
+
+        // === ONION SKIN ===
         if (m_onionSkinEnabled && layer == m_project->currentLayer()) {
-            // Previous frames (greenish)
             for (int offset = 1; offset <= m_onionFrames; ++offset) {
                 int prevFrame = currentFrame - offset;
                 if (prevFrame >= 1 && layer->hasContentAtFrame(prevFrame)) {
@@ -172,7 +248,6 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
                 }
             }
 
-            // Next frames (reddish)
             for (int offset = 1; offset <= m_onionFrames; ++offset) {
                 int nextFrame = currentFrame + offset;
                 if (nextFrame <= m_project->totalFrames() && layer->hasContentAtFrame(nextFrame)) {
@@ -184,7 +259,7 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
             }
         }
 
-        // FIXED: Frames - only paint extended frames in correct range
+        // === FRAME RENDERING WITH INTERPOLATION AS CONTINUOUS BAR ===
         for (int frame = 1; frame <= m_project->totalFrames(); ++frame) {
             int x = (frame - 1) * cellWidth;
             QRect cellRect(x, y, cellWidth, rowHeight);
@@ -194,84 +269,106 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
                 painter.fillRect(cellRect, QColor(42, 130, 218, 20));
             }
 
-            // Check frame type
             bool isKeyFrame = layer->isKeyFrame(frame);
             bool isExtended = layer->isFrameExtended(frame);
+            bool isInterpolated = layer->isInterpolated(frame);
+            bool isInterpKeyframe = layer->isInterpolationKeyFrame(frame);
 
             if (isKeyFrame) {
-                // This frame has actual content - draw in layer color
                 QColor col = layer->color();
-                painter.fillRect(cellRect.adjusted(2, 8, -2, -8), col);
-                painter.setPen(col.lighter(120));
-                painter.drawRect(cellRect.adjusted(2, 8, -2, -8));
 
-                // If this key frame is extended, draw yellow triangle marker
+                // Check for interpolation first
+                FrameInterpolation interp = layer->getInterpolationFor(frame);
+                if (interp.startFrame == frame && interp.endFrame > frame) {
+                    // === INTERPOLATION BAR (Purple continuous bar) ===
+                    int interpWidth = (interp.endFrame - frame + 1) * cellWidth;
+                    QRect interpRect(x, y + 8, interpWidth, rowHeight - 16);
+
+                    QColor purple(138, 43, 226);
+                    painter.setBrush(purple);
+                    painter.setPen(QPen(purple.darker(130), 1));
+                    painter.drawRoundedRect(interpRect, 6, 6);
+
+                    // Start keyframe dot
+                    painter.setBrush(Qt::white);
+                    painter.setPen(Qt::NoPen);
+                    painter.drawEllipse(x + 4, y + rowHeight / 2 - 3, 6, 6);
+
+                    // End keyframe dot
+                    painter.drawEllipse(x + interpWidth - 10, y + rowHeight / 2 - 3, 6, 6);
+
+                    // Skip ahead
+                    frame = interp.endFrame;
+                    continue;
+                }
+
+                // Check if this keyframe has extension
                 int extendEnd = layer->getExtensionEnd(frame);
                 if (extendEnd > frame) {
-                    QPolygon triangle;
-                    triangle << QPoint(x + cellWidth - 2, y + 8)
-                             << QPoint(x + cellWidth - 2, y + 13)
-                             << QPoint(x + cellWidth - 7, y + 8);
-                    painter.setBrush(QColor(255, 193, 7));
+                    // === EXTENDED FRAME (Orange bar) ===
+                    int extendWidth = (extendEnd - frame + 1) * cellWidth;
+                    QRect extendRect(x, y + 8, extendWidth, rowHeight - 16);
+
+                    QColor orange(255, 165, 0);
+                    painter.setBrush(orange);
+                    painter.setPen(QPen(orange.darker(130), 1));
+                    painter.drawRoundedRect(extendRect, 6, 6);
+
+                    // Start dot
+                    painter.setBrush(Qt::white);
                     painter.setPen(Qt::NoPen);
-                    painter.drawPolygon(triangle);
-                }
-            } else if (isExtended) {
-                // CRITICAL FIX: Only paint yellow if this frame is actually extended
-                int keyFrame = layer->getKeyFrameFor(frame);
-                if (keyFrame != -1 && keyFrame != frame) {
-                    QColor yellowExtended(255, 193, 7, 180);
-                    painter.fillRect(cellRect.adjusted(2, 8, -2, -8), yellowExtended);
-                    painter.setPen(yellowExtended.darker(110));
-                    painter.drawRect(cellRect.adjusted(2, 8, -2, -8));
+                    painter.drawEllipse(x + 4, y + rowHeight / 2 - 3, 6, 6);
 
-                    // Diagonal hatching pattern
-                    painter.setPen(QPen(QColor(255, 193, 7, 100), 1));
-                    for (int dx = 0; dx < cellWidth; dx += 4) {
-                        painter.drawLine(x + dx, y + 8, x + dx + 8, y + rowHeight - 8);
-                    }
+                    // End dot
+                    painter.setBrush(QColor(50, 50, 200));
+                    painter.drawEllipse(x + extendWidth - 10, y + rowHeight / 2 - 3, 6, 6);
+
+                    frame = extendEnd;
+                    continue;
                 }
+
+                // === STANDARD KEYFRAME (Blue) ===
+                painter.setBrush(col);
+                painter.setPen(col.lighter(120));
+                painter.drawRoundedRect(cellRect.adjusted(2, 8, -2, -8), 4, 4);
+
+                painter.setBrush(Qt::white);
+                painter.setPen(Qt::NoPen);
+                painter.drawEllipse(x + cellWidth / 2 - 2, y + rowHeight / 2 - 2, 4, 4);
             }
-
-            painter.setPen(QColor(25, 25, 25));
-            painter.drawRect(cellRect);
         }
-        painter.setPen(QColor(20, 20, 20));
-        painter.drawLine(0, y + rowHeight, width(), y + rowHeight);
     }
 
-    // Playhead
+    // === PLAYHEAD ===
     int playheadX = (currentFrame - 1) * cellWidth + cellWidth / 2;
     painter.setPen(QPen(QColor(255, 60, 60), 2));
     painter.drawLine(playheadX, headerHeight, playheadX, height());
 
+    painter.setBrush(QColor(255, 60, 60));
     QPolygon triangle;
     triangle << QPoint(playheadX, headerHeight)
-             << QPoint(playheadX - 6, headerHeight - 10)
-             << QPoint(playheadX + 6, headerHeight - 10);
-    painter.setBrush(QColor(255, 60, 60));
-    painter.setPen(Qt::NoPen);
+             << QPoint(playheadX - 5, headerHeight - 8)
+             << QPoint(playheadX + 5, headerHeight - 8);
     painter.drawPolygon(triangle);
 }
 
 void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
     const int cellWidth = 16;
-    int frame = (event->pos().x() / cellWidth) + 1;
-    if (frame >= 1 && frame <= m_project->totalFrames()) {
-        m_project->setCurrentFrame(frame);
-        m_isDragging = true;
+    const int headerHeight = 32;
+
+    int clickedFrame = (event->pos().x() / cellWidth) + 1;
+
+    if (clickedFrame > 0 && clickedFrame <= m_project->totalFrames()) {
+        m_project->setCurrentFrame(clickedFrame);
     }
 }
 
 void FrameGridWidget::mouseMoveEvent(QMouseEvent *event) {
-    if (m_isDragging) {
+    if (event->buttons() & Qt::LeftButton) {
         const int cellWidth = 16;
         int frame = (event->pos().x() / cellWidth) + 1;
-        frame = qBound(1, frame, m_project->totalFrames());
-
-        if (frame != m_project->currentFrame()) {
+        if (frame > 0 && frame <= m_project->totalFrames() && frame != m_project->currentFrame()) {
             m_project->setCurrentFrame(frame);
-            update();
         }
     }
 }
@@ -280,93 +377,203 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
     QMenu menu(this);
 
     const int cellWidth = 16;
-    const int headerHeight = 32;
     const int rowHeight = 36;
-
+    const int headerHeight = 32;
     int clickedFrame = (event->pos().x() / cellWidth) + 1;
     int y = event->pos().y();
 
     if (y < headerHeight) {
-        // Header - frame count menu
         QAction *add10 = menu.addAction("Add 10 Frames");
         QAction *add24 = menu.addAction("Add 24 Frames");
         QAction *selected = menu.exec(event->globalPos());
-        if (selected) {
-            if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
-            else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
-            updateGeometry();
-            update();
-        }
+        if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
+        else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+        updateGeometry();
+        update();
         return;
     }
 
-    // Calculate which layer was clicked
     auto layers = m_project->layers();
     int layerRow = (y - headerHeight) / rowHeight;
     int layerIndex = layers.size() - 1 - layerRow;
-    if (layerIndex < 0 || layerIndex >= layers.size()) return;
 
-    Layer *layer = layers[layerIndex];
-    bool hasContent = layer->isKeyFrame(clickedFrame);
-    bool isExtended = layer->isFrameExtended(clickedFrame);
-    int keyFrame = layer->getKeyFrameFor(clickedFrame);
+    if (layerIndex >= 0 && layerIndex < layers.size()) {
+        Layer *layer = layers[layerIndex];
 
-    if (hasContent) {
-        // Key frame - offer to extend
-        QAction *extendAction = menu.addAction("🎬 Extend Frame...");
-        int currentExtension = layer->getExtensionEnd(clickedFrame);
-        if (currentExtension > clickedFrame) {
-            QAction *clearAction = menu.addAction(QString("✂️ Clear Extension (to frame %1)").arg(currentExtension));
-            QAction *selected = menu.exec(event->globalPos());
-            if (selected == extendAction) {
-                bool ok;
-                int toFrame = QInputDialog::getInt(this, "Extend Frame",
-                                                   QString("Extend frame %1 to frame:").arg(clickedFrame),
-                                                   currentExtension, clickedFrame + 1, m_project->totalFrames(), 1, &ok);
-                if (ok) {
-                    layer->extendFrameTo(clickedFrame, toFrame);
+        // === AUDIO LAYER CONTEXT MENU ===
+        if (layer->layerType() == LayerType::Audio) {
+            QAction *loadAudio = menu.addAction("Load Audio File...");
+            QAction *removeAudio = nullptr;
+            if (layer->hasAudio()) {
+                removeAudio = menu.addAction("Remove Audio");
+                menu.addSeparator();
+                QAction *muteToggle = menu.addAction(layer->getAudioData().muted ? "Unmute" : "Mute");
+
+                QAction *selected = menu.exec(event->globalPos());
+
+                if (selected == muteToggle) {
+                    AudioData audio = layer->getAudioData();
+                    audio.muted = !audio.muted;
+                    layer->setAudioData(audio);
                     update();
+                    return;
                 }
-            } else if (selected == clearAction) {
-                layer->clearFrameExtension(clickedFrame);
+            } else {
+                QAction *selected = menu.exec(event->globalPos());
+            }
+
+            QAction *selected = menu.exec(event->globalPos());
+
+            if (selected == loadAudio) {
+                QString audioPath = QFileDialog::getOpenFileName(
+                    this, "Load Audio File", QString(),
+                    "Audio Files (*.mp3 *.wav *.ogg *.flac *.m4a)");
+
+                if (!audioPath.isEmpty()) {
+                    AudioData audio = loadAudioFile(audioPath, clickedFrame);
+                    layer->setAudioData(audio);
+                    update();
+
+                    // Emit signal to start playback
+                    emit audioLoaded(layer, audioPath);
+                }
+            } else if (selected == removeAudio && removeAudio) {
+                layer->clearAudio();
                 update();
             }
-        } else {
+            return;
+        }
+
+        // === REFERENCE LAYER - IMAGE IMPORT ===
+        if (layer->layerType() == LayerType::Reference) {
+            QAction *importImage = menu.addAction("Import Reference Image...");
+            QAction *clearRef = nullptr;
+            if (layer->hasContentAtFrame(clickedFrame)) {
+                clearRef = menu.addAction("Clear Reference");
+            }
+
             QAction *selected = menu.exec(event->globalPos());
-            if (selected == extendAction) {
-                bool ok;
-                int toFrame = QInputDialog::getInt(this, "Extend Frame",
-                                                   QString("Extend frame %1 to frame:").arg(clickedFrame),
-                                                   clickedFrame + 10, clickedFrame + 1, m_project->totalFrames(), 1, &ok);
-                if (ok) {
-                    layer->extendFrameTo(clickedFrame, toFrame);
+
+            if (selected == importImage) {
+                QString imagePath = QFileDialog::getOpenFileName(
+                    this, "Import Reference Image", QString(),
+                    "Images (*.png *.jpg *.jpeg *.svg)");
+
+                if (!imagePath.isEmpty()) {
+                    // Signal to import image to layer
+                    emit referenceImageImported(layer, imagePath, clickedFrame);
                     update();
+                }
+            } else if (selected == clearRef && clearRef) {
+                layer->clearFrame(clickedFrame);
+                update();
+            }
+            return;
+        }
+
+        // === ART LAYER CONTEXT MENU ===
+        bool isKeyFrame = layer->isKeyFrame(clickedFrame);
+
+        QAction *makeKeyAction = menu.addAction("Make Keyframe");
+        makeKeyAction->setEnabled(!isKeyFrame); // Only enable if NOT a keyframe
+
+        menu.addSeparator();
+        QAction *extendAction = menu.addAction("Extend Frame (Hold)");
+        extendAction->setEnabled(isKeyFrame);
+
+        QAction *interpAction = menu.addAction("Start Interpolation (Tween)");
+        interpAction->setEnabled(isKeyFrame);
+
+        if (isKeyFrame) {
+            menu.addSeparator();
+            QAction *clearAction = menu.addAction("Clear Frame");
+            menu.addAction(clearAction);
+        }
+
+        QAction *selected = menu.exec(event->globalPos());
+
+        if (selected == makeKeyAction) {
+            layer->makeKeyFrame(clickedFrame);
+            update();
+        } else if (selected == extendAction) {
+            bool ok;
+            int toFrame = QInputDialog::getInt(
+                this, "Extend Frame",
+                QString("Extend frame %1 to frame:").arg(clickedFrame),
+                clickedFrame + 10, clickedFrame + 1, m_project->totalFrames(), 1, &ok);
+            if (ok) {
+                layer->extendFrameTo(clickedFrame, toFrame);
+                update();
+            }
+        } else if (selected == interpAction) {
+            bool ok;
+            int endFrame = QInputDialog::getInt(
+                this, "Create Interpolation",
+                QString("Interpolate from frame %1 to:").arg(clickedFrame),
+                clickedFrame + 10, clickedFrame + 1, m_project->totalFrames(), 1, &ok);
+
+            if (ok) {
+                if (!layer->isKeyFrame(endFrame)) {
+                    QMessageBox::warning(this, "Cannot Interpolate",
+                        "End frame must be a keyframe.\n\nCreate the end pose first by:\n"
+                        "1. Going to that frame\n2. Drawing the end position\n3. Then set interpolation.");
+                    return;
+                }
+
+                QStringList easingTypes = {"linear", "easeIn", "easeOut", "easeInOut"};
+                QString easing = QInputDialog::getItem(
+                    this, "Easing Type", "Select easing function:",
+                    easingTypes, 0, false, &ok);
+
+                if (ok) {
+                    layer->setInterpolation(clickedFrame, endFrame, easing);
+                    update();
+
+                    QMessageBox::information(this, "Interpolation Set",
+                        "Interpolation created!\n\nNow use the SELECT TOOL (V) to:\n"
+                        "1. Select objects with bounding box\n"
+                        "2. Move them to desired positions on in-between frames\n"
+                        "3. The system will auto-generate smooth motion");
                 }
             }
         }
-    } else if (isExtended) {
-        // Extended frame - show info
-        QAction *gotoAction = menu.addAction(QString("📍 Go to Key Frame %1").arg(keyFrame));
-        QAction *clearAction = menu.addAction("✂️ Clear Extension");
-        QAction *selected = menu.exec(event->globalPos());
-        if (selected == gotoAction) {
-            m_project->setCurrentFrame(keyFrame);
-        } else if (selected == clearAction) {
-            layer->clearFrameExtension(keyFrame);
-            update();
-        }
-    } else {
-        // Empty frame
-        QAction *add10 = menu.addAction("Add 10 Frames");
-        QAction *add24 = menu.addAction("Add 24 Frames");
-        QAction *selected = menu.exec(event->globalPos());
-        if (selected) {
-            if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
-            else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
-            updateGeometry();
-            update();
-        }
     }
+}
+
+AudioData FrameGridWidget::loadAudioFile(const QString &filePath, int startFrame) {
+    AudioData audio;
+    audio.filePath = filePath;
+    audio.startFrame = startFrame;
+    audio.volume = 1.0f;
+    audio.muted = false;
+
+    // Use QAudioDecoder to get waveform data
+    QAudioDecoder decoder;
+    decoder.setSource(QUrl::fromLocalFile(filePath));
+
+    QEventLoop loop;
+    connect(&decoder, &QAudioDecoder::bufferReady, [&]() {
+        QAudioBuffer buffer = decoder.read();
+        const qint16 *data = buffer.constData<qint16>();
+        int sampleCount = buffer.sampleCount();
+
+        // Downsample for visualization
+        for (int i = 0; i < sampleCount; i += 100) {
+            float normalized = data[i] / 32768.0f;
+            audio.waveformData.append(normalized);
+        }
+    });
+
+    connect(&decoder, &QAudioDecoder::finished, &loop, &QEventLoop::quit);
+    decoder.start();
+    loop.exec();
+
+    // Calculate duration in frames
+    qint64 durationMs = decoder.duration();
+    int fps = m_project->fps();
+    audio.durationFrames = (durationMs * fps) / 1000;
+
+    return audio;
 }
 
 void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
@@ -374,16 +581,21 @@ void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
     m_isDragging = false;
 }
 
-// --- TimelineWidget Implementation ---
+// === TimelineWidget Implementation ===
 
 TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     : QWidget(parent)
     , m_project(project)
     , m_isPlaying(false)
     , m_playbackTimerId(-1)
+    , m_audioPlayer(new QMediaPlayer(this))
+    , m_audioOutput(new QAudioOutput(this))
 {
+    m_audioPlayer->setAudioOutput(m_audioOutput);
+
     setupUI();
     connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::updateFrameDisplay);
+    connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::syncAudioToFrame);
 }
 
 void TimelineWidget::setupUI()
@@ -452,18 +664,11 @@ void TimelineWidget::setupUI()
     QLabel *fpsLabel = new QLabel(QString("@ %1 FPS").arg(m_project->fps()));
     fpsLabel->setStyleSheet("color: #888; font-size: 11px;");
     controlLayout->addWidget(fpsLabel);
+
     controlLayout->addStretch();
 
-    // Onion Skin
-    QPushButton *onionBtn = new QPushButton("◉ Onion Skin");
-    onionBtn->setCheckable(true);
-    onionBtn->setStyleSheet("QPushButton { background-color: #1e1e1e; border: none; border-radius: 4px; color: #aaa; padding: 6px 12px; font-size: 11px; } QPushButton:checked { background-color: #2a82da; color: white; }");
+    // NO GIF EXPORT BUTTONS HERE - MOVED TO MENU BAR
 
-    connect(onionBtn, &QPushButton::toggled, this, [this](bool checked) {
-        FrameGridWidget *grid = findChild<FrameGridWidget*>();
-        if (grid) grid->setOnionSkin(checked, 2);
-    });
-    controlLayout->addWidget(onionBtn);
     mainLayout->addWidget(controlBar);
 
     // Splitter Area
@@ -479,6 +684,11 @@ void TimelineWidget::setupUI()
     scrollArea->setStyleSheet("QScrollArea { background-color: #1a1a1a; border: none; } QScrollBar:horizontal { background: #1e1e1e; height: 10px; } QScrollBar::handle:horizontal { background: #3a3a3a; border-radius: 5px; }");
 
     FrameGridWidget *frameGrid = new FrameGridWidget(m_project);
+
+    // Connect audio loading signal
+    connect(frameGrid, &FrameGridWidget::audioLoaded, this, &TimelineWidget::loadAudioTrack);
+    connect(frameGrid, &FrameGridWidget::referenceImageImported, this, &TimelineWidget::handleReferenceImport);
+
     scrollArea->setWidget(frameGrid);
 
     splitter->addWidget(scrollArea);
@@ -487,6 +697,47 @@ void TimelineWidget::setupUI()
     mainLayout->addWidget(splitter);
 
     updateFrameDisplay();
+
+    // Connect to settings panel onion skin changes
+    connect(m_project, &Project::onionSkinSettingsChanged, this, [this, frameGrid]() {
+        frameGrid->setOnionSkin(
+            m_project->onionSkinEnabled(),
+            m_project->onionSkinBefore() + m_project->onionSkinAfter()
+        );
+    });
+}
+
+void TimelineWidget::loadAudioTrack(Layer *layer, const QString &audioPath) {
+    m_audioPlayer->setSource(QUrl::fromLocalFile(audioPath));
+    m_currentAudioLayer = layer;
+}
+
+void TimelineWidget::syncAudioToFrame() {
+    if (!m_currentAudioLayer || !m_currentAudioLayer->hasAudio()) {
+        return;
+    }
+
+    AudioData audio = m_currentAudioLayer->getAudioData();
+    int currentFrame = m_project->currentFrame();
+
+    if (currentFrame >= audio.startFrame && currentFrame < audio.startFrame + audio.durationFrames) {
+        int frameOffset = currentFrame - audio.startFrame;
+        qint64 positionMs = (frameOffset * 1000) / m_project->fps();
+        m_audioPlayer->setPosition(positionMs);
+
+        if (m_isPlaying && !audio.muted) {
+            if (m_audioPlayer->playbackState() != QMediaPlayer::PlayingState) {
+                m_audioPlayer->play();
+            }
+        }
+    } else {
+        m_audioPlayer->pause();
+    }
+}
+
+void TimelineWidget::handleReferenceImport(Layer *layer, const QString &imagePath, int frame) {
+    // Signal to canvas or project to load reference image
+    emit referenceImageRequested(layer, imagePath, frame);
 }
 
 void TimelineWidget::onPlayPauseClicked() {
@@ -523,6 +774,7 @@ void TimelineWidget::stopPlayback() {
         killTimer(m_playbackTimerId);
         m_playbackTimerId = -1;
     }
+    m_audioPlayer->pause();
 }
 
 void TimelineWidget::timerEvent(QTimerEvent *event) {
@@ -538,10 +790,9 @@ void TimelineWidget::timerEvent(QTimerEvent *event) {
 }
 
 void TimelineWidget::setOnionSkinEnabled(bool enabled) {
-    m_onionSkinEnabled = enabled;
     FrameGridWidget *grid = findChild<FrameGridWidget*>();
     if (grid) {
-        grid->setOnionSkin(enabled, 3);
+        int frames = m_project->onionSkinBefore() + m_project->onionSkinAfter();
+        grid->setOnionSkin(enabled, frames);
     }
 }
-

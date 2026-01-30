@@ -7,6 +7,10 @@
 #include <QLabel>
 
 class Project;
+class Layer;
+class QMediaPlayer;
+class QAudioOutput;
+struct AudioData;
 
 class FrameGridWidget : public QWidget
 {
@@ -16,6 +20,10 @@ public:
     QSize sizeHint() const override;
     void setOnionSkin(bool enabled, int frames);
 
+signals:
+    void audioLoaded(Layer *layer, const QString &audioPath);
+    void referenceImageImported(Layer *layer, const QString &imagePath, int frame);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -24,11 +32,12 @@ protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
+    AudioData loadAudioFile(const QString &filePath, int startFrame);
+
     Project *m_project;
     int m_onionFrames;
     bool m_isDragging;
     bool m_onionSkinEnabled;
-
 };
 
 class TimelineWidget : public QWidget
@@ -37,6 +46,9 @@ class TimelineWidget : public QWidget
 
 public:
     explicit TimelineWidget(Project *project, QWidget *parent = nullptr);
+
+signals:
+    void referenceImageRequested(Layer *layer, const QString &imagePath, int frame);
 
 protected:
     void timerEvent(QTimerEvent *event) override;
@@ -49,6 +61,9 @@ private slots:
     void onStopClicked();
     void onFrameChanged(int frame);
     void updateFrameDisplay();
+    void loadAudioTrack(Layer *layer, const QString &audioPath);
+    void syncAudioToFrame();
+    void handleReferenceImport(Layer *layer, const QString &imagePath, int frame);
 
 private:
     void setupUI();
@@ -58,11 +73,14 @@ private:
     Project *m_project;
     QPushButton *m_playPauseBtn;
     QPushButton *m_stopBtn;
-    QSlider *m_frameSlider;
     QLabel *m_frameLabel;
     bool m_isPlaying;
     int m_playbackTimerId;
-    bool m_onionSkinEnabled;
+
+    // Audio playback
+    QMediaPlayer *m_audioPlayer;
+    QAudioOutput *m_audioOutput;
+    Layer *m_currentAudioLayer = nullptr;
 };
 
 #endif // TIMELINEWIDGET_H
