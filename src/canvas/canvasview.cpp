@@ -3,6 +3,8 @@
 
 #include <QWheelEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QtMath>
 
@@ -25,6 +27,7 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     , m_currentZoom(1.0)
     , m_zoomMin(0.01)
     , m_zoomMax(50.0)
+    , m_isPanning(false)
 {
     // PERFORMANCE: Enable high-quality rendering
     setRenderHint(QPainter::Antialiasing);
@@ -45,7 +48,7 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
 
     // Use AnchorUnderMouse for proper zoom behavior
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-    setResizeAnchor(QGraphicsView::AnchorUnderMouse);
+    setResizeAnchor(QGraphicsView::AnchorViewCenter);
 
     // Center on canvas initially
     if (canvas) {
@@ -141,4 +144,61 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
     }
 
     QGraphicsView::keyPressEvent(event);
+}
+
+void CanvasView::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::MiddleButton) {
+        // Middle mouse button for panning
+        m_isPanning = true;
+        m_panStartPos = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+    } else {
+        QGraphicsView::mousePressEvent(event);
+    }
+}
+
+void CanvasView::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::MiddleButton && m_isPanning) {
+        m_isPanning = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+    } else {
+        QGraphicsView::mouseReleaseEvent(event);
+    }
+}
+
+void CanvasView::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_isPanning) {
+        // Calculate pan delta
+        QPoint delta = event->pos() - m_panStartPos;
+        m_panStartPos = event->pos();
+        
+        // Pan the view
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+        verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+        event->accept();
+    } else {
+        QGraphicsView::mouseMoveEvent(event);
+    }
+}
+
+void CanvasView::resizeEvent(QResizeEvent *event)
+{
+    QGraphicsView::resizeEvent(event);
+    
+    // Keep canvas centered when window is resized
+    if (scene()) {
+        recenterCanvas();
+    }
+}
+
+void CanvasView::recenterCanvas()
+{
+    if (scene()) {
+        centerOn(sceneRect().center());
+    }
 }

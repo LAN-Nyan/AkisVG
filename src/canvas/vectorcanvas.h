@@ -11,6 +11,7 @@
 // Forward declarations
 class Project;
 class VectorObject;
+class QPainter;
 
 class VectorCanvas : public QGraphicsScene
 {
@@ -22,7 +23,7 @@ public:
 
     void setCurrentTool(Tool *tool);
     Tool* currentTool() const { return m_currentTool; }
-    
+
     QUndoStack* undoStack() const { return m_undoStack; }
 
     void setOnionSkinEnabled(bool enabled);
@@ -36,6 +37,10 @@ public:
     void clearCurrentFrame();
     void refreshFrame();
 
+    // Interpolation mode support
+    void setInterpolationMode(bool enabled);
+    bool isInInterpolationMode() const { return m_interpolationMode; }
+
 signals:
     void referenceImageDropped(const QString &path, const QPointF &position);
     void audioDropped(const QString &path);
@@ -45,7 +50,7 @@ public slots:
     void setupLayerConnections();
 
 protected:
-    //void drawBackground(QPainter *painter, const QRectF &rect) override;
+    void drawBackground(QPainter *painter, const QRectF &rect) override;
     void dragEnterEvent(QGraphicsSceneDragDropEvent *event) override;
     void dropEvent(QGraphicsSceneDragDropEvent *event) override;
     void dragMoveEvent(QGraphicsSceneDragDropEvent *event) override;
@@ -62,7 +67,8 @@ private:
     QUndoStack *m_undoStack;
     Tool *m_currentTool;
     bool m_onionSkinEnabled;
-    bool m_isDrawing = false;
+    bool m_isDrawing;
+    bool m_interpolationMode;
     QSet<Layer*> m_connectedLayers;  // Track which layers are already connected
 };
 

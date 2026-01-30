@@ -24,17 +24,16 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
     , m_undoStack(undoStack)
     , m_currentTool(nullptr)
     , m_onionSkinEnabled(true)
+    , m_isDrawing(false)              // ADDED
+    , m_interpolationMode(false)      // ADDED
 {
     if (!m_project) return;
 
     setSceneRect(0, 0, project->width(), project->height());
     setBackgroundBrush(QBrush(Qt::white));
-    
+
     // PERFORMANCE: Use BspTree for faster item lookup
     setItemIndexMethod(QGraphicsScene::BspTreeIndex);
-    
-    // PERFORMANCE: Enable optimizations
-    // Note: OpenGL rendering must be enabled in the view, not the scene
 
     connect(project, &Project::currentFrameChanged, this, &VectorCanvas::onFrameChanged);
     connect(project, &Project::onionSkinSettingsChanged, this, &VectorCanvas::refreshFrame);
@@ -85,20 +84,20 @@ void VectorCanvas::refreshFrame()
     if (!m_project) return;
 
     int currentFrame = m_project->currentFrame();
-    
+
     // Render onion skins if enabled
     if (m_project->onionSkinEnabled()) {
         // Render previous frames (onion skin before)
         for (int i = 1; i <= m_project->onionSkinBefore(); ++i) {
             int prevFrame = currentFrame - i;
             if (prevFrame < 1) continue;
-            
+
             qreal opacity = m_project->onionSkinOpacity() * (1.0 - (i - 1) * 0.3);
             if (opacity <= 0.05) continue;
-            
+
             for (Layer *layer : m_project->layers()) {
                 if (!layer->isVisible()) continue;
-                
+
                 for (VectorObject *obj : layer->objectsAtFrame(prevFrame)) {
                     addItem(obj);
                     obj->setOpacity(opacity * layer->opacity());
@@ -107,18 +106,18 @@ void VectorCanvas::refreshFrame()
                 }
             }
         }
-        
+
         // Render future frames (onion skin after)
         for (int i = 1; i <= m_project->onionSkinAfter(); ++i) {
             int nextFrame = currentFrame + i;
             if (nextFrame > m_project->totalFrames()) continue;
-            
+
             qreal opacity = m_project->onionSkinOpacity() * 0.6 * (1.0 - (i - 1) * 0.3);
             if (opacity <= 0.05) continue;
-            
+
             for (Layer *layer : m_project->layers()) {
                 if (!layer->isVisible()) continue;
-                
+
                 for (VectorObject *obj : layer->objectsAtFrame(nextFrame)) {
                     addItem(obj);
                     // Tint future frames blue by reducing opacity more
@@ -128,7 +127,7 @@ void VectorCanvas::refreshFrame()
             }
         }
     }
-    
+
     // Add objects from current frame (full opacity)
     for (Layer *layer : m_project->layers()) {
         if (!layer->isVisible()) continue;
@@ -161,12 +160,10 @@ void VectorCanvas::connectLayerSignals(Layer *layer)
 
     // Connect layer signals to force canvas update
     connect(layer, &Layer::modified, this, [this]() {
-        qDebug() << "VectorCanvas: Layer modified signal received";
         invalidate();  // Force complete scene redraw
     });
 
-    connect(layer, &Layer::visibilityChanged, this, [this](bool visible) {
-        qDebug() << "VectorCanvas: Layer visibility changed to:" << visible;
+    connect(layer, &Layer::visibilityChanged, this, [this](bool) {
         invalidate();  // Force complete scene redraw
     });
 
@@ -174,8 +171,6 @@ void VectorCanvas::connectLayerSignals(Layer *layer)
     connect(layer, &QObject::destroyed, this, [this, layer]() {
         m_connectedLayers.remove(layer);
     });
-
-    qDebug() << "VectorCanvas: Connected signals for layer:" << layer->name();
 }
 
 void VectorCanvas::setOnionSkinEnabled(bool enabled)
@@ -244,29 +239,6 @@ void VectorCanvas::setCurrentTool(Tool *tool)
     m_currentTool = tool;
 }
 
-//void VectorCanvas::refreshFrame()
-//{
-    // Clear all graphic items from scene
-   // clear();
-
-    // DON'T reload strokes as scene items anymore - drawBackground handles all rendering
-    // Just force a complete redraw
-    //invalidate();
-//}
-
-//void VectorCanvas::onFrameChanged(int frame)
-//{
-   // Q_UNUSED(frame);
-   // refreshFrame();
-//}
-
-//void VectorCanvas::setupLayerConnections()
-//{
-  //  if (!m_project) return;
-  //  connect(m_project, &Project::currentFrameChanged,
-     //       this, &VectorCanvas::onFrameChanged);
-//}
-
 void VectorCanvas::addObject(VectorObject *obj)
 {
     if (!obj || !m_project->currentLayer()) return;
@@ -289,16 +261,6 @@ void VectorCanvas::removeObject(VectorObject *obj)
     m_undoStack->push(new RemoveObjectCommand(obj, m_project->currentLayer(),
                                               m_project->currentFrame()));
 }
-
-//void VectorCanvas::clearCurrentFrame()
-//{
-    //if (!m_project) return;
-    //clear();
-   // Frame &currentFrame = m_project->frame(m_project->currentFrame());
-   // currentFrame.strokes.clear();
-   // currentFrame.objects.clear();
-   // update();
-//}
 
 void VectorCanvas::clearCurrentFrame()
 {
@@ -341,8 +303,6 @@ void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         if (m_isDrawing && m_currentTool) {
             m_currentTool->mouseReleaseEvent(event, this);
-
-            // Only save if we were actually drawing
             saveCurrentFrameStrokes();
         }
         m_isDrawing = false;
@@ -355,26 +315,6 @@ void VectorCanvas::saveCurrentFrameStrokes()
 {
     // No longer needed - objects saved via AddObjectCommand
 }
-
-//void VectorCanvas::saveCurrentFrameStrokes()
-//{
-  //  if (!m_project) return;
-
-  //  Frame &currentFrame = m_project->frame(m_project->currentFrame());
-   // currentFrame.strokes.clear();
-
-   // for (QGraphicsItem *item : items()) {
-     //   PathObject *pathObj = dynamic_cast<PathObject*>(item);
-      //  if (pathObj) {
-         //   VectorStroke stroke;
-         //   stroke.path = pathObj->path();
-         //   stroke.color = pathObj->strokeColor();
-          //  stroke.width = pathObj->strokeWidth();
-          //  stroke.texture = ToolTexture::Smooth;
-//currentFrame.strokes.append(stroke);
-      //  }
-    //}
-//}
 
 QImage VectorCanvas::currentImage()
 {
@@ -397,4 +337,34 @@ void VectorCanvas::updateCurrentImage(const QImage &image)
 {
     Q_UNUSED(image);
     update();
+}
+
+void VectorCanvas::setInterpolationMode(bool enabled)
+{
+    if (m_interpolationMode != enabled) {
+        m_interpolationMode = enabled;
+        update();
+    }
+}
+
+void VectorCanvas::drawBackground(QPainter *painter, const QRectF &rect)
+{
+    // Call base implementation first to draw the white background
+    QGraphicsScene::drawBackground(painter, rect);
+
+    // Draw purple border if in interpolation mode
+    if (m_interpolationMode) {
+        painter->save();
+
+        // Purple pen, 8 pixels thick
+        QPen purplePen(QColor(138, 43, 226), 8);
+        painter->setPen(purplePen);
+        painter->setBrush(Qt::NoBrush);
+
+        // Get scene bounds and draw rectangle with slight inset
+        QRectF sceneRect = this->sceneRect();
+        painter->drawRect(sceneRect.adjusted(4, 4, -4, -4));
+
+        painter->restore();
+    }
 }
