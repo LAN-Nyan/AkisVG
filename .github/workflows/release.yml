@@ -70,18 +70,27 @@ jobs:
           & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release AkisVG.exe
           Compress-Archive -Path * -DestinationPath ../AkisVG-Windows.zip
 
-      - name: Package Linux/Mac
-        if: matrix.os != 'windows-latest'
+      - name: Package Linux
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           cd build
           tar -czvf ../${{ matrix.asset_name }} .
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.asset_name }}
+      - name: Package macOS
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          # 1. Navigate to the build folder where AkisVG.app lives
+          cd build
+          
+          # 2. Use macdeployqt to pull in Qt libraries (QtCore, QtGui, etc.)
+          # This makes the .app standalone so it works on other Macs
+          $QT_ROOT_DIR/bin/macdeployqt AkisVG.app -dmg
+          
+          # 3. macdeployqt creates 'AkisVG.dmg' automatically. 
+          # Move/Rename it to match your matrix asset name
+          mv AkisVG.dmg ../${{ matrix.asset_name }}
 
   release:
     name: Create GitHub Release
