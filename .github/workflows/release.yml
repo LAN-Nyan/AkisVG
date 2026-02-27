@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04  # Using 22.04 is often more stable for Qt 6.5 ICU requirements
             artifact_name: AkisVG-Linux
             asset_name: AkisVG-Linux.tar.gz
           - os: windows-latest
@@ -35,10 +35,8 @@ jobs:
         with:
           version: '6.5.3'
           arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || '' }}
-          modules: 'qtmultimedia'
-          archives: 'qtbase qtsvg'
+          modules: 'qtmultimedia qtsvg' # Corrected modules list
 
-      # Critical: Force Windows to use MSVC instead of MinGW/GCC
       - name: Set up MSVC (Windows Only)
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
@@ -46,9 +44,12 @@ jobs:
       - name: Install Dependencies
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
             sudo apt-get update
-            sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev
+            # Added libxcb and ICU related dependencies for RCC to function
+            sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev \
+              libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+              libxcb-render-util0 libxcb-shape0 libxkbcommon-x11-0
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             brew install ninja
           else
@@ -58,7 +59,6 @@ jobs:
       - name: Configure and Build
         shell: bash
         run: |
-          # The -DCMAKE_PREFIX_PATH helps CMake find the Qt installation
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           cmake --build build
 
@@ -71,7 +71,7 @@ jobs:
           Compress-Archive -Path * -DestinationPath ../AkisVG-Windows.zip
 
       - name: Package Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         shell: bash
         run: |
           cd build
@@ -81,16 +81,21 @@ jobs:
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          # 1. Navigate to the build folder where AkisVG.app lives
           cd build
+          # Use find to make sure we locate the .app even if CMake moved it
+          APP_PATH=$(find . -name "AkisVG.app" -type d -maxdepth 2)
+          if [ -z "$APP_PATH" ]; then echo "App bundle not found"; exit 1; fi
           
-          # 2. Use macdeployqt to pull in Qt libraries (QtCore, QtGui, etc.)
-          # This makes the .app standalone so it works on other Macs
-          $QT_ROOT_DIR/bin/macdeployqt AkisVG.app -dmg
-          
-          # 3. macdeployqt creates 'AkisVG.dmg' automatically. 
-          # Move/Rename it to match your matrix asset name
-          mv AkisVG.dmg ../${{ matrix.asset_name }}
+          $QT_ROOT_DIR/bin/macdeployqt "$APP_PATH" -dmg
+          # macdeployqt creates the DMG in the same folder as the app
+          DMG_PATH=$(find . -name "*.dmg")
+          mv "$DMG_PATH" ../${{ matrix.asset_name }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
 
   release:
     name: Create GitHub Release
@@ -104,14 +109,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
-          tag_name: v0.1.${{ github.run_number }}
-          name: Release v0.1 (Build ${{ github.run_number }})
+          files: artifacts/*
+          tag_name: v0.3.RC1-${{ github.run_number }}
+          name: Release v0.3 RC1 (Build ${{ github.run_number }})
           draft: false
-          prerelease: false
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
