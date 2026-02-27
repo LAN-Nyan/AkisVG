@@ -17,7 +17,7 @@ Hey there! We know you’re looking for something that’s lightweight, packed w
 
 # What’s Next?
 
-working hard to release v0.4 by February 28, 2026—so stay tuned! 
+working hard to release v0.5 by April 1, 2026—so stay tuned! 
 
 # 0.4 Features
 - Tool Settings
