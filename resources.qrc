@@ -28,8 +28,8 @@
         <file alias="group.svg">src/tools/assets/Folder/group/Group.svg</file>
 
         <!-- Visibility/Lock Icons -->
-        <file alias="hide.svg">src/tools/assets/HideUnhide/Hide/Hide.svg</file>
-        <file alias="unhide.svg">src/tools/assets/HideUnhide/UnHide/UnHide.svg</file>
+        <file>assets/Hide.svg</file>
+        <file>assets/UnHide.svg</file>
         <file alias="lock.svg">src/tools/assets/LockUnlock/Lock/Lock.svg</file>
         <file alias="unlock.svg">src/tools/assets/LockUnlock/Unlock/Unlock.svg</file>
 
