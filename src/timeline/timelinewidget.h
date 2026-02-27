@@ -74,6 +74,7 @@ private:
     QPushButton *m_playPauseBtn;
     QPushButton *m_stopBtn;
     QLabel *m_frameLabel;
+    QLabel *m_fpsLabel;
     bool m_isPlaying;
     int m_playbackTimerId;
 

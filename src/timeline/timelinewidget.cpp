@@ -20,8 +20,9 @@
 #include <QMediaPlayer>
 #include <QAudioOutput>
 #include <QAudioDecoder>
+#include <QSlider>
+#include <QTimer>
 #include <cmath>
-#include <QEventLoop>
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
@@ -152,20 +153,31 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
     const int rowHeight = 36;
     const int headerHeight = 32;
 
-    // Header
+    // Header / ruler
     painter.fillRect(0, 0, width(), headerHeight, QColor(40, 40, 40));
-    painter.setPen(QColor(120, 120, 120));
-    painter.setFont(QFont("Arial", 8));
 
-    for (int frame = 1; frame <= m_project->totalFrames() && frame * cellWidth < width(); ++frame) {
+    for (int frame = 1; frame <= m_project->totalFrames() && (frame - 1) * cellWidth < width(); ++frame) {
         int x = (frame - 1) * cellWidth;
-        if (frame % 5 == 0) {
-            painter.setPen(QColor(180, 180, 180));
-            painter.drawText(QRect(x, 0, cellWidth * 5, headerHeight), Qt::AlignCenter, QString::number(frame));
-            painter.setPen(QColor(120, 120, 120));
-        }
+
+        // Vertical grid line through entire widget
         painter.setPen(QColor(30, 30, 30));
         painter.drawLine(x, 0, x, height());
+
+        // Ruler ticks and labels
+        if (frame % 5 == 0) {
+            // Major tick + number: draw label starting at x so it's left-aligned to the frame
+            painter.setPen(QColor(180, 180, 180));
+            painter.setFont(QFont("Arial", 8));
+            painter.drawText(QRect(x + 2, 0, cellWidth * 5, headerHeight - 4),
+                             Qt::AlignLeft | Qt::AlignBottom, QString::number(frame));
+            // Major tick mark
+            painter.setPen(QPen(QColor(130, 130, 130), 1));
+            painter.drawLine(x, headerHeight - 8, x, headerHeight);
+        } else {
+            // Minor tick mark
+            painter.setPen(QPen(QColor(70, 70, 70), 1));
+            painter.drawLine(x, headerHeight - 4, x, headerHeight);
+        }
     }
 
     // Grid Content
@@ -271,9 +283,8 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
             }
 
             bool isKeyFrame = layer->isKeyFrame(frame);
-            bool isExtended = layer->isFrameExtended(frame);
-            bool isInterpolated = layer->isInterpolated(frame);
-            bool isInterpKeyframe = layer->isInterpolationKeyFrame(frame);
+            // isExtended / isInterpolated / isInterpKeyframe are checked
+            // implicitly through getExtensionEnd() / getInterpolationFor() below
 
             if (isKeyFrame) {
                 QColor col = layer->color();
@@ -355,7 +366,6 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
 void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
     const int cellWidth = 16;
-    const int headerHeight = 32;
 
     int clickedFrame = (event->pos().x() / cellWidth) + 1;
 
@@ -419,8 +429,6 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
                     update();
                     return;
                 }
-            } else {
-                QAction *selected = menu.exec(event->globalPos());
             }
 
             QAction *selected = menu.exec(event->globalPos());
@@ -548,31 +556,75 @@ AudioData FrameGridWidget::loadAudioFile(const QString &filePath, int startFrame
     audio.volume = 1.0f;
     audio.muted = false;
 
-    // Use QAudioDecoder to get waveform data
+    // Use QAudioDecoder to build waveform visualization data.
+    // NOTE: The FFmpeg Qt backend delivers float32 samples, not int16.
+    // We detect the format at runtime to avoid type-punning crashes.
     QAudioDecoder decoder;
     decoder.setSource(QUrl::fromLocalFile(filePath));
 
     QEventLoop loop;
-    connect(&decoder, &QAudioDecoder::bufferReady, [&]() {
-        QAudioBuffer buffer = decoder.read();
-        const qint16 *data = buffer.constData<qint16>();
-        int sampleCount = buffer.sampleCount();
+    bool finished = false;
 
-        // Downsample for visualization
-        for (int i = 0; i < sampleCount; i += 100) {
-            float normalized = data[i] / 32768.0f;
-            audio.waveformData.append(normalized);
+    connect(&decoder, &QAudioDecoder::bufferReady, [&]() {
+        if (finished) return;           // guard against post-finish callbacks
+        QAudioBuffer buffer = decoder.read();
+        if (!buffer.isValid()) return;
+
+        int channelCount = buffer.format().channelCount();
+        if (channelCount < 1) channelCount = 1;
+
+        QAudioFormat::SampleFormat fmt = buffer.format().sampleFormat();
+
+        if (fmt == QAudioFormat::Float) {
+            const float *data = buffer.constData<float>();
+            int frameCount = buffer.frameCount();
+            // Downsample: one sample per ~100 frames, take first channel
+            for (int i = 0; i < frameCount; i += 50) {
+                float val = qAbs(data[i * channelCount]);   // first channel, absolute
+                audio.waveformData.append(qMin(val, 1.0f));
+            }
+        } else if (fmt == QAudioFormat::Int16) {
+            const qint16 *data = buffer.constData<qint16>();
+            int frameCount = buffer.frameCount();
+            for (int i = 0; i < frameCount; i += 50) {
+                float val = qAbs(data[i * channelCount] / 32768.0f);
+                audio.waveformData.append(qMin(val, 1.0f));
+            }
         }
+        // Other formats: skip — waveform just won't display
     });
 
-    connect(&decoder, &QAudioDecoder::finished, &loop, &QEventLoop::quit);
+    connect(&decoder, &QAudioDecoder::finished, [&]() {
+        finished = true;
+        loop.quit();
+    });
+
+    // Error handler — use explicit overload cast to resolve ambiguity
+    connect(&decoder,
+            QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
+            [&](QAudioDecoder::Error) {
+        finished = true;
+        loop.quit();
+    });
+
     decoder.start();
+
+    // Safety timeout: don't block the UI forever
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
     loop.exec();
 
-    // Calculate duration in frames
+    decoder.stop();
+
+    // Calculate duration in frames using the decoder's reported duration
     qint64 durationMs = decoder.duration();
+    if (durationMs <= 0) {
+        // Fallback: estimate from waveform sample count
+        // (50 frames downsampled at whatever sample rate — rough but better than 0)
+        durationMs = 1000; // default 1 second if unknown
+    }
+
     int fps = m_project->fps();
-    audio.durationFrames = (durationMs * fps) / 1000;
+    audio.durationFrames = qMax(1, static_cast<int>((durationMs * fps) / 1000));
 
     return audio;
 }
@@ -593,10 +645,15 @@ TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     , m_audioOutput(new QAudioOutput(this))
 {
     m_audioPlayer->setAudioOutput(m_audioOutput);
+    m_audioOutput->setVolume(0.8f); // Set a sensible default volume
 
     setupUI();
     connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::updateFrameDisplay);
     connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::syncAudioToFrame);
+    // Update the FPS label whenever project settings change
+    connect(m_project, &Project::modified, this, [this]() {
+        m_fpsLabel->setText(QString("@ %1 FPS").arg(m_project->fps()));
+    });
 }
 
 void TimelineWidget::setupUI()
@@ -662,11 +719,33 @@ void TimelineWidget::setupUI()
     controlLayout->addWidget(m_frameLabel);
 
     controlLayout->addSpacing(12);
-    QLabel *fpsLabel = new QLabel(QString("@ %1 FPS").arg(m_project->fps()));
-    fpsLabel->setStyleSheet("color: #888; font-size: 11px;");
-    controlLayout->addWidget(fpsLabel);
+    m_fpsLabel = new QLabel(QString("@ %1 FPS").arg(m_project->fps()));
+    m_fpsLabel->setStyleSheet("color: #888; font-size: 11px;");
+    controlLayout->addWidget(m_fpsLabel);
 
     controlLayout->addStretch();
+
+    // Audio volume control
+    QLabel *volIcon = new QLabel("🔊");
+    volIcon->setStyleSheet("color: #888; font-size: 13px;");
+    controlLayout->addWidget(volIcon);
+
+    QSlider *volumeSlider = new QSlider(Qt::Horizontal);
+    volumeSlider->setRange(0, 100);
+    volumeSlider->setValue(80);
+    volumeSlider->setFixedWidth(80);
+    volumeSlider->setToolTip("Master Volume");
+    volumeSlider->setStyleSheet(
+        "QSlider::groove:horizontal { background: #1e1e1e; height: 4px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: #2a82da; width: 12px; margin: -4px 0; border-radius: 6px; }"
+        "QSlider::handle:horizontal:hover { background: #3a92ea; }"
+        "QSlider::sub-page:horizontal { background: #2a82da; border-radius: 2px; }"
+    );
+    connect(volumeSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_audioOutput->setVolume(value / 100.0f);
+    });
+    controlLayout->addWidget(volumeSlider);
+    controlLayout->addSpacing(8);
 
     // NO GIF EXPORT BUTTONS HERE - MOVED TO MENU BAR
 
@@ -711,20 +790,50 @@ void TimelineWidget::setupUI()
 void TimelineWidget::loadAudioTrack(Layer *layer, const QString &audioPath) {
     m_audioPlayer->setSource(QUrl::fromLocalFile(audioPath));
     m_currentAudioLayer = layer;
+
+    // Apply the layer's volume immediately
+    if (layer && layer->hasAudio()) {
+        AudioData audio = layer->getAudioData();
+        m_audioOutput->setVolume(audio.muted ? 0.0f : audio.volume);
+    }
 }
 
 void TimelineWidget::syncAudioToFrame() {
     if (!m_currentAudioLayer || !m_currentAudioLayer->hasAudio()) {
-        return;
+        // Try to find an audio layer dynamically
+        for (Layer *layer : m_project->layers()) {
+            if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
+                AudioData audio = layer->getAudioData();
+                m_audioPlayer->setSource(QUrl::fromLocalFile(audio.filePath));
+                m_currentAudioLayer = layer;
+                break;
+            }
+        }
+        if (!m_currentAudioLayer)
+            return;
     }
 
     AudioData audio = m_currentAudioLayer->getAudioData();
+
+    // Apply volume from audio data
+    m_audioOutput->setVolume(audio.muted ? 0.0f : audio.volume);
+
     int currentFrame = m_project->currentFrame();
 
-    if (currentFrame >= audio.startFrame && currentFrame < audio.startFrame + audio.durationFrames) {
+    if (currentFrame >= audio.startFrame &&
+        currentFrame < audio.startFrame + audio.durationFrames)
+    {
         int frameOffset = currentFrame - audio.startFrame;
-        qint64 positionMs = (frameOffset * 1000) / m_project->fps();
-        m_audioPlayer->setPosition(positionMs);
+        qint64 positionMs = (static_cast<qint64>(frameOffset) * 1000) / m_project->fps();
+
+        // Only seek if we're more than one frame off to avoid stuttering
+        qint64 currentPosMs = m_audioPlayer->position();
+        qint64 expectedMs   = positionMs;
+        qint64 frameDiffMs  = 1000 / m_project->fps();
+
+        if (qAbs(currentPosMs - expectedMs) > frameDiffMs * 2) {
+            m_audioPlayer->setPosition(positionMs);
+        }
 
         if (m_isPlaying && !audio.muted) {
             if (m_audioPlayer->playbackState() != QMediaPlayer::PlayingState) {
@@ -732,7 +841,9 @@ void TimelineWidget::syncAudioToFrame() {
             }
         }
     } else {
-        m_audioPlayer->pause();
+        if (m_audioPlayer->playbackState() == QMediaPlayer::PlayingState) {
+            m_audioPlayer->pause();
+        }
     }
 }
 
@@ -766,6 +877,21 @@ void TimelineWidget::startPlayback() {
     m_playPauseBtn->setText("⏸");
     int interval = 1000 / m_project->fps();
     m_playbackTimerId = startTimer(interval);
+
+    // Auto-detect first audio layer if none loaded yet
+    if (!m_currentAudioLayer) {
+        for (Layer *layer : m_project->layers()) {
+            if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
+                AudioData audio = layer->getAudioData();
+                m_audioPlayer->setSource(QUrl::fromLocalFile(audio.filePath));
+                m_currentAudioLayer = layer;
+                break;
+            }
+        }
+    }
+
+    // Kick off audio at correct position
+    syncAudioToFrame();
 }
 
 void TimelineWidget::stopPlayback() {
