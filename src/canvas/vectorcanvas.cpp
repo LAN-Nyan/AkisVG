@@ -24,8 +24,7 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
     , m_undoStack(undoStack)
     , m_currentTool(nullptr)
     , m_onionSkinEnabled(true)
-    , m_isDrawing(false)              // ADDED
-    , m_interpolationMode(false)      // ADDED
+    , m_isDrawing(false)
 {
     if (!m_project) return;
 
@@ -53,14 +52,16 @@ void VectorCanvas::setupLayerConnections()
 
     for (Layer *layer : m_project->layers()) {
         if (!layer) continue;
+        if (m_connectedLayers.contains(layer)) continue; // already connected
+        m_connectedLayers.insert(layer);
 
         connect(layer, &Layer::visibilityChanged, this, [this](bool) {
             refreshFrame();
-        }, Qt::UniqueConnection);
+        });
 
         connect(layer, &Layer::modified, this, [this]() {
             refreshFrame();
-        }, Qt::UniqueConnection);
+        });
     }
 }
 
@@ -339,32 +340,7 @@ void VectorCanvas::updateCurrentImage(const QImage &image)
     update();
 }
 
-void VectorCanvas::setInterpolationMode(bool enabled)
-{
-    if (m_interpolationMode != enabled) {
-        m_interpolationMode = enabled;
-        update();
-    }
-}
-
 void VectorCanvas::drawBackground(QPainter *painter, const QRectF &rect)
 {
-    // Call base implementation first to draw the white background
     QGraphicsScene::drawBackground(painter, rect);
-
-    // Draw purple border if in interpolation mode
-    if (m_interpolationMode) {
-        painter->save();
-
-        // Purple pen, 8 pixels thick
-        QPen purplePen(QColor(138, 43, 226), 8);
-        painter->setPen(purplePen);
-        painter->setBrush(Qt::NoBrush);
-
-        // Get scene bounds and draw rectangle with slight inset
-        QRectF sceneRect = this->sceneRect();
-        painter->drawRect(sceneRect.adjusted(4, 4, -4, -4));
-
-        painter->restore();
-    }
 }

@@ -37,9 +37,6 @@ public:
     void clearCurrentFrame();
     void refreshFrame();
 
-    // Interpolation mode support
-    void setInterpolationMode(bool enabled);
-    bool isInInterpolationMode() const { return m_interpolationMode; }
 
 signals:
     void referenceImageDropped(const QString &path, const QPointF &position);
@@ -68,7 +65,6 @@ private:
     Tool *m_currentTool;
     bool m_onionSkinEnabled;
     bool m_isDrawing;
-    bool m_interpolationMode;
     QSet<Layer*> m_connectedLayers;  // Track which layers are already connected
 };
 
