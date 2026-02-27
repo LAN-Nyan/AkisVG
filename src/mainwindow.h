@@ -14,7 +14,6 @@ class AssetLibrary;
 class TimelineWidget;
 class QMenu;
 class QToolBar;
-class InterpolationManager;
 class VectorObject;
 class QPushButton;
 class QWidget;
@@ -49,11 +48,6 @@ private slots:
     void exportGifKeyframes();
     void exportGifAllFrames();
 
-    // Interpolation slots
-    void onGroupForInterpolation(const QList<VectorObject*> &objects);
-    void onCreateKeyframe();
-    void onFinishInterpolation();
-    void onFrameChanged(int frame);
 
 private:
     void createActions();
@@ -61,7 +55,6 @@ private:
     void createToolBars();
     void createDockWindows();
     void setupCanvas();
-    void createInterpolationControls();
 
     bool maybeSave();
 
@@ -82,14 +75,12 @@ private:
     QMenu *m_helpMenu;
     QToolBar *m_mainToolBar;
 
+    QAction *m_undoAction;
+    QAction *m_redoAction;
+
     QString m_currentFile;
     bool m_isModified;
 
-    // Interpolation system
-    InterpolationManager *m_interpolationManager;
-    QPushButton *m_createKeyframeBtn;
-    QPushButton *m_finishInterpBtn;
-    QWidget *m_interpControlWidget;
 };
 
 #endif // MAINWINDOW_H

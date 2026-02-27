@@ -7,10 +7,10 @@
 #include "panels/layerpanel.h"
 #include "panels/colorpicker.h"
 #include "panels/assetlibrary.h"
+#include "panels/toolsettingspanel.h"
 #include "timeline/timelinewidget.h"
 #include "tools/tool.h"
-#include "tools/selecttool.h"  // ADDED
-#include "core/interpolationmanager.h" // ADDED
+#include "tools/selecttool.h"
 #include "io/gifexporter.h"
 #include "panels/settingspanel.h"
 
@@ -54,10 +54,6 @@ MainWindow::MainWindow(QWidget *parent)
     , m_assetLibrary(new AssetLibrary(this))
     , m_timeline(new TimelineWidget(m_project, this))
     , m_isModified(false)
-    , m_interpolationManager(nullptr)        // ADDED
-    , m_createKeyframeBtn(nullptr)           // ADDED
-    , m_finishInterpBtn(nullptr)             // ADDED
-    , m_interpControlWidget(nullptr)         // ADDED
 {
     setWindowTitle("AkisVG");
     resize(1800, 1000);
@@ -116,14 +112,10 @@ MainWindow::MainWindow(QWidget *parent)
         }
     )");
 
-    // CREATE INTERPOLATION MANAGER (BEFORE menus/UI setup)
-    m_interpolationManager = new InterpolationManager(m_project, this);
 
-    // Connect interpolation manager to canvas for purple rim
-    connect(m_interpolationManager, &InterpolationManager::interpolationModeChanged,
-            m_canvas, &VectorCanvas::setInterpolationMode);
 
-    createInterpolationControls(); // Create the UI widget
+    // Force the menu bar to render inline (prevents KDE/GNOME global menu from stealing it)
+    menuBar()->setNativeMenuBar(false);
 
     createActions();
     createMenus();
@@ -144,6 +136,18 @@ MainWindow::MainWindow(QWidget *parent)
             m_toolBox->currentTool()->setStrokeColor(color);
         }
     });
+    //NSTANT UNDO/REDO REFRESH
+    connect(m_undoStack, &QUndoStack::indexChanged, this, [this]() {
+        m_canvas->refreshFrame();
+        if (m_layerPanel) {
+            m_layerPanel->rebuildLayerList();
+        }
+        // Also mark project as modified when an action is performed
+        if (!m_undoStack->isClean()) {
+            m_isModified = true;
+            updateWindowTitle();
+        }
+    });
 
     // Connect color picker texture to current tool
     connect(m_colorPicker, &ColorPicker::textureChanged,
@@ -154,16 +158,6 @@ MainWindow::MainWindow(QWidget *parent)
                 }
             });
 
-    // CONNECT SELECT TOOL FOR INTERPOLATION
-    SelectTool *selectTool = dynamic_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select));
-    if (selectTool) {
-        connect(selectTool, &SelectTool::requestGroupForInterpolation,
-                this, &MainWindow::onGroupForInterpolation);
-    }
-
-    // Connect frame changes to update interpolation
-    connect(m_project, &Project::currentFrameChanged,
-            this, &MainWindow::onFrameChanged);
 
     statusBar()->showMessage("Ready - Use Pencil tool to draw", 5000);
     updateWindowTitle();
@@ -180,11 +174,6 @@ void MainWindow::setupCanvas()
     QVBoxLayout *layout = new QVBoxLayout(centralWidget);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-
-    // ADD THIS: Add interpolation control panel at top (hidden by default)
-    if (m_interpControlWidget) {
-        layout->addWidget(m_interpControlWidget);
-    }
 
     // Canvas area with grey background (infinite canvas feel)
     m_canvasView->setStyleSheet("QGraphicsView { background-color: #3c3c3c; border: none; }");
@@ -227,7 +216,7 @@ void MainWindow::createMenus()
 
     m_fileMenu->addSeparator();
 
-    QAction *exportVideoAct = m_fileMenu->addAction("Export to &Video (.mp4)...");
+    QAction *exportVideoAct = m_fileMenu->addAction("Export to &Video (.mp4/.mkv)...");
     exportVideoAct->setShortcut(QKeySequence("Ctrl+Shift+E"));
     connect(exportVideoAct, &QAction::triggered, this, &MainWindow::exportToMp4);
 
@@ -248,15 +237,15 @@ void MainWindow::createMenus()
     // Edit Menu
     m_editMenu = menuBar()->addMenu("&Edit");
 
-    QAction *undoAct = m_undoStack->createUndoAction(this, "&Undo");
-    undoAct->setShortcut(QKeySequence::Undo);
-    undoAct->setIcon(QIcon::fromTheme("edit-undo"));
-    m_editMenu->addAction(undoAct);
+    m_undoAction = m_undoStack->createUndoAction(this, "&Undo");
+    m_undoAction->setShortcut(QKeySequence::Undo);
+    m_undoAction->setIcon(QIcon::fromTheme("edit-undo"));
+    m_editMenu->addAction(m_undoAction);
 
-    QAction *redoAct = m_undoStack->createRedoAction(this, "&Redo");
-    redoAct->setShortcut(QKeySequence::Redo);
-    redoAct->setIcon(QIcon::fromTheme("edit-redo"));
-    m_editMenu->addAction(redoAct);
+    m_redoAction = m_undoStack->createRedoAction(this, "&Redo");
+    m_redoAction->setShortcut(QKeySequence::Redo);
+    m_redoAction->setIcon(QIcon::fromTheme("edit-redo"));
+    m_editMenu->addAction(m_redoAction);
 
     m_editMenu->addSeparator();
 
@@ -312,8 +301,19 @@ void MainWindow::createToolBars()
     m_mainToolBar->setIconSize(QSize(20, 20));
 
     // Add undo/redo
-    m_mainToolBar->addAction(m_undoStack->createUndoAction(this, "Undo"));
-    m_mainToolBar->addAction(m_undoStack->createRedoAction(this, "Redo"));
+    m_mainToolBar->addAction(m_undoAction);
+    m_mainToolBar->addAction(m_redoAction);
+
+    m_undoAction->setToolTip("Undo (Ctrl+Z)");
+    m_redoAction->setToolTip("Redo (Ctrl+Y)");
+
+    // Set better icons with fallback
+    if (m_undoAction->icon().isNull()) {
+      m_undoAction->setText("↶ Undo");  // Fallback text icon
+    }
+    if (m_redoAction->icon().isNull()) {
+      m_redoAction->setText("↷ Redo");  // Fallback text icon
+    }
 
     m_mainToolBar->addSeparator();
 
@@ -358,7 +358,26 @@ void MainWindow::createDockWindows()
     // 2. Colors Tab
     rightTabs->addTab(m_colorPicker, "Colors");
 
-    // 3. Assets Tab
+    // 3. Tool Options Tab — grab the panel that ToolBox already owns
+    ToolSettingsPanel *toolSettingsPanel = m_toolBox->settingsPanel();
+    rightTabs->addTab(toolSettingsPanel, "Tool");
+
+    // Switch to the Tool tab and update it whenever the active tool changes
+    connect(m_toolBox, &ToolBox::toolChanged, this, [rightTabs, toolSettingsPanel](Tool *tool) {
+        toolSettingsPanel->updateForTool(tool->type(), tool);
+        // Optionally auto-switch to the Tool tab so the user sees the options
+        int toolTabIndex = rightTabs->indexOf(toolSettingsPanel);
+        if (toolTabIndex >= 0)
+            rightTabs->setCurrentIndex(toolTabIndex);
+    });
+
+    // Seed the panel with the default tool that was selected at startup
+    if (m_toolBox->currentTool()) {
+        toolSettingsPanel->updateForTool(m_toolBox->currentTool()->type(),
+                                         m_toolBox->currentTool());
+    }
+
+    // 4. Assets Tab
     rightTabs->addTab(m_assetLibrary, "Assets");
 
     m_projectSettings = new ProjectSettings(m_project, this);
@@ -416,14 +435,14 @@ void MainWindow::newProject()
 
 void MainWindow::openProject()
 {
-    QString fileName = QFileDialog::getOpenFileName(
-        this,
-        "Open Project",
-        "",
-        "AkisVG Projects (*.akisvg);;All Files (*)",
-        nullptr,
-        QFileDialog::DontUseNativeDialog  // ADD THIS - ensures consistent dialog
-    );
+  QString fileName = QFileDialog::getOpenFileName(
+      this,
+      "Open Project",
+      "",
+      "AkisVG Projects (*.avg *.akisvg);;All Files (*)",  // CHANGED: Support both .avg and .akisvg
+      nullptr,
+      QFileDialog::DontUseNativeDialog
+  );
 
     if (!fileName.isEmpty()) {
         if (m_project->loadFromFile(fileName)) {
@@ -441,35 +460,41 @@ void MainWindow::openProject()
     }
 }
 
+void MainWindow::saveProjectAs()
+{
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Save Project As",
+        "",
+        "AkisVG Projects (*.avg);;Legacy Format (*.akisvg)");  // CHANGED: .avg is default
+
+    if (!fileName.isEmpty()) {
+        // Ensure correct extension
+        if (!fileName.endsWith(".avg", Qt::CaseInsensitive) &&
+            !fileName.endsWith(".akisvg", Qt::CaseInsensitive)) {
+            fileName += ".avg";  // CHANGED: Default to .avg
+        }
+        m_currentFile = fileName;
+        saveProject();
+    }
+}
+// Removed old file save
+
 void MainWindow::saveProject()
 {
     if (m_currentFile.isEmpty()) {
         saveProjectAs();
-    } else {
-        if (m_project->saveToFile(m_currentFile)) {
-            m_isModified = false;
-            updateWindowTitle();
-            statusBar()->showMessage("Project saved: " + m_currentFile, 3000);
-        } else {
-            QMessageBox::critical(this, "Save Error",
-                                "Failed to save project to:\n" + m_currentFile);
-        }
+        return;
     }
-}
 
-void MainWindow::saveProjectAs()
-{
-    QString fileName = QFileDialog::getSaveFileName(this,
-                                                    "Save Project As", "",
-                                                    "AkisVG Projects (*.akisvg);;All Files (*)");
-
-    if (!fileName.isEmpty()) {
-        // ADD THIS: Ensure .akisvg extension is added if not present
-        if (!fileName.endsWith(".akisvg", Qt::CaseInsensitive)) {
-            fileName += ".akisvg";
-        }
-        m_currentFile = fileName;
-        saveProject();
+    if (m_project && m_project->saveToFile(m_currentFile)) {
+        m_isModified = false;       // Reset the modified flag
+        m_undoStack->setClean();    // Tell the undo stack we are at a "clean" save point
+        updateWindowTitle();        // Remove the '*' from title
+        statusBar()->showMessage(tr("Project saved to %1").arg(m_currentFile), 3000);
+    } else {
+        QMessageBox::critical(this, tr("Save Error"),
+                             tr("Failed to save project to %1").arg(m_currentFile));
     }
 }
 
@@ -537,163 +562,137 @@ void MainWindow::updateWindowTitle()
     setWindowTitle(title);
 }
 
-void MainWindow::exportToMp4() {
+void MainWindow::exportToMp4()
+{
+    // Let user choose format
     QString fileName = QFileDialog::getSaveFileName(
-        this, "Export MP4", "", "Video Files (*.mp4)");
+        this,
+        "Export to Video",
+        "",
+        "MP4 Video (*.mp4);;MKV Video (*.mkv);;All Files (*)");  // ADDED .mkv option
 
-    if (fileName.isEmpty()) return;
-
-    if (!fileName.endsWith(".mp4", Qt::CaseInsensitive)) {
-        fileName += ".mp4";
-    }
-
-    // Verify FFmpeg is installed
-    QProcess testProcess;
-    testProcess.start("ffmpeg", QStringList() << "-version");
-    if (!testProcess.waitForFinished(3000) || testProcess.exitCode() != 0) {
-        QMessageBox::critical(this, "FFmpeg Not Found",
-                              "FFmpeg is not installed.\n\n"
-                              "Install it with:\nsudo pacman -S ffmpeg");
+    if (fileName.isEmpty()) {
         return;
     }
 
-    // Get project settings
+    // Detect format from extension
+    QString format = "mp4";
+    if (fileName.endsWith(".mkv", Qt::CaseInsensitive)) {
+        format = "mkv";
+    } else if (!fileName.endsWith(".mp4", Qt::CaseInsensitive)) {
+        fileName += ".mp4";  // Default to mp4
+    }
+
+    // Get export range
+    int startFrame = 1;
+    int endFrame = m_project->totalFrames();
     int fps = m_project->fps();
-    int width = m_project->width();
-    int height = m_project->height();
-    int totalFrames = m_project->totalFrames();
-
-    if (totalFrames == 0) {
-        QMessageBox::warning(this, "No Frames",
-                             "The project has no frames to export.");
-        return;
-    }
-
-    // Ensure dimensions are even (required for H.264)
-    if (width % 2 != 0) width++;
-    if (height % 2 != 0) height++;
 
     // Create progress dialog
-    QProgressDialog progress("Rendering frames...", "Cancel", 0, totalFrames, this);
+    QProgressDialog progress("Exporting frames...", "Cancel", 0, endFrame - startFrame + 1, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
     progress.setValue(0);
 
-    // Start FFmpeg process
+    // Export frames to temporary directory
+    QString tempDir = QDir::temp().filePath("akisvg_export_" +
+                      QString::number(QDateTime::currentMSecsSinceEpoch()));
+    QDir().mkpath(tempDir);
+
+    // Render each frame
+    for (int frame = startFrame; frame <= endFrame; ++frame) {
+        if (progress.wasCanceled()) {
+            QDir(tempDir).removeRecursively();
+            return;
+        }
+
+        m_project->setCurrentFrame(frame);
+        m_canvas->refreshFrame();
+
+        // Render frame to image
+        QImage image(m_project->width(), m_project->height(), QImage::Format_ARGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        m_canvas->render(&painter);
+        painter.end();
+
+        // Save frame
+        QString framePath = tempDir + QString("/frame_%1.png").arg(frame, 6, 10, QChar('0'));
+        image.save(framePath, "PNG");
+
+        progress.setValue(frame - startFrame + 1);
+        QApplication::processEvents();
+    }
+
+    // Build ffmpeg command based on format
+    QString ffmpegCmd;
+
+    if (format == "mkv") {
+        // MKV format with H.264 codec
+        ffmpegCmd = QString("ffmpeg -y -framerate %1 -i \"%2/frame_%%06d.png\" "
+                           "-c:v libx264 -preset medium -crf 18 "
+                           "-pix_fmt yuv420p \"%3\"")
+                    .arg(fps)
+                    .arg(tempDir)
+                    .arg(fileName);
+    } else {
+        // MP4 format (original)
+        ffmpegCmd = QString("ffmpeg -y -framerate %1 -i \"%2/frame_%%06d.png\" "
+                           "-c:v libx264 -preset slow -crf 18 "
+                           "-pix_fmt yuv420p \"%3\"")
+                    .arg(fps)
+                    .arg(tempDir)
+                    .arg(fileName);
+    }
+
+    // Execute ffmpeg
+    progress.setLabelText(QString("Encoding %1 video...").arg(format.toUpper()));
+    progress.setRange(0, 0);  // Indeterminate progress
+
     QProcess ffmpeg;
-    QStringList args;
-    args << "-y"                            // Overwrite output
-         << "-f" << "image2pipe"            // Read images from pipe
-         << "-vcodec" << "png"              // Input format
-         << "-r" << QString::number(fps)    // Frame rate
-         << "-i" << "-"                     // Read from stdin
-         << "-vcodec" << "libx264"          // H.264 codec
-         << "-preset" << "medium"           // Encoding speed/quality
-         << "-pix_fmt" << "yuv420p"         // Pixel format
-         << "-crf" << "18"                  // Quality (0-51, lower=better)
-         << fileName;
+    ffmpeg.start(ffmpegCmd);
 
-    ffmpeg.start("ffmpeg", args);
-
-    if (!ffmpeg.waitForStarted(5000)) {
-        QMessageBox::critical(this, "Error",
-                              "Failed to start FFmpeg process.");
+    if (!ffmpeg.waitForStarted()) {
+        QMessageBox::critical(this, "Export Error",
+                            "Failed to start ffmpeg.\n\n"
+                            "Make sure ffmpeg is installed and in your system PATH.");
+        QDir(tempDir).removeRecursively();
         return;
     }
 
-    // Save current frame to restore later
-    int originalFrame = m_project->currentFrame();
-    bool exportSuccess = true;
+    ffmpeg.waitForFinished(-1);  // Wait indefinitely
 
-    // Render each frame
-    for (int i = 0; i < totalFrames; ++i) {
-        if (progress.wasCanceled()) {
-            ffmpeg.kill();
-            ffmpeg.waitForFinished();
-            exportSuccess = false;
-            break;
-        }
-
-        progress.setValue(i);
-        progress.setLabelText(QString("Rendering frame %1 of %2...")
-                                  .arg(i + 1).arg(totalFrames));
-        QApplication::processEvents();
-
-        // Set project to this frame
-        m_project->setCurrentFrame(i);
-        m_canvas->refreshFrame();
-
-        // Create image and render canvas to it
-        QImage frameImage(width, height, QImage::Format_ARGB32);
-        frameImage.fill(Qt::white);
-
-        QPainter painter(&frameImage);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-        // Render the canvas scene to the image
-        m_canvas->render(&painter,
-                                  QRectF(0, 0, width, height),
-                                  QRectF(0, 0, m_project->width(), m_project->height()));
-
-        painter.end();
-
-        // Convert to PNG and write to FFmpeg
-        QByteArray pngData;
-        QBuffer buffer(&pngData);
-        buffer.open(QIODevice::WriteOnly);
-
-        if (!frameImage.save(&buffer, "PNG")) {
-            QMessageBox::critical(this, "Error",
-                                  QString("Failed to encode frame %1").arg(i));
-            exportSuccess = false;
-            break;
-        }
-
-        qint64 written = ffmpeg.write(pngData);
-        if (written != pngData.size()) {
-            QMessageBox::critical(this, "Error",
-                                  "Failed to write frame data to FFmpeg");
-            exportSuccess = false;
-            break;
-        }
-
-        ffmpeg.waitForBytesWritten(5000);
+    // Check result
+    if (ffmpeg.exitCode() == 0) {
+        QMessageBox::information(this, "Export Complete",
+                               QString("Video exported successfully to:\n%1\n\n"
+                                      "Format: %2\n"
+                                      "Frames: %3-%4\n"
+                                      "FPS: %5")
+                               .arg(fileName)
+                               .arg(format.toUpper())
+                               .arg(startFrame)
+                               .arg(endFrame)
+                               .arg(fps));
+    } else {
+        QString errorOutput = ffmpeg.readAllStandardError();
+        QMessageBox::critical(this, "Export Error",
+                            QString("ffmpeg failed with exit code %1\n\n%2")
+                            .arg(ffmpeg.exitCode())
+                            .arg(errorOutput));
     }
 
-    // Close FFmpeg input and wait for completion
-    if (exportSuccess) {
-        progress.setLabelText("Finalizing video...");
-        progress.setRange(0, 0); // Indeterminate
+    // Cleanup
+    QDir(tempDir).removeRecursively();
 
-        ffmpeg.closeWriteChannel();
-
-        if (!ffmpeg.waitForFinished(30000)) {
-            QMessageBox::critical(this, "Error",
-                                  "FFmpeg timed out while finalizing video");
-            exportSuccess = false;
-        } else if (ffmpeg.exitCode() != 0) {
-            QString errorOutput = QString::fromUtf8(ffmpeg.readAllStandardError());
-            QMessageBox::critical(this, "FFmpeg Error",
-                                  "FFmpeg failed:\n\n" + errorOutput);
-            exportSuccess = false;
-        }
-    }
-
-    progress.close();
-
-    // Restore original frame
-    m_project->setCurrentFrame(originalFrame);
+    // Restore current frame
     m_canvas->refreshFrame();
 
-    if (exportSuccess) {
-        QMessageBox::information(this, "Export Complete",
-                                 QString("Video exported successfully!\n\n%1\n\n"
-                                         "Duration: %2 frames at %3 FPS")
-                                     .arg(fileName)
-                                     .arg(totalFrames)
-                                     .arg(fps));
-    }
+    statusBar()->showMessage(QString("%1 video exported: %2")
+                            .arg(format.toUpper())
+                            .arg(QFileInfo(fileName).fileName()),
+                            5000);
 }
 
 void MainWindow::exportGifKeyframes() {
@@ -903,133 +902,4 @@ void MainWindow::importImage()
         .arg(QFileInfo(fileName).fileName())
         .arg(image.width())
         .arg(image.height()), 5000);
-}
-
-// =========================================================================
-// NEW INTERPOLATION METHODS
-// =========================================================================
-
-void MainWindow::createInterpolationControls()
-{
-    m_interpControlWidget = new QWidget(this);
-    m_interpControlWidget->setStyleSheet(
-        "QWidget { "
-        "  background-color: #8B2BE2; "
-        "  border: 2px solid #6A1DB0; "
-        "  border-radius: 5px; "
-        "  padding: 10px; "
-        "}"
-        "QPushButton { "
-        "  background-color: white; "
-        "  color: #8B2BE2; "
-        "  border: 2px solid white; "
-        "  border-radius: 3px; "
-        "  padding: 5px 15px; "
-        "  font-weight: bold; "
-        "}"
-        "QPushButton:hover { "
-        "  background-color: #f0f0f0; "
-        "}"
-    );
-
-    QHBoxLayout *layout = new QHBoxLayout(m_interpControlWidget);
-
-    QLabel *label = new QLabel("🎬 INTERPOLATION MODE", m_interpControlWidget);
-    label->setStyleSheet("QLabel { color: white; font-weight: bold; font-size: 14px; }");
-    layout->addWidget(label);
-
-    layout->addStretch();
-
-    m_createKeyframeBtn = new QPushButton("Create Keyframe", m_interpControlWidget);
-    layout->addWidget(m_createKeyframeBtn);
-
-    m_finishInterpBtn = new QPushButton("Finish & Save", m_interpControlWidget);
-    layout->addWidget(m_finishInterpBtn);
-
-    connect(m_createKeyframeBtn, &QPushButton::clicked,
-            this, &MainWindow::onCreateKeyframe);
-    connect(m_finishInterpBtn, &QPushButton::clicked,
-            this, &MainWindow::onFinishInterpolation);
-
-    m_interpControlWidget->hide();
-
-    connect(m_interpolationManager, &InterpolationManager::interpolationModeChanged,
-            m_interpControlWidget, &QWidget::setVisible);
-}
-
-void MainWindow::onGroupForInterpolation(const QList<VectorObject*> &objects)
-{
-    if (objects.isEmpty()) {
-        statusBar()->showMessage("No objects selected for interpolation", 3000);
-        return;
-    }
-
-    QString groupId = m_interpolationManager->createGroup(objects);
-
-    if (!groupId.isEmpty()) {
-        statusBar()->showMessage(
-            QString("Created interpolation group with %1 object(s). "
-                    "Position them and create keyframes.").arg(objects.size()),
-            5000
-        );
-    }
-}
-
-void MainWindow::onCreateKeyframe()
-{
-    if (!m_interpolationManager->isInInterpolationMode()) {
-        return;
-    }
-
-    QString groupId = m_interpolationManager->activeGroupId();
-    int currentFrame = m_project->currentFrame();
-
-    if (m_interpolationManager->addKeyframe(groupId, currentFrame)) {
-        int keyframeCount = m_interpolationManager->getKeyframes(groupId).size();
-        statusBar()->showMessage(
-            QString("Keyframe %1 created at frame %2").arg(keyframeCount).arg(currentFrame),
-            3000
-        );
-
-        if (m_timeline) {
-            m_timeline->update();
-        }
-    }
-}
-
-void MainWindow::onFinishInterpolation()
-{
-    if (!m_interpolationManager->isInInterpolationMode()) {
-        return;
-    }
-
-    QString groupId = m_interpolationManager->activeGroupId();
-    int keyframeCount = m_interpolationManager->getKeyframes(groupId).size();
-
-    if (keyframeCount < 2) {
-        QMessageBox::warning(this, "Interpolation Incomplete",
-                           "You need at least 2 keyframes to complete interpolation.\n"
-                           "Create more keyframes or cancel.");
-        return;
-    }
-
-    m_interpolationManager->finishInterpolation();
-
-    statusBar()->showMessage(
-        QString("Interpolation completed with %1 keyframes!").arg(keyframeCount),
-        5000
-    );
-}
-
-void MainWindow::onFrameChanged(int frame)
-{
-    // Auto-update positions when scrubbing timeline
-    if (m_interpolationManager && m_interpolationManager->isInInterpolationMode()) {
-        QString groupId = m_interpolationManager->activeGroupId();
-        m_interpolationManager->updateObjectPositions(groupId, frame);
-
-        if (m_canvas) {
-            m_canvas->update();
-        }
-    }
 }
