@@ -12,6 +12,7 @@
 #include <QPainterPath>
 #include <QtMath>
 #include <QBitmap>
+#include <QScrollArea>
 
 // ============= ColorWheel Implementation =============
 
@@ -70,7 +71,7 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     angle += 2 * M_PI / 3;
     QPointF pPure = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
 
-    QColor pureHue = QColor::fromHsvF(hue, 1.0, 1.0);
+    // pureHue = QColor::fromHsvF(hue, 1.0, 1.0) — removed, hue used directly below
 
     QPainterPath triangle;
     triangle.moveTo(pWhite);
@@ -285,7 +286,29 @@ ColorPicker::ColorPicker(QWidget *parent)
 
 void ColorPicker::setupUI()
 {
-    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    // Outer layout: just holds the scroll area
+    QVBoxLayout *outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    QScrollArea *scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setStyleSheet(
+        "QScrollArea { border: none; background: transparent; }"
+        "QScrollBar:vertical { background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 20px; }"
+        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+    );
+    outerLayout->addWidget(scrollArea);
+
+    // Inner widget that holds all the actual controls
+    QWidget *inner = new QWidget();
+    scrollArea->setWidget(inner);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(inner);
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(12);
 

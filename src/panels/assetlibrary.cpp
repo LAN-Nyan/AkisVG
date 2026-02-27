@@ -81,6 +81,14 @@ void AssetLibrary::setupUI()
         "QListWidget::item:hover {"
         "   background-color: #3a3a3a;"
         "}"
+        "QScrollBar:vertical {"
+        "   background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "   background: #444; border-radius: 4px; min-height: 20px;"
+        "}"
+        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
         );
     m_assetList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_assetList->setContextMenuPolicy(Qt::CustomContextMenu);

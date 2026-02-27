@@ -1,4 +1,3 @@
-
 #include "settingspanel.h"
 #include "core/project.h"
 
@@ -11,6 +10,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QBitmap>
+#include <QScrollArea>
 #include "settingspanel.h"
 
 ProjectSettings::ProjectSettings(Project *project, QWidget *parent)
@@ -222,7 +222,7 @@ void ProjectSettings::setupUI()
             this, &ProjectSettings::onSmoothPathsToggled);
 
     drawingLayout->addWidget(m_smoothPathsCheck);
-    
+
     // Onion Skinning Toggle
     m_onionSkinCheck = new QCheckBox("👁️ Enable Onion Skinning");
     m_onionSkinCheck->setChecked(false);  // Disabled by default
@@ -230,13 +230,13 @@ void ProjectSettings::setupUI()
     connect(m_onionSkinCheck, &QCheckBox::toggled,
             this, &ProjectSettings::onOnionSkinToggled);
     drawingLayout->addWidget(m_onionSkinCheck);
-    
+
     // Onion Skin Settings (indent these)
     QWidget *onionSkinSettings = new QWidget();
     QVBoxLayout *onionSettingsLayout = new QVBoxLayout(onionSkinSettings);
     onionSettingsLayout->setContentsMargins(24, 4, 0, 0);
     onionSettingsLayout->setSpacing(6);
-    
+
     // Frames Before
     QHBoxLayout *beforeLayout = new QHBoxLayout();
     QLabel *beforeLabel = new QLabel("Previous Frames:");
@@ -254,7 +254,7 @@ void ProjectSettings::setupUI()
     beforeLayout->addWidget(m_onionBeforeSpin);
     beforeLayout->addStretch();
     onionSettingsLayout->addLayout(beforeLayout);
-    
+
     // Frames After
     QHBoxLayout *afterLayout = new QHBoxLayout();
     QLabel *afterLabel = new QLabel("Next Frames:");
@@ -269,7 +269,7 @@ void ProjectSettings::setupUI()
     afterLayout->addWidget(m_onionAfterSpin);
     afterLayout->addStretch();
     onionSettingsLayout->addLayout(afterLayout);
-    
+
     // Opacity Slider
     QHBoxLayout *opacityLayout = new QHBoxLayout();
     QLabel *opacityLabel = new QLabel("Opacity:");
@@ -289,7 +289,7 @@ void ProjectSettings::setupUI()
     opacityLayout->addWidget(m_onionOpacitySlider);
     opacityLayout->addWidget(m_onionOpacityLabel);
     onionSettingsLayout->addLayout(opacityLayout);
-    
+
     drawingLayout->addWidget(onionSkinSettings);
 
     contentLayout->addWidget(drawingGroup);
@@ -329,7 +329,19 @@ void ProjectSettings::setupUI()
 
     contentLayout->addStretch();
 
-    mainLayout->addWidget(contentWidget);
+    QScrollArea *scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setStyleSheet(
+        "QScrollArea { border: none; background: transparent; }"
+        "QScrollBar:vertical { background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 20px; }"
+        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+    );
+    scrollArea->setWidget(contentWidget);
+    mainLayout->addWidget(scrollArea, 1);
 }
 
 void ProjectSettings::onFpsChanged(int index)
@@ -387,5 +399,3 @@ void ProjectSettings::onOnionOpacityChanged(int value)
     m_onionOpacityLabel->setText(QString("%1%").arg(value));
     emit settingsChanged();
 }
-
-

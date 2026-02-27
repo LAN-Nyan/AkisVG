@@ -21,8 +21,8 @@ public:
     ~ToolBox();
 
     Tool* getTool(ToolType type) const;
-
     Tool* currentTool() const { return m_currentTool; }
+    ToolSettingsPanel* settingsPanel() const { return m_settingsPanel; }
 
 signals:
     void toolChanged(Tool *tool);
@@ -35,10 +35,6 @@ private:
 
     void createTools();
     void setupUI();
-
-    QPushButton *m_colorButton; // Declare the button
-    void updateColorButton(const QColor &color);
-    QComboBox *m_textureSelector;
 
     QMap<ToolType, Tool*> m_tools;
     Tool *m_currentTool;

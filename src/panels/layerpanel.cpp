@@ -127,6 +127,14 @@ void LayerPanel::setupUI()
         "QListWidget::item:selected {"
         "   background-color: rgba(42, 130, 218, 0.3);"
         "}"
+        "QScrollBar:vertical {"
+        "   background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0;"
+        "}"
+        "QScrollBar::handle:vertical {"
+        "   background: #444; border-radius: 4px; min-height: 20px;"
+        "}"
+        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
         );
     m_layerList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_layerList->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -441,6 +449,7 @@ void LayerPanel::showContextMenu(const QPoint &pos)
     case LayerType::Background: bgAct->setCheckable(true); bgAct->setChecked(true); break;
     case LayerType::Audio: audioAct->setCheckable(true); audioAct->setChecked(true); break;
     case LayerType::Reference: refAct->setCheckable(true); refAct->setChecked(true); break;
+    case LayerType::Interpolation: break; // Interpolation layers use Art visually
     }
 
     menu.addSeparator();
