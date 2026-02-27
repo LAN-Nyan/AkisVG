@@ -17,6 +17,17 @@ Hey there! We know you’re looking for something that’s lightweight, packed w
 
 # What’s Next?
 
-working hard to release v0.4 by February 28, 2026—so stay tuned! This is just the start of a journey we’re excited to share with you.
+working hard to release v0.4 by February 28, 2026—so stay tuned! 
+
+#0.4 Features
+- Tool Settings
+- Mkv
+- Audio
+- GIF
+- Layer types
+
+#0.5 Features 
+- Interpolation
+- TBD
 
 Join us in shaping the future of animation—one frame at a time! 
