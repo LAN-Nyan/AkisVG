@@ -51,7 +51,9 @@ set(SOURCES
     src/canvas/objects/imageobject.cpp
     src/tools/filltool.cpp
     src/io/gifexporter.cpp
-    src/core/interpolationmanager.cpp
+    src/tools/liquifytool.cpp
+    src/tools/eyedroppertool.cpp
+    src/ui/startupscreen.cpp
 )
 
 set(HEADERS
@@ -71,6 +73,7 @@ set(HEADERS
     src/timeline/timelinewidget.h
     src/canvas/objects/imageobject.h
     src/io/gifexporter.h
+    src/ui/startupscreen.h
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
