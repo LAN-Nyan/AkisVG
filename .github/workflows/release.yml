@@ -35,7 +35,9 @@ jobs:
         with:
           version: '6.5.3'
           arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || '' }}
-          modules: 'qtmultimedia qtsvg' # Corrected modules list
+          modules: 'qtmultimedia' # Removed qtsvg from here
+          # Keep archives as is, as qtsvg is often handled as a base archive
+          archives: 'qtbase qtsvg'
 
       - name: Set up MSVC (Windows Only)
         if: matrix.os == 'windows-latest'
