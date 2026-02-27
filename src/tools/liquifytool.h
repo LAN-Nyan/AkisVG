@@ -1,16 +1,16 @@
-#ifndef BRUSHTOOL_H
-#define BRUSHTOOL_H
+#ifndef LIQUIFYTOOL_H
+#define LIQUIFYTOOL_H
 
 #include "tool.h"
+#include <QPointF>
+#include <QSet>
 
 class PathObject;
 
-class BrushTool : public Tool
+class LiquifyTool : public Tool
 {
-    Q_OBJECT
-
 public:
-    explicit BrushTool(QObject *parent = nullptr);
+    explicit LiquifyTool(QObject *parent = nullptr);
 
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
@@ -18,7 +18,10 @@ public:
 
 private:
     QPointF m_lastPoint;
-    PathObject *m_currentPath;
+    void warpAtPoint(const QPointF &pos, VectorCanvas *canvas);
+    qreal m_influenceRadius = 50.0;
+    qreal m_pushStrength = 0.5;
+    QSet<PathObject*> m_affectedObjects;
 };
 
-#endif // BRUSHTOOL_H
+#endif

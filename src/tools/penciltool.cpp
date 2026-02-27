@@ -11,39 +11,41 @@ PencilTool::PencilTool(QObject *parent)
 
 void PencilTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    // CRITICAL: Accept the event so canvas knows we're handling it
     event->setAccepted(true);
 
-    // 1. Safety check: ensure we don't have a path already
     m_currentPath = new PathObject();
     m_currentPath->setStrokeColor(m_strokeColor);
     m_currentPath->setStrokeWidth(m_strokeWidth);
+    m_currentPath->setTexture(static_cast<PathTexture>(static_cast<int>(m_texture)));
 
-    // 2. Start the path at the mouse position
-    QPainterPath path;
-    path.moveTo(event->scenePos());
-    m_currentPath->setPath(path);
+    // Track the start point in a member variable (add QPointF m_lastPoint to penciltool.h)
+    m_lastPoint = event->scenePos();
 
-    // 3. Add to canvas (which handles the UndoStack)
+    // PathObject needs a moveTo wrapper just like your BrushTool fix
+    m_currentPath->moveTo(m_lastPoint);
+
     canvas->addObject(m_currentPath);
 }
 
 void PencilTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
+    Q_UNUSED(canvas); // Keeps the compiler happy
     if (!m_currentPath) return;
 
-    QPainterPath path = m_currentPath->path();
-    QPointF newPoint = event->scenePos();
-    QPointF lastPoint = path.currentPosition();
+    QPointF currentPoint = event->scenePos();
 
-    // 4. Distance threshold (prevents jitter and bloated path data)
-    if (QLineF(lastPoint, newPoint).length() > 2.0) {
-        // Simple linear approach for a "Pencil":
-        path.lineTo(newPoint);
+    // Check distance to avoid jitter
+    if (QLineF(m_lastPoint, currentPoint).length() > 1.5) {
 
-        // Update the object and trigger a scene update
-        m_currentPath->setPath(path);
-        canvas->update();
+        // Midpoint for smoothing
+        QPointF midPoint = (m_lastPoint + currentPoint) / 2.0;
+
+        // Use the smooth wrapper
+        m_currentPath->quadTo(m_lastPoint, midPoint);
+
+        m_lastPoint = currentPoint;
+        // The PathObject likely calls update() internally now,
+        // but if not, keep canvas->update() here.
     }
 }
 
@@ -51,8 +53,9 @@ void PencilTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas
 {
     if (!m_currentPath) return;
 
-    // Finalize the path
-    m_currentPath = nullptr;
+    // Finalize: Draw a line to the exact point where the user lifted the mouse
+    m_currentPath->lineTo(event->scenePos());
 
+    m_currentPath = nullptr;
     Tool::mouseReleaseEvent(event, canvas);
 }

@@ -20,6 +20,8 @@ Tool::Tool(ToolType type, QObject *parent)
     case ToolType::Text:      m_name = "Text"; break;
     case ToolType::Fill:      m_name = "Fill"; break;
     case ToolType::Blend:     m_name = "Blend"; break;
+    case ToolType::eyedropper: m_name = "Eyedropper"; break;
+    case ToolType::Liquify:    m_name = "Liquify"; break;
     }
 }
 

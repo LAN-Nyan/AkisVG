@@ -6,18 +6,21 @@
 #include <QColor>
 
 class VectorCanvas;
-
+// Define tool types
 enum class ToolType {
     Select,
     Pencil,
     Brush,
     Eraser,
     Rectangle,
+    Shape,
     Ellipse,
-    Line,     // ADDED: Line tool
+    Line,
     Text,
     Fill,
-    Blend
+    Blend,
+    Liquify,
+    eyedropper
 };
 
 enum class ToolTexture { Smooth, Grainy, Chalk, Canvas };
