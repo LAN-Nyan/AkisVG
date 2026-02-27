@@ -23,6 +23,8 @@
 #include <QSlider>
 #include <QTimer>
 #include <cmath>
+#include <QEventLoop>
+#include <QAudioBuffer>
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
