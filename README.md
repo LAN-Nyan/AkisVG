@@ -19,14 +19,14 @@ Hey there! We know you’re looking for something that’s lightweight, packed w
 
 working hard to release v0.4 by February 28, 2026—so stay tuned! 
 
-#0.4 Features
+# 0.4 Features
 - Tool Settings
 - Mkv
 - Audio
 - GIF
 - Layer types
 
-#0.5 Features 
+# 0.5 Features 
 - Add Proper Startup Menu (Fix the existing one, which doesn't show up)
 - Increase detail on brush types
 - Force Update for the colour picker to show the colour the current tool is (No more Set Pencil to red, click on brush, Colour picker says it's red, but the brush is actually black)
