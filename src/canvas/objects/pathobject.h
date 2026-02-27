@@ -36,7 +36,9 @@ public:
     bool smoothPaths() const { return m_smoothPaths; }
     void setMinPointDistance(qreal distance) { m_minPointDistance = distance; }
     qreal minPointDistance() const { return m_minPointDistance; }
-    
+    void moveTo(const QPointF &p);
+    void quadTo(const QPointF &control, const QPointF &end);
+
     // Texture support
     void setTexture(PathTexture texture) { m_texture = texture; }
     PathTexture texture() const { return m_texture; }

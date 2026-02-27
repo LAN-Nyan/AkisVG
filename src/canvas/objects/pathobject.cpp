@@ -66,11 +66,11 @@ void PathObject::rebuildSmoothPath()
     if (m_rawPoints.size() < 2) {
         return;
     }
-    
+
     // Rebuild the path from scratch using Catmull-Rom spline
     QPainterPath newPath;
     newPath.moveTo(m_rawPoints.first());
-    
+
     if (m_rawPoints.size() == 2) {
         // Just two points - draw a straight line
         newPath.lineTo(m_rawPoints.last());
@@ -87,34 +87,34 @@ void PathObject::rebuildSmoothPath()
             QPointF p1 = m_rawPoints[i];
             QPointF p2 = m_rawPoints[i + 1];
             QPointF p3 = (i + 2 < m_rawPoints.size()) ? m_rawPoints[i + 2] : m_rawPoints[i + 1];
-            
+
             // Calculate Catmull-Rom control points for cubic Bezier
             // These formulas convert Catmull-Rom to Bezier curve
             QPointF cp1 = p1 + (p2 - p0) / 6.0;
             QPointF cp2 = p2 - (p3 - p1) / 6.0;
-            
+
             // Draw cubic curve from p1 to p2
             newPath.cubicTo(cp1, cp2, p2);
         }
     }
-    
+
     m_path = newPath;
 }
 
 void PathObject::lineTo(const QPointF &point)
 {
     prepareGeometryChange();
-    
+
     if (m_smoothPaths && m_path.elementCount() > 0) {
         // Get the last point
         QPointF lastPoint = m_path.currentPosition();
         QLineF line(lastPoint, point);
-        
+
         // Only add point if it's far enough from the last one
         if (line.length() >= m_minPointDistance) {
             // Store the new point in our raw points list
             m_rawPoints.append(point);
-            
+
             // Rebuild the entire smooth path from raw points
             rebuildSmoothPath();
         }
@@ -123,7 +123,7 @@ void PathObject::lineTo(const QPointF &point)
         m_path.lineTo(point);
         m_rawPoints.append(point); // Keep track of raw points even in non-smooth mode
     }
-    
+
     update();
 }
 
@@ -146,17 +146,98 @@ void PathObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
         return;
     }
 
-    painter->setRenderHint(QPainter::Antialiasing);
-    painter->setOpacity(m_objectOpacity); // Use the opacity property
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setOpacity(m_objectOpacity);
 
-    QPen pen(m_strokeColor, m_strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    painter->setPen(pen);
-
+    // Handle fill
     if (m_fillColor != Qt::transparent) {
         painter->setBrush(m_fillColor);
     } else {
         painter->setBrush(Qt::NoBrush);
     }
 
-    painter->drawPath(m_path);
+    switch (m_texture) {
+    case PathTexture::Smooth: {
+        // Standard solid stroke
+        QPen pen(m_strokeColor, m_strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter->setPen(pen);
+        painter->drawPath(m_path);
+        break;
+    }
+    case PathTexture::Grainy: {
+        // Grainy: draw the path multiple times with slight random offsets and partial opacity
+        painter->setPen(QPen(m_strokeColor, m_strokeWidth * 0.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setOpacity(m_objectOpacity * 0.85);
+        painter->drawPath(m_path);
+
+        // Second pass — shifted, thinner
+        painter->save();
+        painter->setOpacity(m_objectOpacity * 0.45);
+        QColor grainColor = m_strokeColor;
+        grainColor.setAlphaF(grainColor.alphaF() * 0.6);
+        painter->setPen(QPen(grainColor, m_strokeWidth * 0.4, Qt::DotLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->translate(0.8, 0.8);
+        painter->drawPath(m_path);
+        painter->translate(-1.6, 0.5);
+        painter->drawPath(m_path);
+        painter->restore();
+        break;
+    }
+    case PathTexture::Chalk: {
+        // Chalk: soft, semi-transparent, slightly rough edges with multiple thin passes
+        QColor chalkColor = m_strokeColor;
+
+        // Base wide soft pass
+        chalkColor.setAlphaF(qMin(1.0, m_strokeColor.alphaF()) * 0.55);
+        painter->setPen(QPen(chalkColor, m_strokeWidth * 1.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setOpacity(m_objectOpacity);
+        painter->drawPath(m_path);
+
+        // Middle solid pass
+        chalkColor.setAlphaF(qMin(1.0, m_strokeColor.alphaF()) * 0.75);
+        painter->setPen(QPen(chalkColor, m_strokeWidth * 0.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->drawPath(m_path);
+
+        // Edge scatter passes
+        painter->save();
+        chalkColor.setAlphaF(0.25);
+        painter->setPen(QPen(chalkColor, m_strokeWidth * 0.25, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->translate(1.0, -0.5);
+        painter->drawPath(m_path);
+        painter->translate(-2.0, 1.0);
+        painter->drawPath(m_path);
+        painter->restore();
+        break;
+    }
+    case PathTexture::Canvas: {
+        // Canvas: cross-hatched look — two passes at slight angles
+        QPen pen1(m_strokeColor, m_strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter->setPen(pen1);
+        painter->setOpacity(m_objectOpacity * 0.8);
+        painter->drawPath(m_path);
+
+        // Second pass with slightly different width and offset to simulate weave
+        painter->save();
+        QColor canvasColor = m_strokeColor;
+        canvasColor.setAlphaF(canvasColor.alphaF() * 0.45);
+        painter->setPen(QPen(canvasColor, m_strokeWidth * 0.35, Qt::DashDotLine, Qt::FlatCap, Qt::MiterJoin));
+        painter->setOpacity(m_objectOpacity * 0.6);
+        painter->translate(0.5, 0.5);
+        painter->drawPath(m_path);
+        painter->translate(0, -1.0);
+        painter->drawPath(m_path);
+        painter->restore();
+        break;
+    }
+    }
+}
+
+void PathObject::moveTo(const QPointF &p) {
+    m_path.moveTo(p); // Assuming m_path is your QPainterPath
+    update(); // Trigger a redraw
+}
+
+void PathObject::quadTo(const QPointF &control, const QPointF &end) {
+    m_path.quadTo(control, end);
+    update();
 }
