@@ -1,15 +1,15 @@
 ## AkisVG - Your Lightweight Animation Companion
-Hey there! We know you’re looking for something that’s lightweight, packed with crucial animation features, and built to grow with you. While we’re still in the early stages, this is just the beginning of what we’re creating—something you can rely on as it evolves.
+Hey there! I know you’re looking for something that’s lightweight, packed with crucial animation features, and built to grow with you. While I'm still in the early stages, this is just the beginning of what I'm creating—something you can rely on as it evolves.
 
  # Why AkisVG?
 
-- Lightweight & Fast
-- Designed to run smoothly without slowing down your workflow.
-- Essential Animation Tools
-- Get started with the features you need to bring your ideas to life.
-- Actively Developed
+- Need something Lightweight & Fast
+- Need software designed to run smoothly
+- Need some Essential Animation Tools
+- Need MIDI file playback supported
+- Need something Actively Developed
 
-<b/>Our team is passionate about building something great, and we’re always iterating based on your feedback.</b>
+<b/>I am passionate about building something great, and I'm always iterating based on your feedback.</b>
 
 # Example Animations
 
