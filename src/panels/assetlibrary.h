@@ -5,18 +5,24 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QString>
+#include <QLabel>
+
+// Forward declaration
+class ObjectGroup;
 
 struct Asset {
     enum Type {
         Image,
-        Audio
+        Audio,
+        Group   // NEW: object groups from canvas
     };
 
     QString id;
     QString name;
-    QString path;
+    QString path;        // empty for Group assets
     Type type;
     QPixmap thumbnail;
+    ObjectGroup *group = nullptr;  // non-null for Group assets
 };
 
 class AssetLibrary : public QWidget
@@ -29,9 +35,15 @@ public:
     QList<Asset> assets() const { return m_assets; }
     Asset* assetById(const QString &id);
 
+    // Called by VectorCanvas when user groups objects
+    void addObjectGroup(ObjectGroup *group);
+    void applyTheme();
+
 signals:
     void assetAdded(const Asset &asset);
     void assetRemoved(const QString &id);
+    // Emitted when user wants to instance a group onto the canvas
+    void groupInstanceRequested(ObjectGroup *group);
 
 private slots:
     void onImportClicked();
@@ -49,6 +61,8 @@ private:
     QListWidget *m_assetList;
     QPushButton *m_importButton;
     QPushButton *m_deleteButton;
+    QWidget *m_header;
+    QLabel *m_titleLabel;
     QList<Asset> m_assets;
 };
 

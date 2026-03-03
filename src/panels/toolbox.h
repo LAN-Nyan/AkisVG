@@ -6,6 +6,9 @@
 #include <QMap>
 #include <QPushButton>
 #include <QComboBox>
+#include <QLabel>
+#include <QScrollArea>
+#include <QList>
 
 #include "toolsettingspanel.h"
 
@@ -22,7 +25,10 @@ public:
 
     Tool* getTool(ToolType type) const;
     Tool* currentTool() const { return m_currentTool; }
+    // Programmatically switch to a tool (e.g. from Pull mode)
+    void activateTool(ToolType type);
     ToolSettingsPanel* settingsPanel() const { return m_settingsPanel; }
+    void applyTheme();
 
 signals:
     void toolChanged(Tool *tool);
@@ -39,6 +45,9 @@ private:
     QMap<ToolType, Tool*> m_tools;
     Tool *m_currentTool;
     QButtonGroup *m_toolButtons;
+    QScrollArea *m_scrollArea;
+    QWidget *m_contentWidget;
+    QList<QLabel*> m_accentLabels; // section labels that use accent color
 };
 
 #endif // TOOLBOX_H

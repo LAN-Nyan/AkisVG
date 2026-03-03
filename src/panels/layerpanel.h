@@ -17,6 +17,7 @@ class LayerPanel : public QWidget
 public:
     explicit LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent = nullptr);
     void rebuildLayerList();
+    void applyTheme();
 
 private slots:
     // State updates (Safe to call during mouse clicks/selection changes)
@@ -46,6 +47,8 @@ private:
     QPushButton *m_duplicateButton;
     QPushButton *m_moveUpButton;
     QPushButton *m_moveDownButton;
+    QWidget *m_header;
+    QWidget *m_toolbar;
 };
 
 #endif // LAYERPANEL_H

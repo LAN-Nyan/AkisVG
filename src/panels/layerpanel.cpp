@@ -2,6 +2,7 @@
 #include "core/project.h"
 #include "core/layer.h"
 #include "core/commands.h"
+#include "utils/thememanager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -78,11 +79,11 @@ void LayerPanel::setupUI()
     mainLayout->setSpacing(0);
 
     // Header
-    QWidget *header = new QWidget();
-    header->setStyleSheet("background-color: #3a3a3a; border-bottom: 1px solid #000;");
-    header->setFixedHeight(40);
+    m_header = new QWidget();
+    m_header->setStyleSheet("background-color: #1e1e1e; border-bottom: 1px solid #000;");
+    m_header->setFixedHeight(40);
 
-    QHBoxLayout *headerLayout = new QHBoxLayout(header);
+    QHBoxLayout *headerLayout = new QHBoxLayout(m_header);
     headerLayout->setContentsMargins(12, 0, 12, 0);
 
     QLabel *title = new QLabel("LAYERS");
@@ -96,7 +97,7 @@ void LayerPanel::setupUI()
     m_addButton->setCursor(Qt::PointingHandCursor);
     m_addButton->setStyleSheet(
         "QPushButton {"
-        "   background-color: #2a82da;"
+        "   background-color: #c0392b;"
         "   border: none;"
         "   border-radius: 4px;"
         "   color: white;"
@@ -104,19 +105,19 @@ void LayerPanel::setupUI()
         "   font-weight: bold;"
         "}"
         "QPushButton:hover {"
-        "   background-color: #3a92ea;"
+        "   background-color: #e05241;"
         "}"
         );
     connect(m_addButton, &QPushButton::clicked, this, &LayerPanel::onAddLayerClicked);
     headerLayout->addWidget(m_addButton);
 
-    mainLayout->addWidget(header);
+    mainLayout->addWidget(m_header);
 
     // Layer list
     m_layerList = new QListWidget();
     m_layerList->setStyleSheet(
         "QListWidget {"
-        "   background-color: #2d2d2d;"
+        "   background-color: #1e1e1e;"
         "   border: none;"
         "   outline: none;"
         "}"
@@ -125,7 +126,7 @@ void LayerPanel::setupUI()
         "   padding: 0;"
         "}"
         "QListWidget::item:selected {"
-        "   background-color: rgba(42, 130, 218, 0.3);"
+        "   background-color: rgba(192, 57, 43, 0.25);"
         "}"
         "QScrollBar:vertical {"
         "   background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0;"
@@ -133,7 +134,7 @@ void LayerPanel::setupUI()
         "QScrollBar::handle:vertical {"
         "   background: #444; border-radius: 4px; min-height: 20px;"
         "}"
-        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::handle:vertical:hover { background: #c0392b; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
         );
     m_layerList->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -145,11 +146,11 @@ void LayerPanel::setupUI()
     mainLayout->addWidget(m_layerList);
 
     // Bottom toolbar
-    QWidget *toolbar = new QWidget();
-    toolbar->setStyleSheet("background-color: #3a3a3a; border-top: 1px solid #000;");
-    toolbar->setFixedHeight(44);
+    m_toolbar = new QWidget();
+    m_toolbar->setStyleSheet("background-color: #1e1e1e; border-top: 1px solid #000;");
+    m_toolbar->setFixedHeight(44);
 
-    QHBoxLayout *toolbarLayout = new QHBoxLayout(toolbar);
+    QHBoxLayout *toolbarLayout = new QHBoxLayout(m_toolbar);
     toolbarLayout->setContentsMargins(8, 6, 8, 6);
     toolbarLayout->setSpacing(6);
 
@@ -160,15 +161,15 @@ void LayerPanel::setupUI()
         btn->setCursor(Qt::PointingHandCursor);
         btn->setStyleSheet(
             "QPushButton {"
-            "   background-color: #2d2d2d;"
+            "   background-color: #1e1e1e;"
             "   border: 1px solid #555;"
             "   border-radius: 4px;"
             "   color: #ccc;"
             "   font-size: 14px;"
             "}"
             "QPushButton:hover {"
-            "   background-color: #3a3a3a;"
-            "   border-color: #2a82da;"
+            "   background-color: #1e1e1e;"
+            "   border-color: #c0392b;"
             "   color: white;"
             "}"
             "QPushButton:disabled {"
@@ -199,7 +200,7 @@ void LayerPanel::setupUI()
 
     toolbarLayout->addStretch();
 
-    mainLayout->addWidget(toolbar);
+    mainLayout->addWidget(m_toolbar);
 }
 
 QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
@@ -220,23 +221,23 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
 
     switch(layer->layerType()) {
     case LayerType::Audio:
-        layerColor = "#9b59b6";
-        typeLabelText = "AUDIO SEQUENCE";
+        layerColor = "#27ae60";
+        typeLabelText = "AUDIO";
         break;
     case LayerType::Art:
-        layerColor = "#3498db";
-        typeLabelText = "ART LAYER";
+        layerColor = "#c0392b";
+        typeLabelText = "ART";
         break;
     case LayerType::Reference:
-        layerColor = "#e74c3c";
+        layerColor = "#e67e22";
         typeLabelText = "REFERENCE";
         break;
     case LayerType::Background:
-        layerColor = "#2ecc71";
+        layerColor = "#555555";
         typeLabelText = "BACKGROUND";
         break;
     default:
-        layerColor = "#3498db";
+        layerColor = "#c0392b";
         typeLabelText = "LAYER";
         break;
     }
@@ -429,7 +430,7 @@ void LayerPanel::showContextMenu(const QPoint &pos)
         "   border: 1px solid #000;"
         "}"
         "QMenu::item:selected {"
-        "   background-color: #2a82da;"
+        "   background-color: #c0392b;"
         "}"
         );
 
@@ -482,4 +483,47 @@ void LayerPanel::showContextMenu(const QPoint &pos)
         layer->setLayerType(LayerType::Reference);
         rebuildLayerList();
     }
+}
+
+void LayerPanel::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    m_header->setStyleSheet(
+        QString("background-color: %1; border-bottom: 1px solid #000;").arg(t.bg0));
+
+    m_addButton->setStyleSheet(
+        QString("QPushButton { background-color: %1; border: none; border-radius: 4px;"
+                " color: white; font-size: 18px; font-weight: bold; }"
+                "QPushButton:hover { background-color: %2; }").arg(t.accent, t.accentHover));
+
+    m_layerList->setStyleSheet(
+        QString("QListWidget { background-color: %1; border: none; outline: none; }"
+                "QListWidget::item { border-bottom: 1px solid %2; padding: 0; }"
+                "QListWidget::item:selected { background-color: rgba(%3,%4,%5,60); }"
+                "QScrollBar:vertical { background: %2; width: 8px; border-radius: 4px; margin: 0; }"
+                "QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 20px; }"
+                "QScrollBar::handle:vertical:hover { background: %6; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+        .arg(t.bg0, t.bg1)
+        .arg(t.accentColor().red()).arg(t.accentColor().green()).arg(t.accentColor().blue())
+        .arg(t.accent));
+
+    m_toolbar->setStyleSheet(
+        QString("background-color: %1; border-top: 1px solid #000;").arg(t.bg0));
+
+    QString toolBtnStyle = QString(
+        "QPushButton { background-color: %1; border: 1px solid #555; border-radius: 4px;"
+        " color: #ccc; font-size: 14px; }"
+        "QPushButton:hover { background-color: %1; border-color: %2; color: white; }"
+        "QPushButton:disabled { color: #555; border-color: #333; }")
+        .arg(t.bg0, t.accent);
+
+    m_deleteButton->setStyleSheet(toolBtnStyle);
+    m_duplicateButton->setStyleSheet(toolBtnStyle);
+    m_moveUpButton->setStyleSheet(toolBtnStyle);
+    m_moveDownButton->setStyleSheet(toolBtnStyle);
+
+    // Rebuild list so layer color indicators refresh too
+    rebuildLayerList();
 }

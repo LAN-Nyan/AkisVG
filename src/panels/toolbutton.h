@@ -11,6 +11,7 @@ class ToolButton : public QPushButton
 
 public:
     explicit ToolButton(const QString &iconPath, const QString &toolName, const QString &shortcut, QWidget *parent = nullptr);
+    void applyTheme();
 
 protected:
     void paintEvent(QPaintEvent *event) override;

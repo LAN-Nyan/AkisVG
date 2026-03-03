@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QBitmap>
 #include <QMap>
+#include <QLabel>
 
 class ColorWheel : public QWidget
 {
@@ -54,6 +55,7 @@ public:
 
     QColor currentColor() const;
     void setColor(const QColor &color);
+    void applyTheme();
 
 signals:
     void colorChanged(const QColor &color);
@@ -84,7 +86,13 @@ private:
     QWidget *m_recentColorsWidget;
     QWidget *m_paletteWidget;
     QColor m_currentColor;
-    
+    QLabel *m_titleLabel;
+    QLabel *m_opacityLabel;
+    QLabel *m_hexLabel;
+    QLabel *m_paletteLabel;
+    QLabel *m_recentLabel;
+    QLabel *m_textureLabel;
+
     // Predefined color palettes
     QMap<QString, QVector<QColor>> m_palettes;
 };

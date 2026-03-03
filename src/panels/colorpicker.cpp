@@ -1,4 +1,9 @@
+// TODO:
+// 1. This is more annoying than a software destroyer but the ring around the triangle is offset so Blue on the ring, is red on the triangle?
+
+
 #include "colorpicker.h"
+#include "utils/thememanager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -29,10 +34,11 @@ ColorWheel::ColorWheel(QWidget *parent)
     setMouseTracking(true);
 }
 
+// Look for the ColorWheel section near the top of colorpicker.cpp
 void ColorWheel::setColor(const QColor &color)
 {
     m_currentColor = color;
-    update();
+    update(); // This tells Qt to redraw the wheel with the new color
 }
 
 void ColorWheel::paintEvent(QPaintEvent *event)
@@ -64,25 +70,28 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    qreal angle = hue * 2 * M_PI - M_PI / 2;
-    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+    // Angle formula: hue * 2*PI + PI/2
+    // This maps the hue correctly onto the QConicalGradient(center, -90) ring:
+    //   hue=0.0 (red)   → bottom,  hue=0.25 (green) → left
+    //   hue=0.5 (cyan)  → top,     hue=0.75 (blue)  → right
+    // pPure is placed at the hue indicator position so triangle and ring agree.
+    qreal angle = hue * 2 * M_PI + M_PI / 2;
+    QPointF pPure  = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
     angle += 2 * M_PI / 3;
-    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
     angle += 2 * M_PI / 3;
-    QPointF pPure = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
-
-    // pureHue = QColor::fromHsvF(hue, 1.0, 1.0) — removed, hue used directly below
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
 
     QPainterPath triangle;
-    triangle.moveTo(pWhite);
-    triangle.lineTo(pPure);
+    triangle.moveTo(pPure);
+    triangle.lineTo(pWhite);
     triangle.lineTo(pBlack);
     triangle.closeSubpath();
 
-    // Create a proper HSV triangle:
-    // - Top vertex (pWhite) = White (S=0, V=1)
-    // - Bottom right (pPure) = Pure hue (S=1, V=1)
-    // - Bottom left (pBlack) = Black (S=0, V=0)
+    // HSV triangle layout:
+    // - pPure  = Pure hue (S=1, V=1) — aligned with hue ring indicator
+    // - pWhite = White    (S=0, V=1)
+    // - pBlack = Black    (S=0, V=0)
 
     // Draw using a raster approach for accurate gradient
     QImage triangleImage(width(), height(), QImage::Format_ARGB32);
@@ -197,7 +206,9 @@ void ColorWheel::updateColor(const QPoint &pos)
     QPointF delta = pos - m_center;
 
     if (m_isSelectingHue) {
-        qreal angle = qAtan2(delta.y(), delta.x()) + M_PI / 2;
+        // Inverse of placement formula: angle_placed = hue*2pi + pi/2
+        // → hue = (atan2(dy,dx) - pi/2) / (2pi)
+        qreal angle = qAtan2(delta.y(), delta.x()) - M_PI / 2;
         if (angle < 0) angle += 2 * M_PI;
         qreal hue = angle / (2 * M_PI);
 
@@ -208,12 +219,13 @@ void ColorWheel::updateColor(const QPoint &pos)
         qreal hue = m_currentColor.hueF();
         if (hue < 0) hue = 0;
 
-        qreal angle = hue * 2 * M_PI - M_PI / 2;
-        QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+        // FIX: Use correct angle formula — hue*2pi + pi/2
+        qreal angle = hue * 2 * M_PI + M_PI / 2;
+        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;  // pPure
         angle += 2 * M_PI / 3;
-        QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+        QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
         angle += 2 * M_PI / 3;
-        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+        QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
 
         QPointF v0 = pColor - pWhite;
         QPointF v1 = pBlack - pWhite;
@@ -248,7 +260,8 @@ void ColorWheel::updateColor(const QPoint &pos)
 
 QPointF ColorWheel::hueToPoint(qreal hue) const
 {
-    qreal angle = hue * 2 * M_PI - M_PI / 2;
+    // FIX: hue*2pi + pi/2 matches the QConicalGradient(-90) ring layout
+    qreal angle = hue * 2 * M_PI + M_PI / 2;
     qreal radius = (m_outerRadius + m_innerRadius) / 2;
     return m_center + QPointF(qCos(angle), qSin(angle)) * radius;
 }
@@ -258,12 +271,13 @@ QPointF ColorWheel::svToPoint(qreal saturation, qreal value) const
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    qreal angle = hue * 2 * M_PI - M_PI / 2;
-    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+    // FIX: Use correct angle formula — hue*2pi + pi/2
+    qreal angle = hue * 2 * M_PI + M_PI / 2;
+    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;  // pPure
     angle += 2 * M_PI / 3;
-    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+    QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
     angle += 2 * M_PI / 3;
-    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.85;
+    QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
 
     QPointF satPoint = pWhite + (pColor - pWhite) * saturation;
     QPointF finalPoint = satPoint + (pBlack - satPoint) * (1.0 - value);
@@ -286,6 +300,9 @@ ColorPicker::ColorPicker(QWidget *parent)
 
 void ColorPicker::setupUI()
 {
+    // Use the global 'theme()' helper that your other files use
+    const auto &t = theme();
+
     // Outer layout: just holds the scroll area
     QVBoxLayout *outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(0, 0, 0, 0);
@@ -295,26 +312,31 @@ void ColorPicker::setupUI()
     scrollArea->setWidgetResizable(true);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scrollArea->setStyleSheet(
-        "QScrollArea { border: none; background: transparent; }"
-        "QScrollBar:vertical { background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0; }"
-        "QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 20px; }"
-        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+
+    // FIX: This removes the default Blue (#2596be) by forcing the background
+    scrollArea->setStyleSheet(QString(
+        "QScrollArea { border: none; background: %1; }"
+        "QScrollBar:vertical { background: %1; width: 8px; }"
+        "QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 20px; }"
+        "QScrollBar::handle:vertical:hover { background: %3; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
-    );
+    ).arg(t.bg0, t.bg2, t.accent));
+
     outerLayout->addWidget(scrollArea);
 
     // Inner widget that holds all the actual controls
     QWidget *inner = new QWidget();
+    // FIX: This forces the inner "canvas" of the picker to match the theme
+    inner->setStyleSheet(QString("background-color: %1;").arg(t.bg0));
     scrollArea->setWidget(inner);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(inner);
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(12);
 
-    QLabel *title = new QLabel("COLOR PICKER");
-    title->setStyleSheet("font-weight: bold; font-size: 11px; color: #888; letter-spacing: 1px;");
-    mainLayout->addWidget(title);
+    m_titleLabel = new QLabel("COLOR PICKER");
+    m_titleLabel->setStyleSheet(QString("font-weight: bold; font-size: 10px; color: %1; letter-spacing: 2px;").arg(t.accent));
+    mainLayout->addWidget(m_titleLabel);
 
     m_colorWheel = new ColorWheel();
     m_colorWheel->setFixedSize(220, 220);
@@ -323,30 +345,19 @@ void ColorPicker::setupUI()
     connect(m_colorWheel, &ColorWheel::colorChanged, this, &ColorPicker::onWheelColorChanged);
 
     // Opacity slider
-    QLabel *opacityLabel = new QLabel("Opacity");
-    opacityLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    mainLayout->addWidget(opacityLabel);
+    m_opacityLabel = new QLabel("Opacity");
+    m_opacityLabel->setStyleSheet(QString("font-size: 10px; color: %1;").arg(t.accent));
+    mainLayout->addWidget(m_opacityLabel);
 
     QHBoxLayout *opacityLayout = new QHBoxLayout();
     m_opacitySlider = new QSlider(Qt::Horizontal);
     m_opacitySlider->setRange(0, 100);
     m_opacitySlider->setValue(100);
-    m_opacitySlider->setStyleSheet(
-        "QSlider::groove:horizontal {"
-        "   background: #3a3a3a;"
-        "   height: 20px;"
-        "   border-radius: 4px;"
-        "   border: 1px solid #555;"
-        "}"
-        "QSlider::handle:horizontal {"
-        "   background: white;"
-        "   width: 16px;"
-        "   height: 16px;"
-        "   margin: -8px 0;"
-        "   border-radius: 8px;"
-        "   border: 2px solid #2a82da;"
-        "}"
-        );
+    m_opacitySlider->setStyleSheet(QString(
+        "QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
+        "QSlider::handle:horizontal { background: %2; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }"
+        "QSlider::handle:horizontal:hover { background: %3; }"
+    ).arg(t.bg1, t.accent, t.accentHover));
 
     QLabel *opacityValue = new QLabel("100%");
     opacityValue->setFixedWidth(40);
@@ -362,57 +373,52 @@ void ColorPicker::setupUI()
     mainLayout->addLayout(opacityLayout);
 
     // Hex input
-    QLabel *hexLabel = new QLabel("Hex Color");
-    hexLabel->setStyleSheet("font-size: 10px; color: #aaa;");
-    mainLayout->addWidget(hexLabel);
+    m_hexLabel = new QLabel("Hex Color");
+    m_hexLabel->setStyleSheet(QString("font-size: 10px; color: %1;").arg(t.accent));
+    mainLayout->addWidget(m_hexLabel);
 
     m_hexInput = new QLineEdit();
     m_hexInput->setPlaceholderText("#000000");
     m_hexInput->setMaxLength(7);
-    m_hexInput->setStyleSheet(
+    m_hexInput->setStyleSheet(QString(
         "QLineEdit {"
-        "   background-color: #2d2d2d;"
-        "   border: 2px solid #3a3a3a;"
-        "   border-radius: 4px;"
-        "   padding: 6px;"
-        "   color: white;"
-        "   font-family: monospace;"
+        "   background-color: %1;"
+        "   border: 1px solid %2;"
+        "   border-radius: 4px; padding: 6px; color: white; font-family: monospace;"
         "}"
-        "QLineEdit:focus {"
-        "   border-color: #2a82da;"
-        "}"
-        );
+        "QLineEdit:focus { border-color: %3; }"
+    ).arg(t.bg4, t.bg1, t.accent));
     connect(m_hexInput, &QLineEdit::editingFinished, this, &ColorPicker::onHexChanged);
     mainLayout->addWidget(m_hexInput);
 
     // Color Palettes
-    QLabel *paletteLabel = new QLabel("Color Palettes");
-    paletteLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 4px;");
-    mainLayout->addWidget(paletteLabel);
+    m_paletteLabel = new QLabel("Color Palettes");
+    m_paletteLabel->setStyleSheet(QString("font-size: 10px; color: %1; margin-top: 4px;").arg(t.accent));
+    mainLayout->addWidget(m_paletteLabel);
 
     m_paletteCombo = new QComboBox();
-    m_paletteCombo->setStyleSheet(
+    QString comboStyle = QString(
         "QComboBox {"
-        "   background-color: #2d2d2d;"
-        "   border: 2px solid #3a3a3a;"
+        "   background-color: %1;"
+        "   border: 2px solid %2;"
         "   border-radius: 4px;"
         "   padding: 6px;"
         "   color: white;"
         "   font-size: 10px;"
         "}"
         "QComboBox:hover {"
-        "   border-color: #2a82da;"
+        "   border-color: %3;"
         "}"
         "QComboBox QAbstractItemView {"
-        "   background-color: #2d2d2d;"
+        "   background-color: %1;"
         "   color: white;"
-        "   selection-background-color: #2a82da;"
+        "   selection-background-color: %3;"
         "}"
-    );
+    ).arg(t.bg4, t.bg1, t.accent);
+    m_paletteCombo->setStyleSheet(comboStyle);
 
-    loadPalettes();  // Load palette data
+    loadPalettes();
 
-    // Populate palette dropdown
     for (const QString &paletteName : m_palettes.keys()) {
         m_paletteCombo->addItem(paletteName);
     }
@@ -422,51 +428,32 @@ void ColorPicker::setupUI()
 
     mainLayout->addWidget(m_paletteCombo);
 
-    // Palette colors display
     m_paletteWidget = new QWidget();
     QGridLayout *paletteGrid = new QGridLayout(m_paletteWidget);
     paletteGrid->setSpacing(4);
     paletteGrid->setContentsMargins(0, 0, 0, 0);
     mainLayout->addWidget(m_paletteWidget);
 
-    // Initialize palette display
     updatePaletteDisplay();
 
     // Recent colors
-    QLabel *recentLabel = new QLabel("Recent Colors");
-    recentLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 8px;");
-    mainLayout->addWidget(recentLabel);
+    m_recentLabel = new QLabel("Recent Colors");
+    m_recentLabel->setStyleSheet(QString("font-size: 10px; color: %1; margin-top: 8px;").arg(t.accent));
+    mainLayout->addWidget(m_recentLabel);
 
     m_recentColorsWidget = new QWidget();
     QGridLayout *recentGrid = new QGridLayout(m_recentColorsWidget);
     recentGrid->setSpacing(4);
     recentGrid->setContentsMargins(0, 0, 0, 0);
-
     mainLayout->addWidget(m_recentColorsWidget);
 
     // Texture selector
-    QLabel *textureLabel = new QLabel("Brush Texture");
-    textureLabel->setStyleSheet("font-size: 10px; color: #aaa; margin-top: 8px;");
-    mainLayout->addWidget(textureLabel);
+    m_textureLabel = new QLabel("Brush Texture");
+    m_textureLabel->setStyleSheet(QString("font-size: 10px; color: %1; margin-top: 8px;").arg(t.accent));
+    mainLayout->addWidget(m_textureLabel);
 
     m_textureCombo = new QComboBox();
-    m_textureCombo->setStyleSheet(
-        "QComboBox {"
-        "   background-color: #2d2d2d;"
-        "   border: 2px solid #3a3a3a;"
-        "   border-radius: 4px;"
-        "   padding: 6px;"
-        "   color: white;"
-        "}"
-        "QComboBox:hover {"
-        "   border-color: #2a82da;"
-        "}"
-        "QComboBox QAbstractItemView {"
-        "   background-color: #2d2d2d;"
-        "   color: white;"
-        "   selection-background-color: #2a82da;"
-        "}"
-        );
+    m_textureCombo->setStyleSheet(comboStyle);
 
     m_textureCombo->addItem("Smooth", 0);
     m_textureCombo->addItem("Grainy", 1);
@@ -516,6 +503,8 @@ QPixmap ColorPicker::generateTextureIcon(int textureType)
 
 void ColorPicker::updateUI()
 {
+    // Only sync the text/slider fields — do NOT rebuild the recent-colors grid here
+    // (that's handled by addToRecentColors to avoid re-entrant signal loops)
     m_hexInput->blockSignals(true);
     m_hexInput->setText(m_currentColor.name());
     m_hexInput->blockSignals(false);
@@ -523,38 +512,6 @@ void ColorPicker::updateUI()
     m_opacitySlider->blockSignals(true);
     m_opacitySlider->setValue(m_currentColor.alpha() * 100 / 255);
     m_opacitySlider->blockSignals(false);
-
-    QGridLayout *grid = qobject_cast<QGridLayout*>(m_recentColorsWidget->layout());
-    if (grid) {
-        while (grid->count() > 0) {
-            QLayoutItem *item = grid->takeAt(0);
-            delete item->widget();
-            delete item;
-        }
-
-        for (int i = 0; i < m_recentColors.size() && i < 16; ++i) {
-            QPushButton *colorBtn = new QPushButton();
-            colorBtn->setFixedSize(28, 28);
-            colorBtn->setCursor(Qt::PointingHandCursor);
-            colorBtn->setStyleSheet(QString(
-                                        "QPushButton {"
-                                        "   background-color: %1;"
-                                        "   border: 2px solid #555;"
-                                        "   border-radius: 4px;"
-                                        "}"
-                                        "QPushButton:hover {"
-                                        "   border-color: #2a82da;"
-                                        "}"
-                                        ).arg(m_recentColors[i].name()));
-
-            connect(colorBtn, &QPushButton::clicked, this, [this, i]() {
-                setColor(m_recentColors[i]);
-                emit colorChanged(m_currentColor);
-            });
-
-            grid->addWidget(colorBtn, i / 8, i % 8);
-        }
-    }
 }
 
 QColor ColorPicker::currentColor() const
@@ -564,16 +521,47 @@ QColor ColorPicker::currentColor() const
 
 void ColorPicker::setColor(const QColor &color)
 {
-    m_currentColor = color;
-    m_colorWheel->setColor(color);
+    if (!color.isValid()) return;
+
+    // Preserve alpha from opacity slider if the incoming color has full opacity
+    // (e.g. when switching tools the stored tool-color has alpha=255)
+    QColor c = color;
+    if (c.alpha() == 255) {
+        c.setAlpha(m_opacitySlider->value() * 255 / 100);
+    }
+
+    m_currentColor = c;
+
+    // Block the wheel's colorChanged signal so setColor here doesn't
+    // re-fire onWheelColorChanged → infinite loop
+    m_colorWheel->blockSignals(true);
+    m_colorWheel->setColor(c);
+    m_colorWheel->blockSignals(false);
+
+    // Update peripheral controls without triggering their own changed signals
+    m_hexInput->blockSignals(true);
+    m_hexInput->setText(c.name());
+    m_hexInput->blockSignals(false);
+
+    m_opacitySlider->blockSignals(true);
+    m_opacitySlider->setValue(c.alpha() * 100 / 255);
+    m_opacitySlider->blockSignals(false);
+
+    // Rebuild recent-colors display (does not emit colorChanged)
     updateUI();
 }
 
 void ColorPicker::onWheelColorChanged(const QColor &color)
 {
+    // Merge new hue/saturation/value with the current alpha
     m_currentColor = color;
     m_currentColor.setAlpha(m_opacitySlider->value() * 255 / 100);
-    updateUI();
+
+    // Sync hex field only (no full updateUI — that would call setColor on the wheel again)
+    m_hexInput->blockSignals(true);
+    m_hexInput->setText(m_currentColor.name());
+    m_hexInput->blockSignals(false);
+
     addToRecentColors(m_currentColor);
     emit colorChanged(m_currentColor);
 }
@@ -581,17 +569,20 @@ void ColorPicker::onWheelColorChanged(const QColor &color)
 void ColorPicker::onOpacityChanged(int value)
 {
     m_currentColor.setAlpha(value * 255 / 100);
+    // Don't re-set the wheel — only the alpha changed, hue/sat/val are untouched
     emit colorChanged(m_currentColor);
 }
 
 void ColorPicker::onHexChanged()
 {
-    QString hex = m_hexInput->text();
+    QString hex = m_hexInput->text().trimmed();
+    if (!hex.startsWith('#')) hex.prepend('#');
     if (QColor::isValidColorName(hex)) {
         QColor color(hex);
-        color.setAlpha(m_currentColor.alpha());
+        color.setAlpha(m_currentColor.alpha()); // preserve current opacity
+        // Use setColor which properly blocks re-entrant signals
         setColor(color);
-        addToRecentColors(color);
+        addToRecentColors(m_currentColor);
         emit colorChanged(m_currentColor);
     }
 }
@@ -599,23 +590,44 @@ void ColorPicker::onHexChanged()
 void ColorPicker::onRecentColorClicked()
 {
     QPushButton *btn = qobject_cast<QPushButton*>(sender());
-    if (btn) {
-        int index = btn->property("colorIndex").toInt();
-        if (index >= 0 && index < m_recentColors.size()) {
-            setColor(m_recentColors[index]);
-            emit colorChanged(m_currentColor);
-        }
+    if (!btn) return;
+    int index = btn->property("colorIndex").toInt();
+    if (index >= 0 && index < m_recentColors.size()) {
+        setColor(m_recentColors[index]);
+        emit colorChanged(m_currentColor);
     }
 }
 
 void ColorPicker::addToRecentColors(const QColor &color)
 {
+    // Deduplicate and prepend
     m_recentColors.removeAll(color);
     m_recentColors.prepend(color);
-    if (m_recentColors.size() > 16) {
+    if (m_recentColors.size() > 16)
         m_recentColors.resize(16);
+
+    // Rebuild only the recent-colors grid, not the full UI
+    // (calling updateUI would also re-set hex/opacity which triggers more signals)
+    QGridLayout *grid = qobject_cast<QGridLayout*>(m_recentColorsWidget->layout());
+    if (!grid) return;
+
+    while (grid->count() > 0) {
+        QLayoutItem *item = grid->takeAt(0);
+        delete item->widget();
+        delete item;
     }
-    updateUI();
+
+    for (int i = 0; i < m_recentColors.size() && i < 16; ++i) {
+        QPushButton *colorBtn = new QPushButton();
+        colorBtn->setFixedSize(28, 28);
+        colorBtn->setCursor(Qt::PointingHandCursor);
+        colorBtn->setProperty("colorIndex", i);
+        colorBtn->setStyleSheet(QString(
+            "QPushButton { background-color:%1; border:2px solid #555; border-radius:4px; }"
+            "QPushButton:hover { border-color:#2a82da; }").arg(m_recentColors[i].name()));
+        connect(colorBtn, &QPushButton::clicked, this, &ColorPicker::onRecentColorClicked);
+        grid->addWidget(colorBtn, i / 8, i % 8);
+    }
 }
 
 void ColorPicker::loadPalettes()
@@ -739,4 +751,61 @@ void ColorPicker::onPaletteColorClicked()
             emit colorChanged(m_currentColor);
         }
     }
+}
+
+void ColorPicker::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    // Update the scroll area background
+    if (QScrollArea *sa = findChild<QScrollArea*>()) {
+        sa->setStyleSheet(QString(
+            "QScrollArea { border: none; background: %1; }"
+            "QScrollBar:vertical { background: %1; width: 8px; }"
+            "QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 20px; }"
+            "QScrollBar::handle:vertical:hover { background: %3; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+        ).arg(t.bg0, t.bg2, t.accent));
+        // Also update the inner widget
+        if (QWidget *inner = sa->widget())
+            inner->setStyleSheet(QString("background-color: %1;").arg(t.bg0));
+    }
+
+    m_titleLabel->setStyleSheet(
+        QString("font-weight: bold; font-size: 10px; color: %1; letter-spacing: 2px;").arg(t.accent));
+    m_opacityLabel->setStyleSheet(
+        QString("font-size: 10px; color: %1;").arg(t.accent));
+    m_hexLabel->setStyleSheet(
+        QString("font-size: 10px; color: %1;").arg(t.accent));
+    m_paletteLabel->setStyleSheet(
+        QString("font-size: 10px; color: %1; margin-top: 4px;").arg(t.accent));
+    m_recentLabel->setStyleSheet(
+        QString("font-size: 10px; color: %1; margin-top: 8px;").arg(t.accent));
+    m_textureLabel->setStyleSheet(
+        QString("font-size: 10px; color: %1; margin-top: 8px;").arg(t.accent));
+
+    m_opacitySlider->setStyleSheet(
+        QString("QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
+                "QSlider::handle:horizontal { background: %2; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }"
+                "QSlider::handle:horizontal:hover { background: %3; }")
+        .arg(t.bg1, t.accent, t.accentHover));
+
+    m_hexInput->setStyleSheet(
+        QString("QLineEdit { background: %1; border: 1px solid %2; border-radius: 4px;"
+                " color: white; padding: 6px; font-family: monospace; }"
+                "QLineEdit:focus { border-color: %3; }")
+        .arg(t.bg4, t.bg1, t.accent));
+
+    auto comboStyle = [&](const QString &accent) {
+        return QString(
+            "QComboBox { background: %1; border: 1px solid %2; border-radius: 4px;"
+            " color: white; padding: 6px; }"
+            "QComboBox:hover { border-color: %3; }"
+            "QComboBox QAbstractItemView { background: %1; color: white;"
+            " selection-background-color: %3; border: 1px solid %2; }")
+            .arg(t.bg4, t.bg1, accent);
+    };
+
+    m_paletteCombo->setStyleSheet(comboStyle(t.accent));
+    m_textureCombo->setStyleSheet(comboStyle(t.accent));
 }

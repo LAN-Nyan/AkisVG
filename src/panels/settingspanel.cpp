@@ -1,5 +1,10 @@
+// FIX APPLIED: Settings panel startup rectangle bug is resolved in mainwindow.cpp.
+// MainWindow now calls m_projectSettings->hide() immediately after construction.
+
 #include "settingspanel.h"
+#include <QWidget>
 #include "core/project.h"
+#include "utils/thememanager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -11,7 +16,11 @@
 #include <QPen>
 #include <QBitmap>
 #include <QScrollArea>
+#include <QLineEdit>
+#include <QFileDialog>
+#include <QSettings>
 #include "settingspanel.h"
+#include <QWidget>
 
 ProjectSettings::ProjectSettings(Project *project, QWidget *parent)
     : QWidget(parent)
@@ -89,7 +98,7 @@ void ProjectSettings::setupUI()
         "   padding: 6px;"
         "}"
         "QComboBox:hover {"
-        "   border-color: #2a82da;"
+        "   border-color: #c0392b;"
         "}"
         "QComboBox::drop-down {"
         "   border: none;"
@@ -171,7 +180,7 @@ void ProjectSettings::setupUI()
             "   font-size: 10px;"
             "}"
             "QPushButton:hover {"
-            "   background-color: #2a82da;"
+            "   background-color: #c0392b;"
             "   color: white;"
             "}"
             );
@@ -213,8 +222,8 @@ void ProjectSettings::setupUI()
         "   background-color: #1e1e1e;"
         "}"
         "QCheckBox::indicator:checked {"
-        "   background-color: #2a82da;"
-        "   border-color: #2a82da;"
+        "   background-color: #c0392b;"
+        "   border-color: #c0392b;"
         "}"
         );
 
@@ -247,7 +256,7 @@ void ProjectSettings::setupUI()
     m_onionBeforeSpin->setStyleSheet(
         "QSpinBox { background-color: #1e1e1e; color: white; border: 1px solid #555; "
         "border-radius: 3px; padding: 4px; min-width: 60px; }"
-        "QSpinBox:hover { border-color: #2a82da; }");
+        "QSpinBox:hover { border-color: #c0392b; }");
     connect(m_onionBeforeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &ProjectSettings::onOnionBeforeChanged);
     beforeLayout->addWidget(beforeLabel);
@@ -279,8 +288,8 @@ void ProjectSettings::setupUI()
     m_onionOpacitySlider->setValue(30);
     m_onionOpacitySlider->setStyleSheet(
         "QSlider::groove:horizontal { background: #1e1e1e; height: 6px; border-radius: 3px; }"
-        "QSlider::handle:horizontal { background: #2a82da; width: 14px; margin: -4px 0; border-radius: 7px; }"
-        "QSlider::handle:horizontal:hover { background: #3a92ea; }");
+        "QSlider::handle:horizontal { background: #c0392b; width: 14px; margin: -4px 0; border-radius: 7px; }"
+        "QSlider::handle:horizontal:hover { background: #e05241; }");
     m_onionOpacityLabel = new QLabel("30%");
     m_onionOpacityLabel->setStyleSheet("color: white; font-size: 11px; min-width: 35px;");
     connect(m_onionOpacitySlider, &QSlider::valueChanged,
@@ -315,8 +324,8 @@ void ProjectSettings::setupUI()
         "   background-color: #1e1e1e;"
         "}"
         "QCheckBox::indicator:checked {"
-        "   background-color: #2a82da;"
-        "   border-color: #2a82da;"
+        "   background-color: #c0392b;"
+        "   border-color: #c0392b;"
         "}"
         );
 
@@ -325,7 +334,137 @@ void ProjectSettings::setupUI()
 
     audioLayout->addWidget(m_audioMuteCheck);
 
+    // ── MIDI Soundfont picker ─────────────────────────────────────────────
+    QLabel *sf2Label = new QLabel("🎹 MIDI Soundfont (.sf2):");
+    sf2Label->setStyleSheet("color: #ccc; font-weight: normal; margin-top: 8px;");
+    audioLayout->addWidget(sf2Label);
+
+    QWidget *sf2Row = new QWidget();
+    QHBoxLayout *sf2Layout = new QHBoxLayout(sf2Row);
+    sf2Layout->setContentsMargins(0, 0, 0, 0);
+    sf2Layout->setSpacing(6);
+
+    m_sf2Edit = new QLineEdit();
+    m_sf2Edit->setPlaceholderText("Auto-detect (system soundfont)");
+    m_sf2Edit->setReadOnly(true);
+    {
+        QSettings s("AkisVG", "AkisVG");
+        m_sf2Edit->setText(s.value("midi/soundfont").toString());
+    }
+    m_sf2Edit->setStyleSheet(
+        "QLineEdit {"
+        "   background-color: #1e1e1e; color: white;"
+        "   border: 1px solid #555; border-radius: 4px; padding: 6px;"
+        "}"
+        "QLineEdit:hover { border-color: #c0392b; }");
+
+    QPushButton *sf2Browse = new QPushButton("Browse…");
+    sf2Browse->setStyleSheet(
+        "QPushButton {"
+        "   background-color: #1e1e1e; color: #aaa;"
+        "   border: 1px solid #555; border-radius: 4px; padding: 6px 10px;"
+        "}"
+        "QPushButton:hover { background-color: #c0392b; color: white; }");
+    connect(sf2Browse, &QPushButton::clicked, this, [this]() {
+        QString path = QFileDialog::getOpenFileName(
+            this, "Select MIDI Soundfont", QString(),
+            "SoundFont Files (*.sf2 *.SF2);;All Files (*)");
+        if (!path.isEmpty()) {
+            m_sf2Edit->setText(path);
+            QSettings s("AkisVG", "AkisVG");
+            s.setValue("midi/soundfont", path);
+            emit settingsChanged();
+        }
+    });
+
+    QPushButton *sf2Clear = new QPushButton("✕");
+    sf2Clear->setToolTip("Reset to auto-detect");
+    sf2Clear->setFixedWidth(28);
+    sf2Clear->setStyleSheet(sf2Browse->styleSheet());
+    connect(sf2Clear, &QPushButton::clicked, this, [this]() {
+        m_sf2Edit->clear();
+        QSettings s("AkisVG", "AkisVG");
+        s.remove("midi/soundfont");
+        emit settingsChanged();
+    });
+
+    sf2Layout->addWidget(m_sf2Edit, 1);
+    sf2Layout->addWidget(sf2Browse);
+    sf2Layout->addWidget(sf2Clear);
+    audioLayout->addWidget(sf2Row);
+
+    QLabel *sf2Hint = new QLabel("Arch: sudo pacman -S soundfont-fluid");
+    sf2Hint->setStyleSheet("color: #555; font-size: 10px;");
+    audioLayout->addWidget(sf2Hint);
+
     contentLayout->addWidget(audioGroup);
+
+
+    // === APPEARANCE GROUP ===
+    QGroupBox *appearanceGroup = new QGroupBox("Appearance");
+    appearanceGroup->setStyleSheet(
+        "QGroupBox {"
+        "   color: white;"
+        "   font-weight: bold;"
+        "   border: 1px solid #444;"
+        "   border-radius: 4px;"
+        "   margin-top: 8px;"
+        "   padding-top: 8px;"
+        "}"
+        "QGroupBox::title {"
+        "   subcontrol-origin: margin;"
+        "   subcontrol-position: top left;"
+        "   padding: 0 8px;"
+        "}"
+    );
+
+    QFormLayout *appearanceLayout = new QFormLayout(appearanceGroup);
+    appearanceLayout->setSpacing(8);
+
+    QLabel *themeLabel = new QLabel("Theme:");
+    themeLabel->setStyleSheet("color: #ccc; font-weight: normal;");
+
+    m_themeCombo = new QComboBox();
+    m_themeCombo->addItem("🎬  Studio Grey (default)", 0);
+    m_themeCombo->addItem("🔴  Red & Black",           1);
+    m_themeCombo->addItem("🔵  Blue & Black",          2);
+    m_themeCombo->addItem("🩶  Grey & Blue",           3);
+    m_themeCombo->addItem("🩷  Grey & Red",            4);
+    m_themeCombo->setCurrentIndex(0);
+    m_themeCombo->setStyleSheet(
+        "QComboBox {"
+        "   background-color: #1e1e1e;"
+        "   color: white;"
+        "   border: 1px solid #555;"
+        "   border-radius: 4px;"
+        "   padding: 6px;"
+        "}"
+        "QComboBox:hover {"
+        "   border-color: #c0392b;"
+        "}"
+        "QComboBox::drop-down {"
+        "   border: none;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "   background-color: #1e1e1e;"
+        "   color: white;"
+        "   selection-background-color: #c0392b;"
+        "}"
+    );
+
+    QLabel *themeHint = new QLabel("Choose the accent + background colour scheme.");
+    themeHint->setStyleSheet("color: #666; font-size: 10px; font-weight: normal;");
+
+    appearanceLayout->addRow(themeLabel, m_themeCombo);
+    appearanceLayout->addRow(QString(), themeHint);
+
+    // Keep unused member initialised to avoid warnings
+    m_blueThemeCheck = nullptr;
+
+    connect(m_themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ProjectSettings::onThemeChanged);
+
+    contentLayout->addWidget(appearanceGroup);
 
     contentLayout->addStretch();
 
@@ -337,7 +476,7 @@ void ProjectSettings::setupUI()
         "QScrollArea { border: none; background: transparent; }"
         "QScrollBar:vertical { background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0; }"
         "QScrollBar::handle:vertical { background: #444; border-radius: 4px; min-height: 20px; }"
-        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
+        "QScrollBar::handle:vertical:hover { background: #c0392b; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
     );
     scrollArea->setWidget(contentWidget);
@@ -398,4 +537,131 @@ void ProjectSettings::onOnionOpacityChanged(int value)
     m_project->setOnionSkinOpacity(value / 100.0);
     m_onionOpacityLabel->setText(QString("%1%").arg(value));
     emit settingsChanged();
+}
+
+void ProjectSettings::onThemeChanged(int index)
+{
+    // Update the global ThemeManager so all widgets read the new colors when
+    // they next call theme(). The mainwindow's themeChanged slot will rebuild
+    // the global stylesheet and call applyTheme() on each panel.
+    ThemeManager::instance().setTheme(index);
+
+    // Update the theme combo's own hover/selection highlight immediately
+    if (m_themeCombo) {
+        const ThemeColors &t = theme();
+        m_themeCombo->setStyleSheet(
+            QString("QComboBox { background-color: %1; color: white; border: 1px solid %2;"
+                    " border-radius: 4px; padding: 6px; }"
+                    "QComboBox:hover { border-color: %3; }"
+                    "QComboBox::drop-down { border: none; }"
+                    "QComboBox QAbstractItemView { background-color: %1; color: white;"
+                    " selection-background-color: %3; }")
+            .arg(t.bg4, t.bg3, t.accent));
+    }
+
+    emit themeChanged(index);
+}
+
+void ProjectSettings::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    // Common group box style
+    QString groupStyle = QString(
+        "QGroupBox {"
+        "   color: white;"
+        "   font-weight: bold;"
+        "   border: 1px solid %1;"
+        "   border-radius: 4px;"
+        "   margin-top: 8px;"
+        "   padding-top: 8px;"
+        "}"
+        "QGroupBox::title {"
+        "   subcontrol-origin: margin;"
+        "   subcontrol-position: top left;"
+        "   padding: 0 8px;"
+        "}").arg(t.bg3);
+
+    // Common input style
+    QString inputStyle = QString(
+        "QComboBox, QSpinBox {"
+        "   background-color: %1;"
+        "   color: white;"
+        "   border: 1px solid %2;"
+        "   border-radius: 4px;"
+        "   padding: 6px;"
+        "}"
+        "QComboBox:hover, QSpinBox:hover {"
+        "   border-color: %3;"
+        "}"
+        "QComboBox::drop-down { border: none; }").arg(t.bg4, t.bg3, t.accent);
+
+    QString checkStyle = QString(
+        "QCheckBox {"
+        "   color: white;"
+        "   font-weight: normal;"
+        "   spacing: 8px;"
+        "}"
+        "QCheckBox::indicator {"
+        "   width: 18px; height: 18px;"
+        "   border: 2px solid %1;"
+        "   border-radius: 3px;"
+        "   background-color: %2;"
+        "}"
+        "QCheckBox::indicator:checked {"
+        "   background-color: %3;"
+        "   border-color: %3;"
+        "}").arg(t.bg3, t.bg4, t.accent);
+
+    // Apply to all group boxes
+    for (QGroupBox *gb : findChildren<QGroupBox*>())
+        gb->setStyleSheet(groupStyle);
+
+    // Apply to all combos and spinboxes
+    for (QComboBox *cb : findChildren<QComboBox*>())
+        cb->setStyleSheet(inputStyle);
+    for (QSpinBox *sb : findChildren<QSpinBox*>())
+        sb->setStyleSheet(inputStyle);
+
+    // Apply to all checkboxes
+    for (QCheckBox *chk : findChildren<QCheckBox*>())
+        chk->setStyleSheet(checkStyle);
+
+    // Scroll bars and background
+    for (QScrollArea *sa : findChildren<QScrollArea*>())
+        sa->setStyleSheet(
+            QString("QScrollArea { border: none; background: transparent; }"
+                    "QScrollBar:vertical { background: %1; width: 8px; border-radius: 4px; }"
+                    "QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 20px; }"
+                    "QScrollBar::handle:vertical:hover { background: %3; }"
+                    "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+            .arg(t.bg0, t.bg3, t.accent));
+
+    // Update onion opacity slider
+    if (m_onionOpacitySlider)
+        m_onionOpacitySlider->setStyleSheet(
+            QString("QSlider::groove:horizontal { background: %1; height: 6px; border-radius: 3px; }"
+                    "QSlider::handle:horizontal { background: %2; width: 14px; margin: -4px 0; border-radius: 7px; }"
+                    "QSlider::handle:horizontal:hover { background: %3; }")
+            .arg(t.bg4, t.accent, t.accentHover));
+
+    // Update theme combo specifically
+    if (m_themeCombo)
+        m_themeCombo->setStyleSheet(
+            QString("QComboBox { background-color: %1; color: white; border: 1px solid %2;"
+                    " border-radius: 4px; padding: 6px; }"
+                    "QComboBox:hover { border-color: %3; }"
+                    "QComboBox::drop-down { border: none; }"
+                    "QComboBox QAbstractItemView { background-color: %1; color: white;"
+                    " selection-background-color: %3; }")
+            .arg(t.bg4, t.bg3, t.accent));
+
+    // Update header widget if we can find it
+    QList<QWidget*> headers = findChildren<QWidget*>();
+    for (QWidget *w : headers) {
+        if (w->height() == 40 && w->layout()) {
+            w->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2;")
+                .arg(t.bg2, t.bg0));
+        }
+    }
 }

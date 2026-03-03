@@ -1,4 +1,6 @@
 #include "assetlibrary.h"
+#include "canvas/objects/objectgroup.h"
+#include "utils/thememanager.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -14,12 +16,9 @@
 #include <QPainter>
 #include <QDateTime>
 #include <QApplication>
+#include <QStackedLayout>
 
-AssetLibrary::AssetLibrary(QWidget *parent)
-    : QWidget(parent)
-{
-    setupUI();
-}
+AssetLibrary::AssetLibrary(QWidget *parent) : QWidget(parent) { setupUI(); }
 
 void AssetLibrary::setupUI()
 {
@@ -27,69 +26,73 @@ void AssetLibrary::setupUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // Header
-    QWidget *header = new QWidget();
-    header->setStyleSheet("background-color: #3a3a3a; border-bottom: 1px solid #000;");
-    header->setFixedHeight(40);
+    // Set the base widget background to match "Panel background"
+    this->setStyleSheet("background-color: #1e1e1e;");
 
-    QHBoxLayout *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(12, 0, 12, 0);
+    // --- HEADER ---
+    // Updated from #3a3a3a to #1e1e1e with a #1a1a1a border
+    m_header = new QWidget();
+    m_header->setStyleSheet("background-color: #1e1e1e; border-bottom: 1px solid #1a1a1a;");
+    m_header->setFixedHeight(40);
 
-    QLabel *title = new QLabel("ASSETS");
-    title->setStyleSheet("color: white; font-weight: bold; font-size: 11px; letter-spacing: 1px;");
-    headerLayout->addWidget(title);
-    headerLayout->addStretch();
+    QHBoxLayout *hl = new QHBoxLayout(m_header);
+    hl->setContentsMargins(12, 0, 12, 0);
 
-    // Import button
+    m_titleLabel = new QLabel("ASSETS");
+    // Matching the ToolBox title style: #c0392b (Active/accent)
+    m_titleLabel->setStyleSheet("color: #c0392b; font-weight: bold; font-size: 10px; letter-spacing: 2px;");
+    hl->addWidget(m_titleLabel);
+    hl->addStretch();
+
     m_importButton = new QPushButton("+");
-    m_importButton->setFixedSize(28, 28);
+    m_importButton->setFixedSize(24, 24); // Slightly smaller for a tighter look
     m_importButton->setToolTip("Import Asset");
     m_importButton->setCursor(Qt::PointingHandCursor);
     m_importButton->setStyleSheet(
         "QPushButton {"
-        "   background-color: #2a82da;"
+        "   background-color: #c0392b;" // Active/accent
         "   border: none;"
         "   border-radius: 4px;"
         "   color: white;"
-        "   font-size: 18px;"
+        "   font-size: 16px;"
         "   font-weight: bold;"
         "}"
         "QPushButton:hover {"
-        "   background-color: #3a92ea;"
+        "   background-color: #e74c3c;" // Accent bright
         "}"
-        );
+    );
     connect(m_importButton, &QPushButton::clicked, this, &AssetLibrary::onImportClicked);
-    headerLayout->addWidget(m_importButton);
+    hl->addWidget(m_importButton);
 
-    mainLayout->addWidget(header);
+    mainLayout->addWidget(m_header);
 
-    // Asset list
+    // --- ASSET LIST ---
     m_assetList = new QListWidget();
     m_assetList->setStyleSheet(
         "QListWidget {"
-        "   background-color: #2d2d2d;"
+        "   background-color: #1e1e1e;"  /* Panel background */
         "   border: none;"
         "   outline: none;"
+        "   padding: 0px;"             /* No padding for the container */
+        "   margin: 0px;"              /* No margin for the container */
         "}"
         "QListWidget::item {"
-        "   border-bottom: 1px solid #1a1a1a;"
-        "   padding: 0;"
+        "   background-color: #242424;"  /* Secondary bg */
+        "   border-bottom: 1px solid #1a1a1a;" /* Separator line */
+        "   margin: 0px;"               /* CRITICAL: Kills the 'sagging' offset */
+        "   padding: 0px;"              /* Handle internal spacing via a layout, not CSS */
+        "   color: #999;"
         "}"
         "QListWidget::item:selected {"
-        "   background-color: rgba(42, 130, 218, 0.3);"
+        "   background-color: #c0392b;"  /* Startup Active Red */
+        "   color: white;"
+        "   border-bottom: 1px solid #e74c3c;" /* Bright accent edge */
         "}"
-        "QListWidget::item:hover {"
-        "   background-color: #3a3a3a;"
+        "QListWidget::item:selected:active {"
+        "   background-color: #c0392b;"  /* Ensure it stays red when focused */
         "}"
-        "QScrollBar:vertical {"
-        "   background: #1a1a1a; width: 8px; border-radius: 4px; margin: 0;"
-        "}"
-        "QScrollBar::handle:vertical {"
-        "   background: #444; border-radius: 4px; min-height: 20px;"
-        "}"
-        "QScrollBar::handle:vertical:hover { background: #2a82da; }"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
-        );
+    );
+
     m_assetList->setSelectionMode(QAbstractItemView::SingleSelection);
     m_assetList->setContextMenuPolicy(Qt::CustomContextMenu);
     m_assetList->setDragEnabled(true);
@@ -100,71 +103,69 @@ void AssetLibrary::setupUI()
 
     mainLayout->addWidget(m_assetList);
 
-    // Drop zone hint
-    QLabel *dropHint = new QLabel(
-        "<div style='text-align: center; padding: 20px;'>"
-        "<div style='font-size: 32px; margin-bottom: 8px;'>📁</div>"
-        "<div style='color: #888; font-size: 11px;'>Drop files here or click + to import</div>"
-        "<div style='color: #666; font-size: 10px; margin-top: 4px;'>Supported: PNG, JPG, SVG, MP3, WAV</div>"
-        "</div>"
-        );
-    dropHint->setAlignment(Qt::AlignCenter);
-    mainLayout->addWidget(dropHint);
+    // --- HINT LABEL ---
+    // Cleaned up the colors to avoid the "grey block" look
+    QLabel *hint = new QLabel(
+        "<div style='text-align:center; padding:20px;'>"
+        "<div style='font-size:24px; margin-bottom:8px; color:#444;'>📁</div>"
+        "<div style='color:#666; font-size:10px; font-weight: bold; letter-spacing: 1px;'>EMPTY LIBRARY</div>"
+        "<div style='color:#444; font-size:9px; margin-top:4px;'>Drop files or click + to import</div>"
+        "</div>");
+    hint->setAlignment(Qt::AlignCenter);
+    mainLayout->addWidget(hint);
 
-    // Enable drag and drop
     setAcceptDrops(true);
+}
+
+// ─── Group auto-registration ──────────────────────────────────────────────────
+void AssetLibrary::addObjectGroup(ObjectGroup *group)
+{
+    if (!group) return;
+    Asset asset;
+    asset.id        = QString("group_%1").arg(QDateTime::currentMSecsSinceEpoch());
+    asset.name      = group->groupName().isEmpty() ? "Unnamed Group" : group->groupName();
+    asset.path      = QString();
+    asset.type      = Asset::Group;
+    asset.group     = group;
+    asset.thumbnail = group->thumbnail(64);
+    m_assets.append(asset);
+    updateAssetList();
+    emit assetAdded(asset);
 }
 
 void AssetLibrary::onImportClicked()
 {
     QStringList files = QFileDialog::getOpenFileNames(this, "Import Assets", "",
-                                                      "All Supported (*.png *.jpg *.jpeg *.svg *.mp3 *.wav *.ogg);;"
-                                                      "Images (*.png *.jpg *.jpeg *.svg);;"
-                                                      "Audio (*.mp3 *.wav *.ogg)");
-
-    for (const QString &file : files) {
-        addAsset(file);
-    }
+        "All Supported (*.png *.jpg *.jpeg *.svg *.mp3 *.wav *.ogg);;"
+        "Images (*.png *.jpg *.jpeg *.svg);;Audio (*.mp3 *.wav *.ogg)");
+    for (const QString &f : files) addAsset(f);
 }
 
 void AssetLibrary::onDeleteClicked()
 {
-    QListWidgetItem *current = m_assetList->currentItem();
-    if (!current) return;
-
-    QString assetId = current->data(Qt::UserRole).toString();
-
-    QMessageBox::StandardButton reply = QMessageBox::question(this, "Delete Asset",
-                                                              "Remove this asset from the library?",
-                                                              QMessageBox::Yes | QMessageBox::No);
-
-    if (reply == QMessageBox::Yes) {
-        m_assets.removeIf([assetId](const Asset &a) { return a.id == assetId; });
+    QListWidgetItem *cur = m_assetList->currentItem();
+    if (!cur) return;
+    QString id = cur->data(Qt::UserRole).toString();
+    if (QMessageBox::question(this, "Delete Asset", "Remove from library?",
+                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes) {
+        m_assets.removeIf([id](const Asset &a){ return a.id == id; });
         updateAssetList();
-        emit assetRemoved(assetId);
+        emit assetRemoved(id);
     }
 }
 
 void AssetLibrary::addAsset(const QString &path)
 {
-    QFileInfo fileInfo(path);
-
+    QFileInfo fi(path);
     Asset asset;
-    asset.id = QString::number(QDateTime::currentMSecsSinceEpoch());
-    asset.name = fileInfo.fileName();
+    asset.id   = QString::number(QDateTime::currentMSecsSinceEpoch());
+    asset.name = fi.fileName();
     asset.path = path;
-
-    QString suffix = fileInfo.suffix().toLower();
-    if (suffix == "png" || suffix == "jpg" || suffix == "jpeg" || suffix == "svg") {
-        asset.type = Asset::Image;
-    } else if (suffix == "mp3" || suffix == "wav" || suffix == "ogg") {
-        asset.type = Asset::Audio;
-    } else {
-        return; // Unsupported type
-    }
-
+    QString sfx = fi.suffix().toLower();
+    if (sfx=="png"||sfx=="jpg"||sfx=="jpeg"||sfx=="svg")      asset.type = Asset::Image;
+    else if (sfx=="mp3"||sfx=="wav"||sfx=="ogg")               asset.type = Asset::Audio;
+    else return;
     asset.thumbnail = generateThumbnail(path, asset.type);
-
     m_assets.append(asset);
     updateAssetList();
     emit assetAdded(asset);
@@ -172,94 +173,95 @@ void AssetLibrary::addAsset(const QString &path)
 
 QPixmap AssetLibrary::generateThumbnail(const QString &path, Asset::Type type)
 {
-    QPixmap thumbnail(64, 64);
-    thumbnail.fill(Qt::transparent);
-
+    QPixmap thumb(64, 64);
+    thumb.fill(Qt::transparent);
     if (type == Asset::Image) {
-        QPixmap original(path);
-        if (!original.isNull()) {
-            thumbnail = original.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        } else {
-            QPainter painter(&thumbnail);
-            painter.fillRect(thumbnail.rect(), QColor(100, 100, 100));
-            painter.setPen(Qt::white);
-            painter.drawText(thumbnail.rect(), Qt::AlignCenter, "?");
+        QPixmap orig(path);
+        if (!orig.isNull())
+            thumb = orig.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        else {
+            QPainter p(&thumb); p.fillRect(thumb.rect(), QColor(100,100,100));
+            p.setPen(Qt::white); p.drawText(thumb.rect(), Qt::AlignCenter, "?");
         }
-    } else if (type == Asset::Audio) {
-        QPainter painter(&thumbnail);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.fillRect(thumbnail.rect(), QColor(80, 60, 120));
-        painter.setPen(Qt::white);
-        QFont font = painter.font();
-        font.setPixelSize(32);
-        painter.setFont(font);
-        painter.drawText(thumbnail.rect(), Qt::AlignCenter, "♪");
+    } else {
+        QPainter p(&thumb); p.setRenderHint(QPainter::Antialiasing);
+        p.fillRect(thumb.rect(), QColor(80,60,120));
+        p.setPen(Qt::white);
+        QFont f = p.font(); f.setPixelSize(32); p.setFont(f);
+        p.drawText(thumb.rect(), Qt::AlignCenter, "♪");
     }
-
-    return thumbnail;
+    return thumb;
 }
 
 void AssetLibrary::updateAssetList()
 {
     m_assetList->clear();
-
     for (const Asset &asset : m_assets) {
         QListWidgetItem *item = new QListWidgetItem(m_assetList);
-        item->setSizeHint(QSize(0, 80));
+        item->setSizeHint(QSize(0, asset.type == Asset::Group ? 88 : 80));
         item->setData(Qt::UserRole, asset.id);
-
-        QWidget *itemWidget = createAssetItem(asset);
-        m_assetList->setItemWidget(item, itemWidget);
+        m_assetList->setItemWidget(item, createAssetItem(asset));
     }
 }
 
 QWidget* AssetLibrary::createAssetItem(const Asset &asset)
 {
-    QWidget *itemWidget = new QWidget();
-    itemWidget->setFixedHeight(80);
-    itemWidget->setProperty("assetId", asset.id);  // Store ID for drag
+    QWidget *w = new QWidget();
+    w->setFixedHeight(asset.type == Asset::Group ? 88 : 80);
+    w->setProperty("assetId", asset.id);
 
-    QHBoxLayout *layout = new QHBoxLayout(itemWidget);
+    QHBoxLayout *layout = new QHBoxLayout(w);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(12);
 
-    // Thumbnail (make it draggable)
-    QLabel *thumbLabel = new QLabel();
-    thumbLabel->setPixmap(asset.thumbnail);
-    thumbLabel->setFixedSize(64, 64);
-    thumbLabel->setScaledContents(false);
-    thumbLabel->setStyleSheet("border: 1px solid #555; border-radius: 4px; background-color: #1a1a1a;");
-    thumbLabel->setProperty("assetId", asset.id);
-    thumbLabel->setProperty("assetType", static_cast<int>(asset.type));
-    thumbLabel->setProperty("assetPath", asset.path);
-    layout->addWidget(thumbLabel);
+    QLabel *thumb = new QLabel();
+    thumb->setPixmap(asset.thumbnail);
+    thumb->setFixedSize(64, 64);
+    thumb->setStyleSheet("border:1px solid #555; border-radius:4px; background-color:#1a1a1a;");
+    thumb->setProperty("assetId", asset.id);
+    thumb->setProperty("assetType", static_cast<int>(asset.type));
+    thumb->setProperty("assetPath", asset.path);
+    layout->addWidget(thumb);
 
-    // Info
-    QVBoxLayout *infoLayout = new QVBoxLayout();
+    QVBoxLayout *info = new QVBoxLayout();
+    QLabel *name = new QLabel(asset.name);
+    name->setStyleSheet("color:white; font-size:12px; font-weight:500;");
+    name->setWordWrap(true);
+    info->addWidget(name);
 
-    QLabel *nameLabel = new QLabel(asset.name);
-    nameLabel->setStyleSheet("color: white; font-size: 12px; font-weight: 500;");
-    nameLabel->setWordWrap(true);
-    infoLayout->addWidget(nameLabel);
+    QString detail;
+    if (asset.type == Asset::Image)      detail = QString("Image • %1 KB").arg(QFileInfo(asset.path).size()/1024);
+    else if (asset.type == Asset::Audio) detail = QString("Audio • %1 KB").arg(QFileInfo(asset.path).size()/1024);
+    else {
+        int cnt = asset.group ? asset.group->childCount() : 0;
+        detail  = QString("Group • %1 object%2").arg(cnt).arg(cnt==1?"":"s");
+    }
+    QLabel *det = new QLabel(detail);
+    det->setStyleSheet("color:#888; font-size:10px;");
+    info->addWidget(det);
 
-    QString typeStr = (asset.type == Asset::Image) ? "Image" : "Audio";
-    QFileInfo fileInfo(asset.path);
-    QString sizeStr = QString::number(fileInfo.size() / 1024) + " KB";
+    // Instance button for groups
+    if (asset.type == Asset::Group && asset.group) {
+        QPushButton *btn = new QPushButton("▶  Instance onto Canvas");
+        btn->setFixedHeight(22);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(
+            "QPushButton { background:#2a82da; color:white; border:none; border-radius:3px; font-size:10px; padding:2px 8px; }"
+            "QPushButton:hover { background:#3a92ea; }");
+        ObjectGroup *grp = asset.group;
+        connect(btn, &QPushButton::clicked, this, [this, grp](){ emit groupInstanceRequested(grp); });
+        info->addWidget(btn);
+    }
 
-    QLabel *detailLabel = new QLabel(QString("%1 • %2").arg(typeStr, sizeStr));
-    detailLabel->setStyleSheet("color: #888; font-size: 10px;");
-    infoLayout->addWidget(detailLabel);
+    info->addStretch();
+    layout->addLayout(info, 1);
 
-    infoLayout->addStretch();
-    layout->addLayout(infoLayout, 1);
+    QString icon = (asset.type==Asset::Image) ? "🖼️" : (asset.type==Asset::Audio) ? "🎵" : "📦";
+    QLabel *icn = new QLabel(icon);
+    icn->setStyleSheet("font-size:24px;");
+    layout->addWidget(icn);
 
-    // Type icon
-    QString icon = (asset.type == Asset::Image) ? "🖼️" : "🎵";
-    QLabel *iconLabel = new QLabel(icon);
-    iconLabel->setStyleSheet("font-size: 24px;");
-    layout->addWidget(iconLabel);
-
-    return itemWidget;
+    return w;
 }
 
 void AssetLibrary::showContextMenu(const QPoint &pos)
@@ -268,58 +270,77 @@ void AssetLibrary::showContextMenu(const QPoint &pos)
     if (!item) return;
 
     QMenu menu(this);
-    menu.setStyleSheet(
-        "QMenu {"
-        "   background-color: #2d2d2d;"
-        "   color: white;"
-        "   border: 1px solid #000;"
-        "}"
-        "QMenu::item:selected {"
-        "   background-color: #2a82da;"
-        "}"
-        );
+    menu.setStyleSheet("QMenu { background:#2d2d2d; color:white; border:1px solid #000; }"
+                       "QMenu::item:selected { background:#2a82da; }");
 
+    QString id = item->data(Qt::UserRole).toString();
+    Asset *asset = assetById(id);
+
+    QAction *instanceAct = nullptr;
+    if (asset && asset->type == Asset::Group) {
+        instanceAct = menu.addAction("Instance onto Canvas");
+        menu.addSeparator();
+    }
     QAction *deleteAct = menu.addAction("Delete Asset");
+    QAction *sel = menu.exec(m_assetList->mapToGlobal(pos));
 
-    QAction *selected = menu.exec(m_assetList->mapToGlobal(pos));
-
-    if (selected == deleteAct) {
+    if (sel == deleteAct) {
         m_assetList->setCurrentItem(item);
         onDeleteClicked();
+    } else if (instanceAct && sel == instanceAct && asset && asset->group) {
+        emit groupInstanceRequested(asset->group);
     }
 }
 
 Asset* AssetLibrary::assetById(const QString &id)
 {
-    for (Asset &asset : m_assets) {
-        if (asset.id == id) {
-            return &asset;
-        }
-    }
+    for (Asset &a : m_assets)
+        if (a.id == id) return &a;
     return nullptr;
 }
 
 void AssetLibrary::startDrag(QListWidgetItem *item)
 {
     if (!item || !(QApplication::mouseButtons() & Qt::LeftButton)) return;
-
-    QString assetId = item->data(Qt::UserRole).toString();
-    Asset *asset = assetById(assetId);
+    Asset *asset = assetById(item->data(Qt::UserRole).toString());
     if (!asset) return;
 
-    // Create MIME data
-    QMimeData *mimeData = new QMimeData();
-    mimeData->setText(asset->id);
-    mimeData->setData("application/x-lumina-asset", asset->id.toUtf8());
-    mimeData->setData("application/x-lumina-asset-type",
-                      QByteArray::number(static_cast<int>(asset->type)));
-    mimeData->setData("application/x-lumina-asset-path", asset->path.toUtf8());
+    QMimeData *mime = new QMimeData();
+    mime->setText(asset->id);
+    mime->setData("application/x-lumina-asset", asset->id.toUtf8());
+    mime->setData("application/x-lumina-asset-type", QByteArray::number(static_cast<int>(asset->type)));
+    mime->setData("application/x-lumina-asset-path", asset->path.toUtf8());
 
-    // Create drag with thumbnail
     QDrag *drag = new QDrag(this);
-    drag->setMimeData(mimeData);
+    drag->setMimeData(mime);
     drag->setPixmap(asset->thumbnail.scaled(48, 48, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     drag->setHotSpot(QPoint(24, 24));
-
     drag->exec(Qt::CopyAction);
+}
+
+void AssetLibrary::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    this->setStyleSheet(QString("background-color: %1;").arg(t.bg0));
+    m_header->setStyleSheet(
+        QString("background-color: %1; border-bottom: 1px solid %2;").arg(t.bg0, t.bg1));
+    m_titleLabel->setStyleSheet(
+        QString("color: %1; font-weight: bold; font-size: 10px; letter-spacing: 2px;").arg(t.accent));
+
+    m_importButton->setStyleSheet(
+        QString("QPushButton { background-color: %1; border: none; border-radius: 4px;"
+                " color: white; font-size: 18px; font-weight: bold; }"
+                "QPushButton:hover { background-color: %2; }").arg(t.accent, t.accentHover));
+
+    m_assetList->setStyleSheet(
+        QString("QListWidget { background-color: %1; border: none; }"
+                "QListWidget::item { border-bottom: 1px solid %2; }"
+                "QListWidget::item:selected { background-color: %3; }"
+                "QListWidget::item:selected:focus { background-color: %3; }"
+                "QScrollBar:vertical { background: %1; width: 8px; border-radius: 4px; }"
+                "QScrollBar::handle:vertical { background: %2; border-radius: 4px; }"
+                "QScrollBar::handle:vertical:hover { background: %3; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+        .arg(t.bg0, t.bg1, t.accent));
 }

@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QFile>
+#include "utils/thememanager.h"
 
 ToolButton::ToolButton(const QString &iconPath, const QString &toolName, const QString &shortcut, QWidget *parent)
     : QPushButton(parent)
@@ -11,36 +12,17 @@ ToolButton::ToolButton(const QString &iconPath, const QString &toolName, const Q
     , m_hovered(false)
 {
     setCheckable(true);
-    setMinimumHeight(48);
-    setMaximumHeight(48);
-    setMinimumWidth(48);
+    setFixedHeight(36);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setCursor(Qt::PointingHandCursor);
     setToolTip(QString("%1 (%2)").arg(toolName, shortcut));
 
-    // Load SVG icon
     if (QFile::exists(iconPath)) {
         m_svgRenderer = new QSvgRenderer(iconPath, this);
-    } else {
-        qWarning() << "SVG icon not found:" << iconPath;
     }
 
-    // Base stylesheet
-    setStyleSheet(
-        "ToolButton { "
-        "  border: 2px solid #3a3a3a; "
-        "  border-radius: 6px; "
-        "  background-color: #2d2d2d; "
-        "  padding: 8px; "
-        "} "
-        "ToolButton:hover { "
-        "  background-color: #3a3a3a; "
-        "  border-color: #4a4a4a; "
-        "} "
-        "ToolButton:checked { "
-        "  background-color: #2a82da; "
-        "  border-color: #2a82da; "
-        "}"
-        );
+    // Apply theme-aware stylesheet from the start
+    applyTheme();
 }
 
 void ToolButton::paintEvent(QPaintEvent *event)
@@ -120,4 +102,25 @@ void ToolButton::leaveEvent(QEvent *event)
     setMinimumWidth(48);   // Collapse to icon only
     update();
     QPushButton::leaveEvent(event);
+}
+
+void ToolButton::applyTheme()
+{
+    const ThemeColors &t = theme();
+    setStyleSheet(QString(
+        "ToolButton { "
+        "  border: 1px solid %1; "
+        "  border-radius: 4px; "
+        "  background-color: %2; "
+        "  margin: 0px 2px; "
+        "} "
+        "ToolButton:hover { "
+        "  background-color: %3; "
+        "  border-color: %4; "
+        "} "
+        "ToolButton:checked { "
+        "  background-color: %5; "
+        "  border: 1px solid %6; "
+        "}"
+    ).arg(t.bg2, t.bg1, t.bg2, t.bg3, t.accent, t.accentHover));
 }

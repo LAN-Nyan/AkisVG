@@ -3,14 +3,19 @@
 #include "tools/selecttool.h"
 #include "tools/penciltool.h"
 #include "tools/brushtool.h"
+#include "utils/thememanager.h"
+#include "toolbutton.h"
 #include "tools/erasertool.h"
 #include "tools/shapetool.h"
 #include "tools/texttool.h"
 #include "tools/filltool.h"
+#include "tools/gradienttool.h"
 #include "tools/blendtool.h"
 #include "tools/linetool.h"
 #include "tools/liquifytool.h"
 #include "tools/eyedroppertool.h"
+#include "tools/lassotool.h"       // ← NEW
+#include "tools/magicwandtool.h"   // ← NEW
 #include "toolsettingspanel.h"
 #include "toolbutton.h"
 #include "config.h"
@@ -42,140 +47,116 @@ ToolBox::~ToolBox()
 {
     qDeleteAll(m_tools);
 }
-// Create objects
+
 void ToolBox::createTools()
 {
-    m_tools[ToolType::Select] = new SelectTool(this);
-    m_tools[ToolType::eyedropper] = new EyedropperTool(this);
-    m_tools[ToolType::Pencil] = new PencilTool(this);
-    m_tools[ToolType::Brush] = new BrushTool(this);
-    m_tools[ToolType::Eraser] = new EraserTool(this);
-    m_tools[ToolType::Rectangle] = new ShapeTool(ShapeType::Rectangle, this);
-    m_tools[ToolType::Ellipse] = new ShapeTool(ShapeType::Ellipse, this);
-    m_tools[ToolType::Line] = new LineTool(this);
-    m_tools[ToolType::Text] = new TextTool(this);
-    m_tools[ToolType::Fill] = new FillTool(this);
-    m_tools[ToolType::Blend] = new BlendTool(this);
-    m_tools[ToolType::Liquify] = new LiquifyTool(this);
+    m_tools[ToolType::Select]      = new SelectTool(this);
+    m_tools[ToolType::eyedropper]  = new EyedropperTool(this);
+    m_tools[ToolType::Pencil]      = new PencilTool(this);
+    m_tools[ToolType::Brush]       = new BrushTool(this);
+    m_tools[ToolType::Eraser]      = new EraserTool(this);
+    m_tools[ToolType::Rectangle]   = new ShapeTool(ShapeType::Rectangle, this);
+    m_tools[ToolType::Ellipse]     = new ShapeTool(ShapeType::Ellipse, this);
+    m_tools[ToolType::Line]        = new LineTool(this);
+    m_tools[ToolType::Text]        = new TextTool(this);
+    m_tools[ToolType::Fill]        = new FillTool(this);
+    m_tools[ToolType::Gradient]    = new GradientTool(this);
+    m_tools[ToolType::Blend]       = new BlendTool(this);
+    m_tools[ToolType::Liquify]     = new LiquifyTool(this);
+    m_tools[ToolType::Lasso]       = new LassoTool(this);      // ← NEW
+    m_tools[ToolType::MagicWand]   = new MagicWandTool(this);  // ← NEW
 }
 
 void ToolBox::setupUI()
 {
+    const auto &t = theme();
+
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(0);
     mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-    // Scrollable content wrapper
-    QScrollArea *scrollArea = new QScrollArea();
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setStyleSheet(
-        "QScrollArea { background-color: #2d2d2d; border: none; }"
-        "QScrollBar:vertical {"
-        "   background: #2d2d2d;"
-        "   width: 12px;"
-        "   border-radius: 6px;"
-        "}"
-        "QScrollBar::handle:vertical {"
-        "   background: #555;"
-        "   border-radius: 6px;"
-        "   min-height: 20px;"
-        "}"
-        "QScrollBar::handle:vertical:hover {"
-        "   background: #666;"
-        "}"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
-        "   height: 0px;"
-        "}"
-    );
+    m_scrollArea = new QScrollArea();
+    m_scrollArea->setWidgetResizable(true);
+    m_scrollArea->setFrameShape(QFrame::NoFrame);
+    m_scrollArea->setStyleSheet(
+        QString("QScrollArea { background-color: %1; border: none; }"
+                "QScrollBar:vertical { background: %1; width: 8px; }"
+                "QScrollBar::handle:vertical { background: %2; border-radius: 4px; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+        .arg(t.bg0, t.bg1));
 
-    QWidget *contentWidget = new QWidget();
-    QVBoxLayout *layout = new QVBoxLayout(contentWidget);
-    layout->setSpacing(8);
-    layout->setContentsMargins(12, 12, 12, 12);
+    m_contentWidget = new QWidget();
+    m_contentWidget->setStyleSheet(QString("background-color: %1;").arg(t.bg0));
 
-    // --- TITLE ---
-    QLabel *title = new QLabel("TOOLS");
-    title->setStyleSheet("font-weight: bold; font-size: 11px; color: #888; letter-spacing: 1px; padding: 4px 0;");
-    layout->addWidget(title);
+    QVBoxLayout *buttonLayout = new QVBoxLayout(m_contentWidget);
+    buttonLayout->setContentsMargins(8, 12, 8, 12);
+    buttonLayout->setSpacing(4);
+    buttonLayout->setAlignment(Qt::AlignTop);
 
     m_toolButtons->setExclusive(true);
 
-    for (QAbstractButton* btn : m_toolButtons->buttons()) {
-        int id = m_toolButtons->id(btn);
-        ToolType type = static_cast<ToolType>(id);
+    auto addSectionLabel = [&](const QString &text, bool isAccent) {
+        QLabel *label = new QLabel(text);
+        QString color = isAccent ? t.accent : "#444444";
+        label->setStyleSheet(QString(
+            "font-size: 9px; font-weight: bold; color: %1; "
+            "letter-spacing: 1.5px; padding: 12px 0 4px 2px;"
+        ).arg(color));
+        buttonLayout->addWidget(label);
+        if (isAccent)
+            m_accentLabels.append(label);
+    };
+
+    auto addToolButton = [&](ToolType type, const QString &icon, const QString &name, const QString &key) {
+        QString path = ":/" + icon + ".svg";
+        if (!QFile::exists(path)) path = IconConfig::getToolIconPath(icon);
+
+        ToolButton *btn = new ToolButton(path, name, key, this);
+        m_toolButtons->addButton(btn, static_cast<int>(type));
+        buttonLayout->addWidget(btn);
 
         connect(btn, &QPushButton::clicked, this, [this, type]() {
-            // Update current tool
             if (m_tools.contains(type)) {
                 m_currentTool = m_tools[type];
                 emit toolChanged(m_currentTool);
             }
-
-            // Update settings panel
-            if (m_settingsPanel) {
+            if (m_settingsPanel)
                 m_settingsPanel->updateForTool(type, m_currentTool);
-            }
         });
-    }
-
-    // Helper lambda for consistent button styling with SVG icons
-    auto addToolButton = [&](ToolType type, const QString &iconName, const QString &text, const QString &shortcut) {
-        // 1. Try the Resource System first (The ":" prefix is key!)
-        QString iconPath = ":/" + iconName + ".svg";
-
-        // 2. If it's not in resources, fallback to the physical disk (your current logic)
-        if (!QFile::exists(iconPath)) {
-            iconPath = IconConfig::getToolIconPath(iconName);
-            // ... rest of your existing disk-check logic ...
-        }
-
-        ToolButton *btn = new ToolButton(iconPath, text, shortcut, this);
-        m_toolButtons->addButton(btn, static_cast<int>(type));
-        layout->addWidget(btn);
     };
 
-    // --- SELECTION ---
-    addToolButton(ToolType::Select, "select", "Select", "V");
-    addToolButton(ToolType::eyedropper, "eyedropper", "Pick color", "p");
-    layout->addSpacing(4);
+    // ── TOOLS ────────────────────────────────────────────────────────────────
+    addSectionLabel("TOOLS", true);
+    addToolButton(ToolType::Select,      "select",      "Select",     "V");
+    addToolButton(ToolType::eyedropper,  "eyedropper",  "Pick color", "I");
 
-    // --- DRAWING ---
-    QLabel *drawLabel = new QLabel("DRAWING");
-    drawLabel->setStyleSheet("font-size: 10px; color: #666; font-weight: bold; padding: 8px 0 4px 0;");
-    layout->addWidget(drawLabel);
+    // ── SELECTION ────────────────────────────────────────────────────────────
+    addSectionLabel("SELECTION", false);
+    addToolButton(ToolType::Lasso,       "lasso",       "Lasso",      "L");   // ← NEW
+    addToolButton(ToolType::MagicWand,   "magicwand",   "Magic Wand", "W");   // ← NEW
 
-    addToolButton(ToolType::Pencil, "pencil", "Pencil", "P");
-    addToolButton(ToolType::Brush, "brush", "Brush", "B");
-    addToolButton(ToolType::Eraser, "eraser", "Eraser", "E");
-    addToolButton(ToolType::Fill, "fill", "Fill", "G");
-    addToolButton(ToolType::Blend, "blend", "Blend", "H");
-    addToolButton(ToolType::Liquify, "liquify", "Liquify", "L");
+    // ── DRAWING ──────────────────────────────────────────────────────────────
+    addSectionLabel("DRAWING", false);
+    addToolButton(ToolType::Pencil,      "pencil",      "Pencil",     "P");
+    addToolButton(ToolType::Brush,       "brush",       "Brush",      "B");
+    addToolButton(ToolType::Eraser,      "eraser",      "Eraser",     "E");
+    addToolButton(ToolType::Fill,        "fill",        "Fill",       "G");
+    addToolButton(ToolType::Gradient,    "gradient",    "Gradient",   "D");
+    addToolButton(ToolType::Blend,       "blend",       "Blend",      "H");
+    addToolButton(ToolType::Liquify,     "liquify",     "Liquify",    "K");
 
-    layout->addSpacing(4);
+    // ── SHAPES ───────────────────────────────────────────────────────────────
+    addSectionLabel("SHAPES", false);
+    addToolButton(ToolType::Rectangle,   "rectangle",   "Rectangle",  "R");
+    addToolButton(ToolType::Ellipse,     "ellipse",     "Ellipse",    "C");
+    addToolButton(ToolType::Line,        "line",        "Line",       "U");
+    addToolButton(ToolType::Text,        "text",        "Text",       "T");
 
-    // --- SHAPES ---
-    QLabel *shapesLabel = new QLabel("SHAPES");
-    shapesLabel->setStyleSheet("font-size: 10px; color: #666; font-weight: bold; padding: 8px 0 4px 0;");
-    layout->addWidget(shapesLabel);
+    buttonLayout->addStretch();
 
-    addToolButton(ToolType::Rectangle, "rectangle", "Rectangle", "R");
-    addToolButton(ToolType::Ellipse, "ellipse", "Ellipse", "C");
-    addToolButton(ToolType::Line, "line", "Line", "L");
-    addToolButton(ToolType::Text, "text", "Text", "T");
-
-    layout->addStretch();
-
-    contentWidget->setStyleSheet("background-color: #2d2d2d;");
-
-    // Instantiate the tool settings panel so MainWindow can embed it
-    m_settingsPanel = new ToolSettingsPanel(nullptr); // parent set by MainWindow
-
-    // Set contentWidget as the scroll area's widget
-    scrollArea->setWidget(contentWidget);
-    mainLayout->addWidget(scrollArea);
+    m_settingsPanel = new ToolSettingsPanel(nullptr);
+    m_scrollArea->setWidget(m_contentWidget);
+    mainLayout->addWidget(m_scrollArea);
 
     connect(m_toolButtons, &QButtonGroup::idClicked, this, &ToolBox::onToolButtonClicked);
 }
@@ -189,6 +170,50 @@ void ToolBox::onToolButtonClicked(int id)
     }
 }
 
-Tool* ToolBox::getTool(ToolType type) const {
+Tool* ToolBox::getTool(ToolType type) const
+{
     return m_tools.value(type, nullptr);
+}
+
+void ToolBox::activateTool(ToolType type)
+{
+    if (!m_tools.contains(type)) return;
+    m_currentTool = m_tools[type];
+    // Update button check state
+    if (auto *btn = m_toolButtons->button(static_cast<int>(type))) {
+        btn->setChecked(true);
+    }
+    emit toolChanged(m_currentTool);
+    if (m_settingsPanel)
+        m_settingsPanel->updateForTool(type, m_currentTool);
+}
+
+void ToolBox::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    m_scrollArea->setStyleSheet(
+        QString("QScrollArea { background-color: %1; border: none; }"
+                "QScrollBar:vertical { background: %1; width: 8px; }"
+                "QScrollBar::handle:vertical { background: %2; border-radius: 4px; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+        .arg(t.bg0, t.bg1));
+
+    m_contentWidget->setStyleSheet(
+        QString("background-color: %1;").arg(t.bg0));
+
+    for (QLabel *label : m_accentLabels) {
+        label->setStyleSheet(
+            QString("font-size: 9px; font-weight: bold; color: %1; "
+                    "letter-spacing: 1.5px; padding: 12px 0 4px 2px;")
+            .arg(t.accent));
+    }
+
+    for (QAbstractButton *btn : m_toolButtons->buttons()) {
+        if (ToolButton *tb = qobject_cast<ToolButton*>(btn))
+            tb->applyTheme();
+    }
+
+    if (m_settingsPanel)
+        m_settingsPanel->applyTheme();
 }
