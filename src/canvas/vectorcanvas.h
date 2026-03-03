@@ -5,12 +5,13 @@
 #include <QUndoStack>
 #include <QImage>
 #include <QSet>
+#include <QMap>
 #include "tools/tool.h"
 #include "core/layer.h"
 
-// Forward declarations
 class Project;
 class VectorObject;
+class ObjectGroup;
 class QPainter;
 
 class VectorCanvas : public QGraphicsScene
@@ -36,15 +37,40 @@ public:
     void removeObject(VectorObject *obj);
     void clearCurrentFrame();
     void refreshFrame();
+    void clearDisplay(); // call before loading a new project
 
+    // Batch-update guard: suppresses refreshFrame re-entrancy during multi-step
+    // operations (grouping, interpolation). Signals still fire normally so that
+    // undo, redo, and layer visibility continue to work correctly.
+    void beginBatchUpdate() { m_batchUpdating = true; }
+    void endBatchUpdate()   { m_batchUpdating = false; refreshFrame(); }
+
+    ObjectGroup* groupSelectedObjects(const QString &name = QString());
+    // Overload: group an explicit list of source objects (used by SelectTool bounding-box selection)
+    ObjectGroup* groupObjects(const QList<VectorObject*> &sourceObjects, const QString &name = QString());
+    void ungroupSelected();
+
+    // Resolve a display clone (or live item) back to its layer-owned source.
+    // Returns obj itself if it is already a source object.
+    VectorObject* sourceObject(VectorObject *displayItem) const;
 
 signals:
     void referenceImageDropped(const QString &path, const QPointF &position);
     void audioDropped(const QString &path);
+    void objectGroupCreated(ObjectGroup *group);
+    void contextMenuRequestedAt(const QPoint &globalPos, const QPointF &scenePos);
+    void interpolationModeChanged(bool active);
 
 public slots:
     void onFrameChanged(int frame);
     void setupLayerConnections();
+    void enterInterpolationMode();
+    void exitInterpolationMode();
+
+    // Selection highlight overlays — dashed bounding boxes drawn on top of selected
+    // display clones. SelectTool calls showSelectionOverlays() after every selection
+    // change. Overlays are cleared at the start of each refreshFrame.
+    void showSelectionOverlays(const QList<VectorObject*> &sourceObjects);
 
 protected:
     void drawBackground(QPainter *painter, const QRectF &rect) override;
@@ -65,7 +91,23 @@ private:
     Tool *m_currentTool;
     bool m_onionSkinEnabled;
     bool m_isDrawing;
-    QSet<Layer*> m_connectedLayers;  // Track which layers are already connected
+    QSet<Layer*> m_connectedLayers;
+    bool m_isInterpolating = false;
+    bool m_batchUpdating   = false;
+
+    // Display clones owned by the canvas. Cleared and rebuilt each refreshFrame.
+    QList<VectorObject*> m_displayItems;
+
+    // Maps display clone → layer-owned source object so removeObject/grouping
+    // can find the real object even when the scene holds clones.
+    QMap<VectorObject*, VectorObject*> m_cloneToSource;
+
+    // The currently-being-drawn object lives in the scene directly (not as a clone)
+    // so the user sees strokes in real time. refreshFrame skips it.
+    VectorObject* m_liveDrawingItem = nullptr;
+
+    // Dashed bounding-box overlays showing the current bounding-box selection.
+    QList<QGraphicsRectItem*> m_selectionOverlays;
 };
 
 #endif // VECTORCANVAS_H

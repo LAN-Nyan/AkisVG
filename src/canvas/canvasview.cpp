@@ -1,59 +1,244 @@
 #include "canvasview.h"
 #include "vectorcanvas.h"
+#include "objects/transformableimageobject.h"
 
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QTabletEvent>
 #include <QResizeEvent>
 #include <QScrollBar>
-#include <QtMath>
+#include <QPainter>
+#include <QEvent>
+#include <QApplication>
 
-void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
-{
-    // Fill everything with the workspace color (dark grey)
-    painter->fillRect(rect, QColor(60, 60, 60));
-
-    // Draw the canvas "paper" (white)
-    QRectF canvasRect = sceneRect();
-    painter->fillRect(canvasRect, Qt::white);
-
-    // Add a subtle border so the white stands out
-    painter->setPen(QPen(QColor(40, 40, 40), 1));
-    painter->drawRect(canvasRect);
-}
+// Pull in project/layer types so we can iterate objects
+#include "core/project.h"
+#include "core/layer.h"
+#include "tools/tool.h"
+#include "tools/lassotool.h"
+#include <QTimer>
 
 CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     : QGraphicsView(canvas, parent)
     , m_currentZoom(1.0)
-    , m_zoomMin(0.01)
-    , m_zoomMax(50.0)
-    , m_isPanning(false)
+    , m_antTimer(nullptr)
 {
-    // PERFORMANCE: Enable high-quality rendering
     setRenderHint(QPainter::Antialiasing);
     setRenderHint(QPainter::SmoothPixmapTransform);
     setRenderHint(QPainter::TextAntialiasing);
-    
-    // PERFORMANCE: Smart viewport updates (only redraw changed areas)
     setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
-    
-    // PERFORMANCE: Enable OpenGL acceleration (optional, comment out if causes issues)
-    // Note: Requires Qt compiled with OpenGL support
-    // setViewport(new QOpenGLWidget());  // Uncomment to enable OpenGL
-    
-    // PERFORMANCE: Cache background
     setCacheMode(QGraphicsView::CacheBackground);
-    
     setDragMode(QGraphicsView::NoDrag);
 
-    // Use AnchorUnderMouse for proper zoom behavior
+    // Marching-ants animation: repaint the foreground at ~30fps while a
+    // closed lasso selection is visible.
+    m_antTimer = new QTimer(this);
+    m_antTimer->setInterval(33); // ~30fps
+    connect(m_antTimer, &QTimer::timeout, this, [this]() {
+        if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+            if (auto *lasso = dynamic_cast<LassoTool*>(canvas->currentTool())) {
+                if (lasso->hasSelection()) {
+                    viewport()->update();
+                    return;
+                }
+            }
+        }
+        m_antTimer->stop(); // stop when no active selection
+    });
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
 
-    // Center on canvas initially
-    if (canvas) {
+    viewport()->installEventFilter(this);
+
+    if (canvas)
         centerOn(canvas->sceneRect().center());
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+void CanvasView::startAntTimer()
+{
+    if (m_antTimer && !m_antTimer->isActive())
+        m_antTimer->start();
+}
+
+
+void CanvasView::handleFrameNavKey(QKeyEvent *event)
+{
+    switch (event->key()) {
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+    case Qt::Key_Right:
+        emit frameNavigationRequested(+1);
+        event->accept();
+        break;
+    case Qt::Key_Left:
+        emit frameNavigationRequested(-1);
+        event->accept();
+        break;
+    default:
+        break;
     }
+}
+
+QVector<TransformableImageObject*> CanvasView::currentFrameImages()
+{
+    QVector<TransformableImageObject*> result;
+    // Walk all items in the scene looking for TransformableImageObject instances
+    for (QGraphicsItem *item : scene()->items()) {
+        if (auto *img = dynamic_cast<TransformableImageObject*>(item))
+            result << img;
+    }
+    return result;
+}
+
+void CanvasView::setSelectedImage(TransformableImageObject *img)
+{
+    // 1. If it's already selected, do nothing
+    if (m_currentZoom && m_selectedImage == img)
+        return;
+
+    // 2. Deselect the old one
+    if (m_selectedImage)
+        m_selectedImage->setSelected(false);
+
+    // 3. Assign the new one
+    m_selectedImage = img;
+
+    // 4. Select the new one if it exists
+    if (m_selectedImage)
+        m_selectedImage->setSelected(true);
+
+    // 5. Notify the rest of the app and redraw
+    emit syncSelectedImage();
+    viewport()->update();
+}
+// g
+
+// ─── event filter ─────────────────────────────────────────────────────────────
+
+bool CanvasView::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == viewport() && event->type() == QEvent::KeyPress) {
+        if (m_splineOverlay && m_splineOverlay->isVisible()) {
+            QApplication::sendEvent(m_splineOverlay, event);
+            return true;
+        }
+        QKeyEvent *ke = static_cast<QKeyEvent*>(event);
+        int key = ke->key();
+        if (key == Qt::Key_Return || key == Qt::Key_Enter ||
+            key == Qt::Key_Left   || key == Qt::Key_Right) {
+            handleFrameNavKey(ke);
+            return true;
+        }
+    }
+    return QGraphicsView::eventFilter(obj, event);
+}
+
+// ─── drawing ──────────────────────────────────────────────────────────────────
+
+void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
+{
+    painter->fillRect(rect, QColor(60, 60, 60));
+    QRectF canvasRect = sceneRect();
+    painter->fillRect(canvasRect, Qt::white);
+    painter->setPen(QPen(QColor(40, 40, 40), 1));
+    painter->drawRect(canvasRect);
+}
+
+void CanvasView::drawForeground(QPainter *painter, const QRectF & /*rect*/)
+{
+    // Draw transform handles for selected image (on top of everything)
+    if (m_selectedImage)
+        m_selectedImage->drawHandles(painter);
+
+    // Let the active tool draw its overlay (Lasso, MagicWand, etc.)
+    // VectorCanvas exposes the current tool via currentTool()
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool())
+            tool->draw(painter);
+    }
+}
+
+// ─── zoom ─────────────────────────────────────────────────────────────────────
+
+void CanvasView::zoomIn()    { setZoom(m_currentZoom * 1.2); }
+void CanvasView::zoomOut()   { setZoom(m_currentZoom / 1.2); }
+void CanvasView::resetZoom() { setZoom(1.0); }
+
+void CanvasView::fitCanvas()
+{
+    QGraphicsView::fitInView(sceneRect(), Qt::KeepAspectRatio);
+    m_currentZoom = transform().m11();
+}
+
+void CanvasView::setZoom(qreal factor)
+{
+    factor = qBound(m_zoomMin, factor, m_zoomMax);
+    qreal scaleFactor = factor / m_currentZoom;
+    scale(scaleFactor, scaleFactor);
+    m_currentZoom = factor;
+}
+
+void CanvasView::recenterCanvas()
+{
+    if (scene())
+        centerOn(sceneRect().center());
+}
+
+void CanvasView::resizeEvent(QResizeEvent *event)
+{
+    QGraphicsView::resizeEvent(event);
+    emit viewportResized();
+}
+
+void CanvasView::wheelEvent(QWheelEvent *event)
+{
+    if (event->modifiers() & Qt::ControlModifier) {
+        event->angleDelta().y() > 0 ? zoomIn() : zoomOut();
+        event->accept();
+    } else {
+        QGraphicsView::wheelEvent(event);
+    }
+}
+
+// ─── key events ───────────────────────────────────────────────────────────────
+
+void CanvasView::keyPressEvent(QKeyEvent *event)
+{
+    if (m_splineOverlay && m_splineOverlay->isVisible()) {
+        QGraphicsView::keyPressEvent(event);
+        return;
+    }
+
+    int key = event->key();
+    if (key == Qt::Key_Return || key == Qt::Key_Enter ||
+        key == Qt::Key_Left   || key == Qt::Key_Right) {
+        handleFrameNavKey(event);
+        return;
+    }
+
+    switch (key) {
+    case Qt::Key_Plus:
+    case Qt::Key_Equal:
+        if (event->modifiers() & Qt::ControlModifier) { zoomIn();    event->accept(); return; }
+        break;
+    case Qt::Key_Minus:
+        if (event->modifiers() & Qt::ControlModifier) { zoomOut();   event->accept(); return; }
+        break;
+    case Qt::Key_0:
+        if (event->modifiers() & Qt::ControlModifier) { resetZoom(); event->accept(); return; }
+        break;
+    case Qt::Key_Space:
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        event->accept();
+        return;
+    default:
+        break;
+    }
+
+    QGraphicsView::keyPressEvent(event);
 }
 
 void CanvasView::keyReleaseEvent(QKeyEvent *event)
@@ -66,97 +251,104 @@ void CanvasView::keyReleaseEvent(QKeyEvent *event)
     }
 }
 
-void CanvasView::zoomIn()
-{
-    setZoom(m_currentZoom * 1.2);
-}
+// ─── tablet events ────────────────────────────────────────────────────────────
 
-void CanvasView::zoomOut()
+void CanvasView::tabletEvent(QTabletEvent *event)
 {
-    setZoom(m_currentZoom / 1.2);
-}
+    // Store pressure so mouseMoveEvent (which fires right after) can use it.
+    // Qt routes tablet stylus events here first, then generates synthetic mouse
+    // events — so this is always called before the corresponding mouse handler.
+    m_tabletPressure = qBound(0.05, event->pressure(), 1.0);
+    m_tabletActive   = (event->type() != QEvent::TabletRelease);
 
-void CanvasView::resetZoom()
-{
-    setZoom(1.0);
-}
-
-void CanvasView::fitCanvas()
-{
-    QGraphicsView::fitInView(sceneRect(), Qt::KeepAspectRatio);
-    m_currentZoom = transform().m11();
-}
-
-void CanvasView::setZoom(qreal factor)
-{
-    factor = qBound(m_zoomMin, factor, m_zoomMax);
-
-    qreal scaleFactor = factor / m_currentZoom;
-    scale(scaleFactor, scaleFactor);
-    m_currentZoom = factor;
-}
-
-void CanvasView::wheelEvent(QWheelEvent *event)
-{
-    if (event->modifiers() & Qt::ControlModifier) {
-        // Ctrl + wheel = zoom
-        if (event->angleDelta().y() > 0) {
-            zoomIn();
-        } else {
-            zoomOut();
+    // Notify the active tool with the pressure value
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool()) {
+            QPointF scenePos = mapToScene(event->position().toPoint());
+            tool->setCurrentPressure(m_tabletPressure);
+            Q_UNUSED(scenePos);
         }
-        event->accept();
-    } else {
-        QGraphicsView::wheelEvent(event);
-    }
-}
-
-void CanvasView::keyPressEvent(QKeyEvent *event)
-{
-    switch (event->key()) {
-    case Qt::Key_Plus:
-    case Qt::Key_Equal:
-        if (event->modifiers() & Qt::ControlModifier) {
-            zoomIn();
-            event->accept();
-            return;
-        }
-        break;
-    case Qt::Key_Minus:
-        if (event->modifiers() & Qt::ControlModifier) {
-            zoomOut();
-            event->accept();
-            return;
-        }
-        break;
-    case Qt::Key_0:
-        if (event->modifiers() & Qt::ControlModifier) {
-            resetZoom();
-            event->accept();
-            return;
-        }
-        break;
-    case Qt::Key_Space:
-        // Space = pan mode (hold space and drag)
-        setDragMode(QGraphicsView::ScrollHandDrag);
-        event->accept();
-        return;
     }
 
-    QGraphicsView::keyPressEvent(event);
+    // Accept but don't consume — let Qt also generate the mouse event so existing
+    // tool logic keeps working without any changes.
+    event->accept();
 }
+
+// ─── mouse events ─────────────────────────────────────────────────────────────
 
 void CanvasView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::MiddleButton) {
-        // Middle mouse button for panning
         m_isPanning = true;
         m_panStartPos = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
-    } else {
-        QGraphicsView::mousePressEvent(event);
+        return;
     }
+
+    // ── Image transform hit test (Select tool only) ─────────────────────────
+    // Images can only be moved/resized when the Select tool is active.
+    bool isSelectTool = false;
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene()))
+        if (auto *tool = canvas->currentTool())
+            isSelectTool = (tool->type() == ToolType::Select);
+
+    if (isSelectTool && event->button() == Qt::LeftButton) {
+        QPointF scenePos = mapToScene(event->pos());
+
+        // Check handles on the already-selected image first
+        if (m_selectedImage) {
+            auto h = m_selectedImage->hitTestHandle(scenePos);
+            if (h.has_value()) {
+                m_activeHandle = h;
+                m_selectedImage->beginTransform(*h, scenePos);
+                return; // swallow — don't pass to scene
+            }
+        }
+
+        // Check if any image body was clicked
+        for (auto *img : currentFrameImages()) {
+            if (img->hitTestImage(scenePos)) {
+                if (m_selectedImage && m_selectedImage != img)
+                    m_selectedImage->setSelected(false);
+                m_selectedImage = img;
+                m_selectedImage->setSelected(true);
+                m_movingImage    = true;
+                m_activeHandle   = std::nullopt;
+                m_lastMouseScene = scenePos;
+                viewport()->update();
+                return;
+            }
+        }
+
+        // Clicked empty space → deselect
+        if (m_selectedImage) {
+            m_selectedImage->setSelected(false);
+            m_selectedImage = nullptr;
+            viewport()->update();
+        }
+    } else if (!isSelectTool && m_selectedImage) {
+        // User switched to a non-select tool: clear image selection so handles disappear
+        m_selectedImage->setSelected(false);
+        m_selectedImage = nullptr;
+        viewport()->update();
+    }
+    // ── End image hit test ────────────────────────────────────────────────────
+
+    // ── Forward to new-style tools (Lasso / MagicWand) ───────────────────────
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool()) {
+            QPointF scenePos = mapToScene(event->pos());
+            tool->mousePressEvent(event, scenePos);
+            if (event->isAccepted()) {
+                viewport()->update();
+                return;
+            }
+        }
+    }
+
+    QGraphicsView::mousePressEvent(event);
 }
 
 void CanvasView::mouseReleaseEvent(QMouseEvent *event)
@@ -165,40 +357,96 @@ void CanvasView::mouseReleaseEvent(QMouseEvent *event)
         m_isPanning = false;
         setCursor(Qt::ArrowCursor);
         event->accept();
-    } else {
-        QGraphicsView::mouseReleaseEvent(event);
+        return;
     }
+
+    // Finish image transform drag
+    if (m_selectedImage && (m_activeHandle.has_value() || m_movingImage)) {
+        m_selectedImage->endTransform();
+        m_activeHandle = std::nullopt;
+        m_movingImage  = false;
+        viewport()->update();
+        return;
+    }
+
+    // ── Forward release to new-style tools (Lasso / MagicWand) ───────────────
+    // This was the missing link — without it the lasso never received the
+    // mouse-release that closes the loop.
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool()) {
+            QPointF scenePos = mapToScene(event->pos());
+            tool->mouseReleaseEvent(event, scenePos);
+            if (event->isAccepted()) {
+                viewport()->update();
+                return;
+            }
+        }
+    }
+
+    QGraphicsView::mouseReleaseEvent(event);
 }
 
 void CanvasView::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_isPanning) {
-        // Calculate pan delta
         QPoint delta = event->pos() - m_panStartPos;
         m_panStartPos = event->pos();
-        
-        // Pan the view
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
         verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
         event->accept();
-    } else {
-        QGraphicsView::mouseMoveEvent(event);
+        return;
     }
-}
 
-void CanvasView::resizeEvent(QResizeEvent *event)
-{
-    QGraphicsView::resizeEvent(event);
-    
-    // Keep canvas centered when window is resized
-    if (scene()) {
-        recenterCanvas();
-    }
-}
+    QPointF scenePos = mapToScene(event->pos());
 
-void CanvasView::recenterCanvas()
-{
-    if (scene()) {
-        centerOn(sceneRect().center());
+    // Image transform move / resize
+    if (m_selectedImage) {
+        if (m_activeHandle.has_value()) {
+            m_selectedImage->continueTransform(scenePos);
+            viewport()->update();
+            return;
+        }
+        if (m_movingImage) {
+            QPointF delta = scenePos - m_lastMouseScene;
+            m_selectedImage->setPosition(m_selectedImage->position() + delta);
+            m_lastMouseScene = scenePos;
+            viewport()->update();
+            return;
+        }
+
+        // Cursor hint for handles
+        auto h = m_selectedImage->hitTestHandle(scenePos);
+        if (h.has_value()) {
+            switch (*h) {
+            case HandleRole::Rotate:
+                viewport()->setCursor(Qt::SizeAllCursor); break;
+            case HandleRole::TopLeft:
+            case HandleRole::BottomRight:
+                viewport()->setCursor(Qt::SizeFDiagCursor); break;
+            case HandleRole::TopRight:
+            case HandleRole::BottomLeft:
+                viewport()->setCursor(Qt::SizeBDiagCursor); break;
+            case HandleRole::TopCenter:
+            case HandleRole::BottomCenter:
+                viewport()->setCursor(Qt::SizeVerCursor); break;
+            case HandleRole::MiddleLeft:
+            case HandleRole::MiddleRight:
+                viewport()->setCursor(Qt::SizeHorCursor); break;
+            }
+            return;
+        } else if (m_selectedImage->hitTestImage(scenePos)) {
+            viewport()->setCursor(Qt::SizeAllCursor);
+        } else {
+            viewport()->setCursor(Qt::ArrowCursor);
+        }
     }
+
+    // Forward move to new-style tools
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool())
+            tool->mouseMoveEvent(event, scenePos);
+    }
+
+    viewport()->update(); // repaint tool overlay (lasso preview)
+    QGraphicsView::mouseMoveEvent(event);
 }
