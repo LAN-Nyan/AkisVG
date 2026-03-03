@@ -35,7 +35,7 @@ Project::Project(QObject *parent)
     , m_height(1080)
     , m_fps(24)
     , m_currentFrame(1)
-    , m_totalFrames(100)
+    , m_totalFrames(10)   // Start with 10 blank frames; grows dynamically
     , m_currentLayerIndex(0)
     , m_smoothPathsEnabled(true)  // Enable smooth paths by default
     , m_onionSkinEnabled(false)   // Onion skinning disabled by default
@@ -58,7 +58,7 @@ void Project::createNew(int width, int height, int fps)
     m_height = height;
     m_fps = fps;
     m_currentFrame = 1;
-    m_totalFrames = 100;
+    m_totalFrames = 10;   // Start with 10 blank frames; grows dynamically
 
     // Clear existing layers
     qDeleteAll(m_layers);
@@ -150,7 +150,7 @@ void Project::setOnionSkinOpacity(qreal opacity)
 
 void Project::setCurrentFrame(int frame)
 {
-    if (frame >= 1 && frame <= m_totalFrames && frame != m_currentFrame) {
+    if (frame >= 1 && frame != m_currentFrame) {
         m_currentFrame = frame;
         emit currentFrameChanged(frame);
     }
@@ -158,13 +158,51 @@ void Project::setCurrentFrame(int frame)
 
 void Project::setTotalFrames(int frames)
 {
-    if (frames > 0 && frames != m_totalFrames) {
+    if (frames > 0 && m_totalFrames != frames) {
         m_totalFrames = frames;
-        if (m_currentFrame > frames) {
-            setCurrentFrame(frames);
-        }
         emit modified();
     }
+}
+
+int Project::highestUsedFrame() const
+{
+    int highest = 1;
+    for (const Layer *layer : m_layers) {
+        // Art frames
+        const auto &frames = layer->allFrameNumbers();
+        for (int f : frames)
+            if (f > highest) highest = f;
+        // Frame extensions
+        const auto &exts = layer->allExtensionEnds();
+        for (int f : exts)
+            if (f > highest) highest = f;
+        // Interpolation keyframes
+        for (int f : layer->getInterpolationKeyframes())
+            if (f > highest) highest = f;
+        // Audio clips
+        for (const AudioData &clip : layer->audioClips()) {
+            int end = clip.startFrame;
+            if (clip.durationFrames > 0)
+                end = clip.startFrame + clip.durationFrames - 1;
+            if (end > highest) highest = end;
+        }
+    }
+    return highest;
+}
+
+int Project::totalFrames() const
+{
+    // Always keep exactly 10 blank frames ahead of the last used frame.
+    // On a fresh project (nothing drawn yet) that means frames 1-10 are
+    // visible.  After drawing on frame 1 the highest used frame is 1, so
+    // totalFrames becomes 1 + 10 = 11.  Drawing on frame 2 makes it 12,
+    // etc.  Interpolation keyframes also count as "used" so there will
+    // always be 10 empty frames to draw new poses into.
+    int highest  = highestUsedFrame();         // ≥ 1
+    int computed = highest + 10;               // always 10 blank ahead
+    // During load we restore m_totalFrames from the save file so we
+    // never shrink a project below what was saved.
+    return qMax(computed, m_totalFrames);
 }
 
 Layer* Project::currentLayer() const
@@ -296,16 +334,19 @@ bool Project::saveToFile(const QString &filePath)
         layerObj["color"] = layer->color().name();
         layerObj["type"] = layer->layerTypeString();
 
-        // Save audio data if this is an audio layer
+        // Save all audio clips for audio layers (supports multiple clips per layer)
         if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
-            AudioData audioData = layer->getAudioData();
-            QJsonObject audioObj;
-            audioObj["filePath"] = audioData.filePath;
-            audioObj["startFrame"] = audioData.startFrame;
-            audioObj["durationFrames"] = audioData.durationFrames;
-            audioObj["volume"] = static_cast<double>(audioData.volume);
-            audioObj["muted"] = audioData.muted;
-            layerObj["audioData"] = audioObj;
+            QJsonArray audioClipsArray;
+            for (const AudioData &clipData : layer->audioClips()) {
+                QJsonObject audioObj;
+                audioObj["filePath"]       = clipData.filePath;
+                audioObj["startFrame"]     = clipData.startFrame;
+                audioObj["durationFrames"] = clipData.durationFrames;
+                audioObj["volume"]         = static_cast<double>(clipData.volume);
+                audioObj["muted"]          = clipData.muted;
+                audioClipsArray.append(audioObj);
+            }
+            layerObj["audioClips"] = audioClipsArray;
         }
 
         // Save interpolation keyframes if this is an interpolation layer
@@ -344,6 +385,20 @@ bool Project::saveToFile(const QString &filePath)
             }
         }
         layerObj["frames"] = framesArray;
+
+        // Save frame extensions (hold/repeat frames)
+        QJsonArray extensionsArray;
+        for (int keyFr : layer->allFrameNumbers()) {
+            int extEnd = layer->getExtensionEnd(keyFr);
+            if (extEnd > keyFr) {
+                QJsonObject extObj;
+                extObj["keyFrame"]      = keyFr;
+                extObj["extendToFrame"] = extEnd;
+                extensionsArray.append(extObj);
+            }
+        }
+        if (!extensionsArray.isEmpty())
+            layerObj["frameExtensions"] = extensionsArray;
 
         layersArray.append(layerObj);
     }
@@ -428,16 +483,33 @@ bool Project::loadFromFile(const QString &filePath)
             layer->setLayerType(LayerType::Art);
         }
 
-        // Load audio data if present
-        if (layerObj.contains("audioData")) {
+        // Load audio clips (new multi-clip format, with legacy single-clip fallback)
+        if (layerObj.contains("audioClips")) {
+            QJsonArray audioClipsArray = layerObj["audioClips"].toArray();
+            for (const QJsonValue &clipVal : audioClipsArray) {
+                QJsonObject audioObj = clipVal.toObject();
+                AudioData audioData;
+                audioData.filePath       = audioObj["filePath"].toString();
+                audioData.startFrame     = audioObj["startFrame"].toInt(1);
+                audioData.durationFrames = audioObj["durationFrames"].toInt(-1);
+                audioData.volume         = static_cast<float>(audioObj["volume"].toDouble(1.0));
+                audioData.muted          = audioObj["muted"].toBool(false);
+                audioData.isMidi         = audioData.filePath.endsWith(".mid",  Qt::CaseInsensitive)
+                                        || audioData.filePath.endsWith(".midi", Qt::CaseInsensitive);
+                layer->addAudioClip(audioData);
+            }
+        } else if (layerObj.contains("audioData")) {
+            // Legacy: single-clip format from older saves
             QJsonObject audioObj = layerObj["audioData"].toObject();
             AudioData audioData;
-            audioData.filePath = audioObj["filePath"].toString();
-            audioData.startFrame = audioObj["startFrame"].toInt(1);
-            audioData.durationFrames = audioObj["durationFrames"].toInt(0);
-            audioData.volume = static_cast<float>(audioObj["volume"].toDouble(1.0));
-            audioData.muted = audioObj["muted"].toBool(false);
-            layer->setAudioData(audioData);
+            audioData.filePath       = audioObj["filePath"].toString();
+            audioData.startFrame     = audioObj["startFrame"].toInt(1);
+            audioData.durationFrames = audioObj["durationFrames"].toInt(-1);
+            audioData.volume         = static_cast<float>(audioObj["volume"].toDouble(1.0));
+            audioData.muted          = audioObj["muted"].toBool(false);
+            audioData.isMidi         = audioData.filePath.endsWith(".mid",  Qt::CaseInsensitive)
+                                    || audioData.filePath.endsWith(".midi", Qt::CaseInsensitive);
+            layer->addAudioClip(audioData);
         }
 
         // Load interpolation keyframes if present
@@ -453,6 +525,18 @@ bool Project::loadFromFile(const QString &filePath)
                 ikf.opacity = kfObj["opacity"].toDouble(1.0);
                 ikf.easingType = kfObj["easing"].toString("linear");
                 layer->addInterpolationKeyframe(ikf.frameNumber, ikf);
+            }
+        }
+
+        // Load frame extensions (hold frames)
+        if (layerObj.contains("frameExtensions")) {
+            QJsonArray extsArray = layerObj["frameExtensions"].toArray();
+            for (const QJsonValue &extVal : extsArray) {
+                QJsonObject extObj = extVal.toObject();
+                int keyFr  = extObj["keyFrame"].toInt(-1);
+                int extEnd = extObj["extendToFrame"].toInt(-1);
+                if (keyFr > 0 && extEnd > keyFr)
+                    layer->extendFrameTo(keyFr, extEnd);
             }
         }
 

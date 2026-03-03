@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QMap>
 #include <QList>
+#include <QSet>
 #include <QPointF>
 
 class Frame;  // Keep for compatibility
@@ -39,19 +40,33 @@ struct FrameInterpolation {
         : startFrame(start), endFrame(end), easingType(easing) {}
 };
 
-// Audio layer data structure
+// A single MIDI note for piano-roll visualization
+struct MidiNote {
+    int     pitch;        // 0-127, MIDI note number
+    double  startBeat;    // start time in beats (quarter notes)
+    double  durationBeat; // duration in beats
+    int     channel;      // MIDI channel 0-15
+    int     velocity;     // 0-127
+};
+
+// Audio clip data structure (one layer can hold multiple clips)
 struct AudioData {
     QString filePath;
     int startFrame;
-    int durationFrames;
+    int durationFrames;   // -1 = use natural audio length (auto)
     float volume;
     bool muted;
-    QVector<float> waveformData; // Normalized audio samples for visualization
+    bool isMidi;          // true = MIDI file (.mid/.midi)
+    QString renderedPath; // path to FluidSynth-rendered WAV (MIDI only)
+    QVector<float> waveformData;  // PCM waveform samples for visualization
+    QVector<MidiNote> midiNotes;  // parsed notes for piano-roll display
+    double midiTotalBeats;        // total length in beats
 
-    AudioData() : startFrame(1), durationFrames(0), volume(1.0f), muted(false) {}
-    AudioData(const QString &path, int start, int duration)
+    AudioData() : startFrame(1), durationFrames(-1), volume(1.0f),
+                  muted(false), isMidi(false), midiTotalBeats(0) {}
+    AudioData(const QString &path, int start, int duration = -1)
         : filePath(path), startFrame(start), durationFrames(duration),
-          volume(1.0f), muted(false) {}
+          volume(1.0f), muted(false), isMidi(false), midiTotalBeats(0) {}
 };
 
 // Interpolation keyframe data
@@ -62,11 +77,11 @@ struct InterpolationKeyframe {
     qreal scale;
     qreal opacity;
     QString easingType;  // "linear", "easeIn", "easeOut", "easeInOut"
-    
-    InterpolationKeyframe() 
+
+    InterpolationKeyframe()
         : frameNumber(1), rotation(0), scale(1.0), opacity(1.0), easingType("linear") {}
     InterpolationKeyframe(int frame, QPointF pos = QPointF(0, 0))
-        : frameNumber(frame), position(pos), rotation(0), scale(1.0), 
+        : frameNumber(frame), position(pos), rotation(0), scale(1.0),
           opacity(1.0), easingType("linear") {}
 };
 
@@ -101,9 +116,20 @@ public:
     // Frame data management
     QList<VectorObject*> objectsAtFrame(int frameNumber) const;
     void addObjectToFrame(int frameNumber, VectorObject *obj);
+    void addMotionPathObjectToFrame(int frameNumber, VectorObject *obj); // marks frame as motion-path generated
     void removeObjectFromFrame(int frameNumber, VectorObject *obj);
+    bool isMotionPathFrame(int frameNumber) const { return m_motionPathFrames.contains(frameNumber); }
     void clearFrame(int frameNumber);
     bool hasContentAtFrame(int frameNumber) const;
+    // Returns all frame numbers that have direct content (for dynamic frame sizing)
+    QList<int> allFrameNumbers() const { return m_frames.keys(); }
+    // Returns all extension-end frame numbers
+    QList<int> allExtensionEnds() const {
+        QList<int> ends;
+        for (const FrameExtension &e : m_frameExtensions)
+            ends.append(e.extendToFrame);
+        return ends;
+    }
 
     // Frame extension/hold functionality
     void extendFrameTo(int fromFrame, int toFrame);
@@ -120,12 +146,17 @@ public:
     bool isInterpolationKeyFrame(int frameNumber) const;
     FrameInterpolation getInterpolationFor(int frameNumber) const;
 
-    // Audio layer functionality
-    void setAudioData(const AudioData &audio);
-    AudioData getAudioData() const { return m_audioData; }
-    bool hasAudio() const { return !m_audioData.filePath.isEmpty(); }
+    // Audio layer functionality — multi-clip
+    void addAudioClip(const AudioData &audio);
+    void removeAudioClip(int index);
+    void setAudioClip(int index, const AudioData &audio);
+    const QList<AudioData>& audioClips() const { return m_audioClips; }
+    bool hasAudio() const { return !m_audioClips.isEmpty(); }
     void clearAudio();
-    
+    // Legacy compat (first clip)
+    void setAudioData(const AudioData &audio);
+    AudioData getAudioData() const { return m_audioClips.isEmpty() ? AudioData() : m_audioClips.first(); }
+
     // Interpolation layer functionality (for LayerType::Interpolation)
     void addInterpolationKeyframe(int frameNumber, const InterpolationKeyframe &keyframe);
     void removeInterpolationKeyframe(int frameNumber);
@@ -170,14 +201,17 @@ private:
     // Interpolation data
     QMap<int, FrameInterpolation> m_interpolations;
 
-    // Audio data (for audio layers)
-    AudioData m_audioData;
-    
+    // Audio data (for audio layers) — multi-clip
+    QList<AudioData> m_audioClips;
+
     // Interpolation keyframes (for interpolation layers)
     QMap<int, InterpolationKeyframe> m_interpKeyframes;
 
     // Helper method for interpolation
     qreal calculateEasing(qreal t, const QString &easingType) const;
+
+    // Motion-path generated frames (shown purple in timeline)
+    QSet<int> m_motionPathFrames;
 };
 
 #endif // LAYER_H

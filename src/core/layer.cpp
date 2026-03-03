@@ -1,6 +1,8 @@
 #include "layer.h"
 #include "frame.h"
 #include "canvas/objects/vectorobject.h"
+#include "canvas/objects/pathobject.h"
+#include <QRectF>
 
 Layer::Layer(const QString &name, QObject *parent)
     : QObject(parent)
@@ -88,17 +90,80 @@ QString Layer::layerTypeString() const
     return "Unknown";
 }
 
+// Helper: compute the combined bounding-rect centroid of a list of objects.
+// PathObjects store geometry in scene coords with pos() == (0,0), so we use
+// mapToScene(boundingRect()) to get the true scene-space bounds.
+static QPointF objectsCentroid(const QList<VectorObject*> &objs)
+{
+    if (objs.isEmpty()) return QPointF();
+    QRectF united;
+    for (VectorObject *obj : objs) {
+        QRectF r = obj->mapToScene(obj->boundingRect()).boundingRect();
+        if (united.isNull()) united = r;
+        else united = united.united(r);
+    }
+    return united.center();
+}
+
 // Frame data management with extension support
 QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
 {
-    // Check if this frame is extended from a key frame
+    // --- Interpolation (tween) in-between frames ---
+    // Check if this frame falls strictly inside an interpolation range.
+    // We handle this first so interpolation takes priority over extension.
+    for (auto it = m_interpolations.constBegin(); it != m_interpolations.constEnd(); ++it) {
+        const FrameInterpolation &interp = it.value();
+        if (frameNumber > interp.startFrame && frameNumber < interp.endFrame) {
+            // Get start and end keyframe objects
+            const QList<VectorObject*> &startObjs = m_frames.value(interp.startFrame);
+            const QList<VectorObject*> &endObjs   = m_frames.value(interp.endFrame);
+
+            if (startObjs.isEmpty()) break; // nothing to interpolate from
+
+            // Compute how far along we are (0..1)
+            int totalFrames = interp.endFrame - interp.startFrame;
+            qreal t = static_cast<qreal>(frameNumber - interp.startFrame) / totalFrames;
+            t = calculateEasing(t, interp.easingType);
+
+            // Centroid of start content in scene space
+            QPointF startCentroid = objectsCentroid(startObjs);
+            // Centroid of end content (fall back to start centroid if end is empty)
+            QPointF endCentroid = endObjs.isEmpty() ? startCentroid : objectsCentroid(endObjs);
+
+            // The delta to apply to every cloned object
+            QPointF delta = (endCentroid - startCentroid) * t;
+
+            // Clone start-frame objects and shift their paths by the delta
+            QList<VectorObject*> result;
+            for (VectorObject *obj : startObjs) {
+                VectorObject *clone = obj->clone();
+
+                // PathObjects embed geometry in scene coords; translate the path directly.
+                PathObject *path = dynamic_cast<PathObject*>(clone);
+                if (path) {
+                    QPainterPath shifted = path->path();
+                    QTransform tr;
+                    tr.translate(delta.x(), delta.y());
+                    shifted = tr.map(shifted);
+                    path->setPath(shifted);
+                } else {
+                    // Generic fallback: shift via Qt item position
+                    clone->setPos(clone->pos() + delta);
+                }
+
+                result.append(clone);
+            }
+            return result;
+        }
+    }
+
+    // --- Extended (hold) frames ---
     int keyFrame = getKeyFrameFor(frameNumber);
     if (keyFrame != -1 && keyFrame != frameNumber) {
-        // This is an extended frame, return objects from the key frame
         return m_frames.value(keyFrame, QList<VectorObject*>());
     }
 
-    // Return objects from this frame directly
+    // --- Normal keyframe ---
     return m_frames.value(frameNumber, QList<VectorObject*>());
 }
 
@@ -145,6 +210,12 @@ void Layer::addObjectToFrame(int frameNumber, VectorObject *obj)
         m_frames[frameNumber].append(obj);
         emit modified();
     }
+}
+
+void Layer::addMotionPathObjectToFrame(int frameNumber, VectorObject *obj)
+{
+    addObjectToFrame(frameNumber, obj);
+    m_motionPathFrames.insert(frameNumber);
 }
 
 void Layer::removeObjectFromFrame(int frameNumber, VectorObject *obj)
@@ -398,21 +469,43 @@ qreal Layer::calculateEasing(qreal t, const QString &easingType) const
 
 // ============= AUDIO Layer Methods =============
 
+void Layer::addAudioClip(const AudioData &audio)
+{
+    m_audioClips.append(audio);
+    emit modified();
+}
+
+void Layer::removeAudioClip(int index)
+{
+    if (index >= 0 && index < m_audioClips.size()) {
+        m_audioClips.removeAt(index);
+        emit modified();
+    }
+}
+
+void Layer::setAudioClip(int index, const AudioData &audio)
+{
+    if (index >= 0 && index < m_audioClips.size()) {
+        m_audioClips[index] = audio;
+        emit modified();
+    }
+}
+
 void Layer::setAudioData(const AudioData &audio)
 {
-    m_audioData = audio;
-
-    // When audio is set, change layer type to Audio
-    if (!audio.filePath.isEmpty()) {
+    // Legacy compat: replace first clip or add if empty
+    if (m_audioClips.isEmpty())
+        m_audioClips.append(audio);
+    else
+        m_audioClips[0] = audio;
+    if (!audio.filePath.isEmpty())
         setLayerType(LayerType::Audio);
-    }
-
     emit modified();
 }
 
 void Layer::clearAudio()
 {
-    m_audioData = AudioData();
+    m_audioClips.clear();
     emit modified();
 }
 
@@ -583,16 +676,34 @@ QList<VectorObject*> Layer::getInterpolatedObjects(int frameNumber) const
         }
     }
 
-    // Get objects at nearest keyframe and apply interpolated transforms
+    // Get the source keyframe's position so we can compute the delta
+    // kf.position is the interpolated group/layer offset, not an absolute per-object position.
+    // We apply it as a delta relative to the source keyframe's recorded position.
+    const InterpolationKeyframe &sourceKf = m_interpKeyframes[nearestKf];
+    QPointF positionDelta = kf.position - sourceKf.position;
+    qreal rotationDelta  = kf.rotation - sourceKf.rotation;
+    // Scale is multiplicative: ratio = kf.scale / sourceKf.scale (guard against zero)
+    qreal scaleRatio = (sourceKf.scale != 0.0) ? (kf.scale / sourceKf.scale) : 1.0;
+
+    // Get objects at nearest keyframe and apply interpolated transforms as deltas
     QList<VectorObject*> baseObjects = objectsAtFrame(nearestKf);
     QList<VectorObject*> result;
 
     for (VectorObject *obj : baseObjects) {
         VectorObject *clone = obj->clone();
-        clone->setPos(kf.position);
-        clone->setRotation(kf.rotation);
-        clone->setScale(kf.scale);
+
+        // Shift position by the interpolated delta (preserves each object's relative layout)
+        clone->setPos(obj->pos() + positionDelta);
+
+        // Apply rotation delta on top of the object's existing rotation
+        clone->setRotation(obj->rotation() + rotationDelta);
+
+        // Apply scale ratio on top of the object's existing scale
+        clone->setScale(obj->scale() * scaleRatio);
+
+        // Opacity is absolute from the interpolated keyframe
         clone->setOpacity(kf.opacity);
+
         result.append(clone);
     }
 

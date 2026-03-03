@@ -51,8 +51,12 @@ public:
     // Frame management
     int currentFrame() const { return m_currentFrame; }
     void setCurrentFrame(int frame);
-    int totalFrames() const { return m_totalFrames; }
-    void setTotalFrames(int frames);
+    // The "last used" frame across all layers
+    int highestUsedFrame() const;
+    // totalFrames = highestUsedFrame() + buffer (10 frames)
+    // setTotalFrames is kept only for loading saved projects
+    int totalFrames() const;
+    void setTotalFrames(int frames); // legacy/load only
 
    // const Frame& frame(int index) const;
    // Frame& frame(int index);
@@ -66,7 +70,7 @@ public:
     void moveLayer(int fromIndex, int toIndex);
     Layer* layerAt(int index) const;
     int layerCount() const { return m_layers.size(); }
-    
+
     // Save/Load
     bool saveToFile(const QString &filePath);
     bool loadFromFile(const QString &filePath);
@@ -88,7 +92,7 @@ private:
     int m_totalFrames;
     int m_currentLayerIndex;
     bool m_smoothPathsEnabled;
-    
+
     // Onion skinning settings
     bool m_onionSkinEnabled;
     int m_onionSkinBefore;  // Number of frames to show before current
