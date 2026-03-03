@@ -1,11 +1,17 @@
+// TODO:
+// 1. implement proper frame extender logic
+// 2. Add MiDi synth
+
 #include "timelinewidget.h"
 #include "core/project.h"
 #include "core/layer.h"
+#include "utils/thememanager.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPushButton>
 #include <QLabel>
+#include <QElapsedTimer>
 #include <QTimerEvent>
 #include <QSplitter>
 #include <QScrollArea>
@@ -23,8 +29,12 @@
 #include <QSlider>
 #include <QTimer>
 #include <cmath>
-#include <QEventLoop>
-#include <QAudioBuffer>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QSettings>
+#include <QFileInfo>
+#include <QDir>
+#include <QFile>
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
@@ -45,10 +55,10 @@ protected:
     void paintEvent(QPaintEvent *event) override {
         Q_UNUSED(event);
         QPainter painter(this);
-        painter.fillRect(rect(), QColor(30, 30, 30));
+        painter.fillRect(rect(), theme().bg1Color());
 
         // Header
-        painter.fillRect(0, 0, width(), 32, QColor(40, 40, 40));
+        painter.fillRect(0, 0, width(), 32, theme().bg2Color());
         painter.setPen(Qt::white);
         painter.setFont(QFont("Arial", 9, QFont::Bold));
         painter.drawText(rect().adjusted(12, 0, 0, -height() + 32), Qt::AlignLeft | Qt::AlignVCenter, "LAYERS");
@@ -61,7 +71,8 @@ protected:
             Layer *layer = layers[i];
             bool isCurrent = (m_project->currentLayer() == layer);
 
-            QColor bgColor = isCurrent ? QColor(42, 130, 218, 40) : QColor(30, 30, 30);
+            QColor accent = theme().accentColor();
+            QColor bgColor = isCurrent ? QColor(accent.red(), accent.green(), accent.blue(), 35) : theme().bg1Color();
             painter.fillRect(0, y, width(), rowHeight, bgColor);
 
             // Color strip
@@ -91,7 +102,7 @@ protected:
                 painter.drawText(QRect(width() - 35, y, 25, rowHeight), Qt::AlignCenter, "🔒");
             }
 
-            painter.setPen(QColor(20, 20, 20));
+            painter.setPen(theme().bg0Color());
             painter.drawLine(0, y + rowHeight - 1, width(), y + rowHeight - 1);
             y += rowHeight;
         }
@@ -132,7 +143,26 @@ FrameGridWidget::FrameGridWidget(Project *project, QWidget *parent)
 {
     setMinimumHeight(200);
     connect(project, &Project::currentFrameChanged, this, QOverload<>::of(&QWidget::update));
-    connect(project, &Project::layersChanged, this, QOverload<>::of(&QWidget::update));
+    connect(project, &Project::layersChanged,  this, QOverload<>::of(&QWidget::update));
+    connect(project, &Project::modified,       this, [this]() { updateGeometry(); adjustSize(); update(); });
+
+    // Connect to each layer's modified signal so that frame extensions,
+    // interpolations, and any other layer-level changes immediately repaint
+    // and resize the scroll area (Layer::modified ≠ Project::modified).
+    auto connectLayers = [this]() {
+        for (Layer *layer : m_project->layers()) {
+            // disconnect first to avoid double-connections on layersChanged
+            disconnect(layer, &Layer::modified, this, nullptr);
+            connect(layer, &Layer::modified, this, [this]() {
+                updateGeometry();   // scroll area picks up new totalFrames()
+                adjustSize();       // actually resize the widget (needed when widgetResizable=false)
+                update();           // repaint the grid
+            });
+        }
+    };
+    connectLayers();
+    // Re-run whenever the layer list changes (add/remove/reorder)
+    connect(project, &Project::layersChanged, this, connectLayers);
 }
 
 QSize FrameGridWidget::sizeHint() const {
@@ -149,20 +179,20 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.fillRect(rect(), QColor(20, 20, 20));
+    painter.fillRect(rect(), theme().bg0Color());
 
     const int cellWidth = 16;
     const int rowHeight = 36;
     const int headerHeight = 32;
 
     // Header / ruler
-    painter.fillRect(0, 0, width(), headerHeight, QColor(40, 40, 40));
+    painter.fillRect(0, 0, width(), headerHeight, theme().bg2Color());
 
     for (int frame = 1; frame <= m_project->totalFrames() && (frame - 1) * cellWidth < width(); ++frame) {
         int x = (frame - 1) * cellWidth;
 
         // Vertical grid line through entire widget
-        painter.setPen(QColor(30, 30, 30));
+        painter.setPen(theme().bg1Color());
         painter.drawLine(x, 0, x, height());
 
         // Ruler ticks and labels
@@ -190,62 +220,107 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
         Layer *layer = layers[i];
         int y = headerHeight + (layers.size() - 1 - i) * rowHeight;
 
-        painter.fillRect(0, y, width(), rowHeight, QColor(30, 30, 30));
+        painter.fillRect(0, y, width(), rowHeight, theme().bg1Color());
 
         // Highlight active layer row
         if (layer == m_project->currentLayer()) {
-            painter.fillRect(0, y, width(), rowHeight, QColor(42, 130, 218, 20));
+            QColor acc = theme().accentColor();
+            painter.fillRect(0, y, width(), rowHeight, QColor(acc.red(), acc.green(), acc.blue(), 20));
         }
 
-        // === AUDIO LAYER RENDERING WITH REAL WAVEFORM ===
+        // === AUDIO LAYER RENDERING — multi-clip ===
         if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
-            AudioData audio = layer->getAudioData();
+            const auto &clips = layer->audioClips();
+            // Stagger clip rows so overlapping clips are visible
+            int clipRowH = qMax(8, (rowHeight - 8) / qMax(1, clips.size()));
 
-            int startX = (audio.startFrame - 1) * cellWidth;
-            int widthPx = audio.durationFrames * cellWidth;
+            for (int ci = 0; ci < clips.size(); ++ci) {
+                const AudioData &audio = clips[ci];
 
-            QRect audioRect(startX, y + 4, widthPx, rowHeight - 8);
-            QColor audioGreen(83, 138, 63);
+                // For -1 duration show an "infinite" bar (until end of timeline)
+                int effDuration = audio.durationFrames > 0
+                    ? audio.durationFrames
+                    : (m_project->totalFrames() - audio.startFrame + 1);
 
-            if (audio.muted) {
-                audioGreen = QColor(100, 100, 100);
-            }
+                int startX = (audio.startFrame - 1) * cellWidth;
+                int widthPx = qMax(cellWidth, effDuration * cellWidth);
+                int clipY = y + 4 + ci * (clipRowH + 2);
 
-            painter.setBrush(audioGreen);
-            painter.setPen(audioGreen.darker(150));
-            painter.drawRoundedRect(audioRect, 4, 4);
+                QRect audioRect(startX, clipY, widthPx, clipRowH);
 
-            // Draw waveform from audio data
-            if (audio.waveformData.size() > 0) {
-                painter.setPen(QColor(20, 60, 20, 180));
-                int centerY = y + rowHeight / 2;
-                int samplesPerPixel = qMax(1, audio.waveformData.size() / widthPx);
+                QColor clipColor = audio.isMidi
+                    ? QColor(138, 43, 226)          // purple for MIDI
+                    : (audio.muted ? QColor(90,90,90) : QColor(39, 174, 96));
 
-                for (int px = 0; px < widthPx && px < width(); px++) {
-                    int sampleIdx = px * samplesPerPixel;
-                    if (sampleIdx < audio.waveformData.size()) {
-                        float amplitude = audio.waveformData[sampleIdx];
-                        int waveHeight = qAbs(amplitude * (rowHeight / 2 - 4));
-                        int wx = startX + px;
-                        painter.drawLine(wx, centerY - waveHeight, wx, centerY + waveHeight);
+                painter.setBrush(clipColor);
+                painter.setPen(clipColor.darker(150));
+                painter.drawRoundedRect(audioRect, 3, 3);
+
+                // Waveform / MIDI indicator
+                int centerY = clipY + clipRowH / 2;
+                if (audio.isMidi && !audio.midiNotes.isEmpty()) {
+                    // Piano-roll: horizontal bars, pitch → Y, time → X
+                    // Find pitch range for this clip
+                    int minPitch = 127, maxPitch = 0;
+                    for (const MidiNote &n : audio.midiNotes) {
+                        minPitch = qMin(minPitch, n.pitch);
+                        maxPitch = qMax(maxPitch, n.pitch);
+                    }
+                    int pitchRange = qMax(1, maxPitch - minPitch);
+                    double totalBeats = audio.midiTotalBeats > 0 ? audio.midiTotalBeats : 1.0;
+                    int drawH = clipRowH - 6;
+                    int drawY = clipY + 3;
+
+                    for (const MidiNote &n : audio.midiNotes) {
+                        // X position: beat → pixel within clip rect
+                        int nx = startX + (int)((n.startBeat  / totalBeats) * widthPx);
+                        int nw = qMax(2, (int)((n.durationBeat / totalBeats) * widthPx));
+                        // Y position: higher pitch = higher on screen
+                        int ny = drawY + drawH - 1 -
+                                 (int)(((double)(n.pitch - minPitch) / pitchRange) * (drawH - 2));
+                        int nh = qMax(1, drawH / qMax(1, pitchRange + 1));
+
+                        // Color by channel
+                        static const QColor chanColors[] = {
+                            {220,180,255},{180,220,255},{255,220,180},{180,255,220},
+                            {255,180,220},{220,255,180},{200,200,255},{255,200,200}
+                        };
+                        QColor nc = chanColors[n.channel % 8];
+                        nc.setAlpha(160 + n.velocity);
+                        painter.fillRect(nx, ny, nw, nh, nc);
+                    }
+                } else if (audio.isMidi) {
+                    // No parsed notes yet — simple placeholder bars
+                    painter.setPen(QColor(220, 180, 255, 120));
+                    for (int wx = startX+4; wx < startX+widthPx-4 && wx < width(); wx += 10)
+                        painter.fillRect(wx, clipY+3, 4, clipRowH-6, QColor(220,180,255,100));
+                } else if (audio.waveformData.size() > 0) {
+                    painter.setPen(QColor(20, 60, 20, 200));
+                    int samplesPerPixel = qMax(1, audio.waveformData.size() / qMax(1, widthPx));
+                    for (int px = 0; px < widthPx && startX + px < width(); px++) {
+                        int sampleIdx = px * samplesPerPixel;
+                        if (sampleIdx < audio.waveformData.size()) {
+                            float amplitude = audio.waveformData[sampleIdx];
+                            int waveHeight = qAbs(amplitude * (clipRowH / 2 - 2));
+                            painter.drawLine(startX+px, centerY-waveHeight, startX+px, centerY+waveHeight);
+                        }
+                    }
+                } else {
+                    painter.setPen(QColor(20, 60, 20, 150));
+                    for (int wx = startX; wx < startX + widthPx && wx < width(); wx += 2) {
+                        int wh = 2 + (int)(std::sin(wx * 0.1) * std::cos(wx * 0.05) * (clipRowH/4));
+                        painter.drawLine(wx, centerY - wh, wx, centerY + wh);
                     }
                 }
-            } else {
-                // Fallback to simulated waveform if no data
-                painter.setPen(QColor(20, 60, 20, 150));
-                int centerY = y + rowHeight / 2;
-                for (int wx = startX; wx < startX + widthPx && wx < width(); wx += 2) {
-                    int waveHeight = 2 + (std::sin(wx * 0.1) * std::cos(wx * 0.05) * 10);
-                    painter.drawLine(wx, centerY - waveHeight, wx, centerY + waveHeight);
-                }
-            }
 
-            // Volume indicator
-            if (audio.volume < 0.99f) {
+                // Clip label
                 painter.setPen(Qt::white);
-                painter.setFont(QFont("Arial", 7));
-                QString volText = QString("%1%").arg(qRound(audio.volume * 100));
-                painter.drawText(audioRect, Qt::AlignCenter, volText);
+                QFont lf; lf.setPointSize(6); painter.setFont(lf);
+                QString label = QFileInfo(audio.filePath).baseName();
+                if (audio.isMidi) label = "🎹 " + label;
+                painter.drawText(audioRect.adjusted(4, 0, -2, 0),
+                                 Qt::AlignVCenter | Qt::AlignLeft,
+                                 painter.fontMetrics().elidedText(label, Qt::ElideRight, widthPx - 8));
             }
 
             continue;
@@ -281,7 +356,8 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
             // Highlight current frame
             if (frame == currentFrame) {
-                painter.fillRect(cellRect, QColor(42, 130, 218, 20));
+                QColor acc = theme().accentColor();
+                painter.fillRect(cellRect, QColor(acc.red(), acc.green(), acc.blue(), 20));
             }
 
             bool isKeyFrame = layer->isKeyFrame(frame);
@@ -334,31 +410,45 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
                     painter.drawEllipse(x + 4, y + rowHeight / 2 - 3, 6, 6);
 
                     // End dot
-                    painter.setBrush(QColor(50, 50, 200));
+                    painter.setBrush(QColor(230, 120, 20));
                     painter.drawEllipse(x + extendWidth - 10, y + rowHeight / 2 - 3, 6, 6);
 
                     frame = extendEnd;
                     continue;
                 }
 
-                // === STANDARD KEYFRAME (Blue) ===
-                painter.setBrush(col);
-                painter.setPen(col.lighter(120));
-                painter.drawRoundedRect(cellRect.adjusted(2, 8, -2, -8), 4, 4);
+                // === STANDARD KEYFRAME (Red/accent) or MOTION PATH (Purple) ===
+                if (layer->isMotionPathFrame(frame)) {
+                    // Motion-path generated frame — render purple
+                    QColor motionPurple(139, 92, 246);
+                    painter.setBrush(motionPurple);
+                    painter.setPen(motionPurple.lighter(130));
+                    painter.drawRoundedRect(cellRect.adjusted(2, 8, -2, -8), 4, 4);
 
-                painter.setBrush(Qt::white);
-                painter.setPen(Qt::NoPen);
-                painter.drawEllipse(x + cellWidth / 2 - 2, y + rowHeight / 2 - 2, 4, 4);
+                    painter.setBrush(Qt::white);
+                    painter.setPen(Qt::NoPen);
+                    painter.drawEllipse(x + cellWidth / 2 - 2, y + rowHeight / 2 - 2, 4, 4);
+                } else {
+                    // Standard keyframe
+                    QColor keyRed = theme().accentColor();
+                    painter.setBrush(keyRed);
+                    painter.setPen(keyRed.lighter(130));
+                    painter.drawRoundedRect(cellRect.adjusted(2, 8, -2, -8), 4, 4);
+
+                    painter.setBrush(Qt::white);
+                    painter.setPen(Qt::NoPen);
+                    painter.drawEllipse(x + cellWidth / 2 - 2, y + rowHeight / 2 - 2, 4, 4);
+                }
             }
         }
     }
 
     // === PLAYHEAD ===
     int playheadX = (currentFrame - 1) * cellWidth + cellWidth / 2;
-    painter.setPen(QPen(QColor(255, 60, 60), 2));
+    painter.setPen(QPen(theme().accentColor(), 2));
     painter.drawLine(playheadX, headerHeight, playheadX, height());
 
-    painter.setBrush(QColor(255, 60, 60));
+    painter.setBrush(theme().accentColor());
     QPolygon triangle;
     triangle << QPoint(playheadX, headerHeight)
              << QPoint(playheadX - 5, headerHeight - 8)
@@ -415,42 +505,74 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
 
         // === AUDIO LAYER CONTEXT MENU ===
         if (layer->layerType() == LayerType::Audio) {
-            QAction *loadAudio = menu.addAction("Load Audio File...");
-            QAction *removeAudio = nullptr;
-            if (layer->hasAudio()) {
-                removeAudio = menu.addAction("Remove Audio");
+            menu.addAction("Add Audio Clip...");
+            menu.addAction("Add MIDI File...");
+            menu.addSeparator();
+
+            // Per-clip actions
+            const auto &clips = layer->audioClips();
+            QList<QAction*> muteActions, removeActions;
+            for (int i = 0; i < clips.size(); ++i) {
+                const AudioData &c = clips[i];
+                QString label = QFileInfo(c.filePath).fileName();
+                if (c.isMidi) label = "🎹 " + label;
+                menu.addSection(label);
+                muteActions.append(menu.addAction(c.muted ? "  Unmute" : "  Mute"));
+                removeActions.append(menu.addAction("  Remove"));
+            }
+
+            QAction *clearAll = nullptr;
+            if (!clips.isEmpty()) {
                 menu.addSeparator();
-                QAction *muteToggle = menu.addAction(layer->getAudioData().muted ? "Unmute" : "Mute");
-
-                QAction *selected = menu.exec(event->globalPos());
-
-                if (selected == muteToggle) {
-                    AudioData audio = layer->getAudioData();
-                    audio.muted = !audio.muted;
-                    layer->setAudioData(audio);
-                    update();
-                    return;
-                }
+                clearAll = menu.addAction("Clear All Clips");
             }
 
             QAction *selected = menu.exec(event->globalPos());
+            if (!selected) return;
 
-            if (selected == loadAudio) {
+            QString actText = selected->text().trimmed();
+
+            if (actText == "Add Audio Clip...") {
                 QString audioPath = QFileDialog::getOpenFileName(
                     this, "Load Audio File", QString(),
-                    "Audio Files (*.mp3 *.wav *.ogg *.flac *.m4a)");
-
+                    "Audio Files (*.mp3 *.wav *.ogg *.flac *.m4a *.aac)");
                 if (!audioPath.isEmpty()) {
                     AudioData audio = loadAudioFile(audioPath, clickedFrame);
-                    layer->setAudioData(audio);
+                    layer->addAudioClip(audio);
                     update();
-
-                    // Emit signal to start playback
                     emit audioLoaded(layer, audioPath);
                 }
-            } else if (selected == removeAudio && removeAudio) {
+            } else if (actText == "Add MIDI File...") {
+                QString midiPath = QFileDialog::getOpenFileName(
+                    this, "Load MIDI File", QString(),
+                    "MIDI Files (*.mid *.midi)");
+                if (!midiPath.isEmpty()) {
+                    // Use loadAudioFile so the MIDI gets parsed + rendered via FluidSynth
+                    AudioData audio = loadAudioFile(midiPath, clickedFrame);
+                    layer->addAudioClip(audio);
+                    update();
+                    emit audioLoaded(layer, midiPath);
+                }
+            } else if (selected == clearAll) {
                 layer->clearAudio();
                 update();
+            } else {
+                for (int i = 0; i < muteActions.size(); ++i) {
+                    if (selected == muteActions[i]) {
+                        AudioData c = layer->audioClips()[i];
+                        c.muted = !c.muted;
+                        layer->setAudioClip(i, c);
+                        update();
+                        break;
+                    }
+                }
+                for (int i = 0; i < removeActions.size(); ++i) {
+                    if (selected == removeActions[i]) {
+                        layer->removeAudioClip(i);
+                        update();
+                        break;
+                    }
+                }
             }
             return;
         }
@@ -551,82 +673,361 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
     }
 }
 
-AudioData FrameGridWidget::loadAudioFile(const QString &filePath, int startFrame) {
-    AudioData audio;
-    audio.filePath = filePath;
-    audio.startFrame = startFrame;
-    audio.volume = 1.0f;
-    audio.muted = false;
 
-    // Use QAudioDecoder to build waveform visualization data.
-    // NOTE: The FFmpeg Qt backend delivers float32 samples, not int16.
-    // We detect the format at runtime to avoid type-punning crashes.
-    QAudioDecoder decoder;
-    decoder.setSource(QUrl::fromLocalFile(filePath));
 
-    QEventLoop loop;
-    bool finished = false;
+// ── Minimal MIDI file parser ──────────────────────────────────────────────
+// Parses SMF type 0/1 .mid files to extract note events for piano-roll display.
+// No external library needed — MIDI is a well-defined public binary format.
 
-    connect(&decoder, &QAudioDecoder::bufferReady, [&]() {
-        if (finished) return;           // guard against post-finish callbacks
-        QAudioBuffer buffer = decoder.read();
-        if (!buffer.isValid()) return;
+static quint32 readVarLen(const QByteArray &data, int &pos)
+{
+    quint32 val = 0;
+    for (int i = 0; i < 4 && pos < data.size(); ++i) {
+        quint8 b = (quint8)data[pos++];
+        val = (val << 7) | (b & 0x7F);
+        if (!(b & 0x80)) break;
+    }
+    return val;
+}
 
-        int channelCount = buffer.format().channelCount();
-        if (channelCount < 1) channelCount = 1;
+static quint16 readU16BE(const QByteArray &d, int p)
+{
+    return ((quint8)d[p] << 8) | (quint8)d[p+1];
+}
+static quint32 readU32BE(const QByteArray &d, int p)
+{
+    return ((quint8)d[p]<<24)|((quint8)d[p+1]<<16)|((quint8)d[p+2]<<8)|(quint8)d[p+3];
+}
 
-        QAudioFormat::SampleFormat fmt = buffer.format().sampleFormat();
+struct MidiParseResult {
+    QVector<MidiNote> notes;
+    double            totalBeats = 0;
+};
 
-        if (fmt == QAudioFormat::Float) {
-            const float *data = buffer.constData<float>();
-            int frameCount = buffer.frameCount();
-            // Downsample: one sample per ~100 frames, take first channel
-            for (int i = 0; i < frameCount; i += 50) {
-                float val = qAbs(data[i * channelCount]);   // first channel, absolute
-                audio.waveformData.append(qMin(val, 1.0f));
-            }
-        } else if (fmt == QAudioFormat::Int16) {
-            const qint16 *data = buffer.constData<qint16>();
-            int frameCount = buffer.frameCount();
-            for (int i = 0; i < frameCount; i += 50) {
-                float val = qAbs(data[i * channelCount] / 32768.0f);
-                audio.waveformData.append(qMin(val, 1.0f));
+static MidiParseResult parseMidiFile(const QString &path)
+{
+    MidiParseResult result;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return result;
+    QByteArray data = f.readAll();
+    f.close();
+
+    if (data.size() < 14 || data.mid(0,4) != "MThd") return result;
+
+    int format   = readU16BE(data, 8);
+    int numTracks= readU16BE(data, 10);
+    int division = readU16BE(data, 12);  // ticks per quarter note (or SMPTE)
+
+    if (division & 0x8000) return result; // SMPTE timecode - not supported here
+
+    int ticksPerBeat = division;
+    double usPerBeat = 500000.0; // default 120 BPM
+
+    int pos = 14;
+
+    // First pass for tempo (track 0 in type 1), then note events
+    // We collect tempo changes per tick for proper beat calculation
+    struct TempoChange { quint32 tick; double usPerBeat; };
+    QVector<TempoChange> tempos;
+    tempos.append({0, 500000.0});
+
+    struct NoteOn { int channel; quint32 tick; int velocity; };
+    QMap<int, QVector<NoteOn>> activeNotes; // key = pitch*16+channel
+
+    quint32 maxTick = 0;
+
+    for (int tr = 0; tr < numTracks; ++tr) {
+        if (pos + 8 > data.size()) break;
+        if (data.mid(pos, 4) != "MTrk") { pos += 4; pos += readU32BE(data,pos)+4; continue; }
+        quint32 trackLen = readU32BE(data, pos + 4);
+        pos += 8;
+        int trackEnd = pos + (int)trackLen;
+        if (trackEnd > data.size()) trackEnd = data.size();
+
+        quint32 tick = 0;
+        quint8  runningStatus = 0;
+
+        while (pos < trackEnd) {
+            quint32 delta = readVarLen(data, pos);
+            tick += delta;
+            if (tick > maxTick) maxTick = tick;
+
+            if (pos >= trackEnd) break;
+            quint8 event = (quint8)data[pos];
+
+            if (event == 0xFF) { // meta event
+                pos++;
+                if (pos >= trackEnd) break;
+                quint8 metaType = (quint8)data[pos++];
+                quint32 metaLen = readVarLen(data, pos);
+                if (metaType == 0x51 && metaLen == 3 && pos+3 <= trackEnd) {
+                    // Set Tempo
+                    quint32 us = ((quint8)data[pos]<<16)|((quint8)data[pos+1]<<8)|(quint8)data[pos+2];
+                    usPerBeat = us;
+                    tempos.append({tick, (double)us});
+                }
+                pos += metaLen;
+            } else if (event == 0xF0 || event == 0xF7) { // sysex
+                pos++;
+                quint32 slen = readVarLen(data, pos);
+                pos += slen;
+            } else {
+                // MIDI channel event
+                if (event & 0x80) { runningStatus = event; pos++; }
+                quint8 status  = runningStatus;
+                quint8 type    = (status >> 4) & 0x0F;
+                quint8 channel = status & 0x0F;
+
+                if (type == 0x9 || type == 0x8) { // note on / note off
+                    if (pos + 1 >= trackEnd) break;
+                    quint8 pitch = (quint8)data[pos++];
+                    quint8 vel   = (quint8)data[pos++];
+                    bool   isOn  = (type == 0x9 && vel > 0);
+                    int    key   = pitch * 16 + channel;
+
+                    if (isOn) {
+                        activeNotes[key].append({channel, tick, vel});
+                    } else {
+                        auto &ons = activeNotes[key];
+                        if (!ons.isEmpty()) {
+                            NoteOn on = ons.takeFirst();
+                            // Convert ticks to beats
+                            double startBeat = (double)on.tick / ticksPerBeat;
+                            double endBeat   = (double)tick    / ticksPerBeat;
+                            MidiNote note;
+                            note.pitch        = pitch;
+                            note.startBeat    = startBeat;
+                            note.durationBeat = qMax(0.05, endBeat - startBeat);
+                            note.channel      = channel;
+                            note.velocity     = on.velocity;
+                            result.notes.append(note);
+                        }
+                    }
+                } else if (type == 0xA || type == 0xB || type == 0xE) {
+                    pos += 2; // 2 data bytes
+                } else if (type == 0xC || type == 0xD) {
+                    pos += 1; // 1 data byte
+                } else {
+                    // Unknown, skip
+                    break;
+                }
             }
         }
-        // Other formats: skip — waveform just won't display
-    });
-
-    connect(&decoder, &QAudioDecoder::finished, [&]() {
-        finished = true;
-        loop.quit();
-    });
-
-    // Error handler — use explicit overload cast to resolve ambiguity
-    connect(&decoder,
-            QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
-            [&](QAudioDecoder::Error) {
-        finished = true;
-        loop.quit();
-    });
-
-    decoder.start();
-
-    // Safety timeout: don't block the UI forever
-    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    decoder.stop();
-
-    // Calculate duration in frames using the decoder's reported duration
-    qint64 durationMs = decoder.duration();
-    if (durationMs <= 0) {
-        // Fallback: estimate from waveform sample count
-        // (50 frames downsampled at whatever sample rate — rough but better than 0)
-        durationMs = 1000; // default 1 second if unknown
+        pos = trackEnd;
     }
 
-    int fps = m_project->fps();
-    audio.durationFrames = qMax(1, static_cast<int>((durationMs * fps) / 1000));
+    result.totalBeats = (double)maxTick / ticksPerBeat;
+    return result;
+}
+
+// ── MIDI → PCM rendering ─────────────────────────────────────────────────
+// Renders a .mid/.midi file to a temporary WAV using FluidSynth (CLI).
+// The soundfont path is read first from QSettings (user-configured in the
+// Settings panel → Audio → MIDI Synthesizer), then falls back to the
+// standard system locations so it works out-of-the-box on most distros.
+static QString renderMidiToWav(const QString &midiPath)
+{
+    // Find fluidsynth executable
+    QString fluidsynth = QStandardPaths::findExecutable("fluidsynth");
+    if (fluidsynth.isEmpty()) {
+        qWarning() << "MIDI render: fluidsynth not found in PATH";
+        return QString();
+    }
+
+    // ── Resolve soundfont ─────────────────────────────────────────────────
+    // 1. User-configured path (stored by settingspanel SF2 picker)
+    QString sf2;
+    {
+        QSettings s("AkisVG", "AkisVG");
+        QString userSf2 = s.value("midi/soundfont").toString();
+        if (!userSf2.isEmpty() && QFile::exists(userSf2))
+            sf2 = userSf2;
+    }
+
+    // 2. Common system locations (Arch, Debian/Ubuntu, Fedora)
+    if (sf2.isEmpty()) {
+        const QStringList sfPaths = {
+            "/usr/share/soundfonts/default.sf2",
+            "/usr/share/soundfonts/FluidR3_GM.sf2",
+            "/usr/share/soundfonts/GeneralUser-GS.sf2",
+            "/usr/share/sounds/sf2/FluidR3_GM.sf2",
+            "/usr/share/sounds/sf2/default-GM.sf2",
+            "/usr/share/sounds/sf2/TimGM6mb.sf2",
+            "/usr/share/sounds/sf2/SGM-v2.01-NicePianosGuitarsBass-V1.3.sf2",
+            // Arch: fluidsynth usually ships FluidR3_GM via extra/soundfont-fluid
+            "/usr/share/soundfonts/fluid-soundfont-gm.sf2",
+        };
+        for (const QString &p : sfPaths) {
+            if (QFile::exists(p)) { sf2 = p; break; }
+        }
+    }
+
+    if (sf2.isEmpty()) {
+        qWarning() << "MIDI render: no soundfont found — install soundfont-fluid "
+                      "(Arch) or fluid-soundfont-gm (Debian) or set a custom path "
+                      "in Settings → Audio → MIDI Soundfont";
+        return QString();
+    }
+
+    QString outWav = QDir::tempPath() + "/" +
+                     QFileInfo(midiPath).completeBaseName() + "_rendered.wav";
+
+    // fluidsynth -ni -g 1.0 -F output.wav soundfont.sf2 input.mid
+    QStringList args = { "-ni", "-g", "1.0", "-F", outWav, sf2, midiPath };
+    QProcess proc;
+    proc.start(fluidsynth, args);
+    if (!proc.waitForFinished(30000)) {
+        proc.kill();
+        qWarning() << "MIDI render: fluidsynth timed out";
+        return QString();
+    }
+    if (proc.exitCode() != 0 || !QFile::exists(outWav)) {
+        qWarning() << "MIDI render failed:" << proc.readAllStandardError();
+        return QString();
+    }
+
+    qDebug() << "MIDI rendered to" << outWav << "using" << sf2;
+    return outWav;
+}
+
+AudioData FrameGridWidget::loadAudioFile(const QString &filePath, int startFrame) {
+    AudioData audio;
+    audio.filePath   = filePath;
+    audio.startFrame = startFrame;
+    audio.volume     = 1.0f;
+    audio.muted      = false;
+    audio.isMidi     = filePath.endsWith(".mid",  Qt::CaseInsensitive) ||
+                       filePath.endsWith(".midi", Qt::CaseInsensitive);
+
+    // ── MIDI: parse notes for visualization + render to PCM ─────────────
+    QString actualFilePath = filePath;
+    if (audio.isMidi) {
+        // 1. Parse note events for piano-roll display
+        MidiParseResult parsed = parseMidiFile(filePath);
+        audio.midiNotes     = parsed.notes;
+        audio.midiTotalBeats = parsed.totalBeats;
+
+        // 2. Render to WAV via FluidSynth for correct tempo + tones
+        QString rendered = renderMidiToWav(filePath);
+        if (!rendered.isEmpty()) {
+            audio.renderedPath = rendered;
+            actualFilePath     = rendered;
+        }
+        if (audio.renderedPath.isEmpty()) {
+            // FluidSynth render failed — warn the user instead of falling back
+            // to Qt's native MIDI (which produces beep-like sounds).
+            qWarning() << "MIDI playback: FluidSynth rendering failed for" << filePath
+                       << "-- install fluidsynth + a soundfont for proper audio.";
+            // Use a sentinel so the player knows not to play raw MIDI
+            // (we keep filePath set so the clip is shown in the timeline).
+            audio.durationFrames = 0; // Will be computed below if possible
+        }
+    }
+
+    // ── Step 1: get accurate duration via QMediaPlayer ────────────────────
+    // QAudioDecoder::duration() is unreliable (often -1 or 0 until fully
+    // decoded). QMediaPlayer reports duration correctly after LoadedMedia.
+    {
+        QMediaPlayer  probe;
+        QAudioOutput  probeOut;   // required by Qt6 even if we never play
+        probe.setAudioOutput(&probeOut);
+        probe.setSource(QUrl::fromLocalFile(actualFilePath));
+
+        QEventLoop probeLoop;
+        qint64     durationMs = -1;
+
+        // mediaStatusChanged fires LoadedMedia once metadata is ready
+        QObject::connect(&probe, &QMediaPlayer::mediaStatusChanged,
+            [&](QMediaPlayer::MediaStatus status) {
+                if (status == QMediaPlayer::LoadedMedia ||
+                    status == QMediaPlayer::BufferedMedia) {
+                    durationMs = probe.duration();
+                    probeLoop.quit();
+                } else if (status == QMediaPlayer::InvalidMedia ||
+                           status == QMediaPlayer::NoMedia) {
+                    probeLoop.quit();
+                }
+            });
+        // Also catch durationChanged which fires even before LoadedMedia on
+        // some backends (GStreamer sends it as soon as demux finishes)
+        QObject::connect(&probe, &QMediaPlayer::durationChanged,
+            [&](qint64 dur) {
+                if (dur > 0) {
+                    durationMs = dur;
+                    probeLoop.quit();
+                }
+            });
+
+        QTimer::singleShot(8000, &probeLoop, &QEventLoop::quit); // 8s safety
+        probeLoop.exec();
+        probe.stop();
+
+        int fps = m_project->fps();
+        if (fps <= 0) fps = 24;
+
+        if (durationMs > 0) {
+            // Correct formula: ms * fps / 1000, with a small ceil to avoid
+            // clipping the last partial frame
+            audio.durationFrames = static_cast<int>(
+                (durationMs * fps + 999) / 1000);   // ceiling division
+        } else {
+            // Could not determine duration — store -1 so the clip renders
+            // and plays to its natural end without being cut off
+            audio.durationFrames = -1;
+        }
+    }
+
+    // ── Step 2: build waveform via QAudioDecoder (non-blocking best-effort)
+    // Skip for MIDI — no PCM to decode, draw piano-roll style instead
+    if (!audio.isMidi) {
+        QAudioDecoder decoder;
+        decoder.setSource(QUrl::fromLocalFile(actualFilePath));
+
+        QEventLoop waveLoop;
+        bool       waveFinished = false;
+
+        QObject::connect(&decoder, &QAudioDecoder::bufferReady, [&]() {
+            if (waveFinished) return;
+            QAudioBuffer buffer = decoder.read();
+            if (!buffer.isValid()) return;
+
+            int channelCount = qMax(1, buffer.format().channelCount());
+            QAudioFormat::SampleFormat fmt = buffer.format().sampleFormat();
+
+            if (fmt == QAudioFormat::Float) {
+                const float *data = buffer.constData<float>();
+                int fc = buffer.frameCount();
+                for (int i = 0; i < fc; i += 50)
+                    audio.waveformData.append(
+                        qMin(qAbs(data[i * channelCount]), 1.0f));
+            } else if (fmt == QAudioFormat::Int16) {
+                const qint16 *data = buffer.constData<qint16>();
+                int fc = buffer.frameCount();
+                for (int i = 0; i < fc; i += 50)
+                    audio.waveformData.append(
+                        qMin(qAbs(data[i * channelCount] / 32768.0f), 1.0f));
+            }
+        });
+
+        QObject::connect(&decoder, &QAudioDecoder::finished,
+            [&]() { waveFinished = true; waveLoop.quit(); });
+        QObject::connect(&decoder,
+            QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error),
+            [&](QAudioDecoder::Error) { waveFinished = true; waveLoop.quit(); });
+
+        decoder.start();
+        QTimer::singleShot(6000, &waveLoop, &QEventLoop::quit);
+        waveLoop.exec();
+        decoder.stop();
+
+        // If we still don't have a duration (decoder sometimes fills it in
+        // after processing), grab it now as a fallback
+        if (audio.durationFrames <= 0 && decoder.duration() > 0) {
+            int fps = m_project->fps() > 0 ? m_project->fps() : 24;
+            audio.durationFrames = static_cast<int>(
+                (decoder.duration() * fps + 999) / 1000);
+        }
+    }
 
     return audio;
 }
@@ -643,11 +1044,8 @@ TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
     , m_project(project)
     , m_isPlaying(false)
     , m_playbackTimerId(-1)
-    , m_audioPlayer(new QMediaPlayer(this))
-    , m_audioOutput(new QAudioOutput(this))
 {
-    m_audioPlayer->setAudioOutput(m_audioOutput);
-    m_audioOutput->setVolume(0.8f); // Set a sensible default volume
+    // Audio players are created on-demand per layer/clip
 
     setupUI();
     connect(m_project, &Project::currentFrameChanged, this, &TimelineWidget::updateFrameDisplay);
@@ -660,24 +1058,33 @@ TimelineWidget::TimelineWidget(Project *project, QWidget *parent)
 
 void TimelineWidget::setupUI()
 {
-    QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    mainLayout->setSpacing(0);
+  QVBoxLayout *mainLayout = new QVBoxLayout(this);
+      // Add a top margin so it doesn't collide with the MenuBar
+      mainLayout->setContentsMargins(0, 5, 0, 0);
+      mainLayout->setSpacing(0);
 
     // Control Bar
-    QWidget *controlBar = new QWidget();
-    controlBar->setStyleSheet("background-color: #282828; border-bottom: 1px solid #000;");
-    controlBar->setFixedHeight(48);
+    m_controlBar = new QWidget();
+    m_controlBar->setStyleSheet(
+        QString("background-color: %1; border-bottom: 1px solid %2;")
+        .arg(theme().bg1, theme().bg0));
+    m_controlBar->setFixedHeight(56);
 
-    QHBoxLayout *controlLayout = new QHBoxLayout(controlBar);
-    controlLayout->setContentsMargins(12, 6, 12, 6);
+    QHBoxLayout *controlLayout = new QHBoxLayout(m_controlBar);
+        // INCREASE the top margin here specifically for the "Playback" label
+        controlLayout->setContentsMargins(12, 10, 12, 8);
+        controlLayout->setSpacing(10);
 
-    auto createPlayButton = [](const QString &text, const QString &tooltip) {
+    auto createPlayButton = [this](const QString &text, const QString &tooltip) {
         QPushButton *btn = new QPushButton(text);
         btn->setFixedSize(34, 34);
         btn->setToolTip(tooltip);
         btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet("QPushButton { background-color: #1e1e1e; border: none; border-radius: 4px; color: white; font-size: 14px; } QPushButton:hover { background-color: #2a82da; } QPushButton:pressed { background-color: #1e60a0; }");
+        { const auto &t = theme();
+        btn->setStyleSheet(QString("QPushButton { background-color: %1; border: none; border-radius: 4px; color: white; font-size: 14px; }"
+            "QPushButton:hover { background-color: %2; } QPushButton:pressed { background-color: %3; }")
+            .arg(t.bg4, t.accent, t.accentHover)); }
+        m_playButtons.append(btn);
         return btn;
     };
 
@@ -695,12 +1102,11 @@ void TimelineWidget::setupUI()
 
     QPushButton *nextBtn = createPlayButton("▶", "Next Frame");
     connect(nextBtn, &QPushButton::clicked, [this]() {
-        int next = m_project->currentFrame() + 1;
-        if (next <= m_project->totalFrames()) m_project->setCurrentFrame(next);
+        m_project->setCurrentFrame(m_project->currentFrame() + 1);
     });
 
     QPushButton *lastBtn = createPlayButton("⏭", "Last Frame");
-    connect(lastBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(m_project->totalFrames()); });
+    connect(lastBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(m_project->highestUsedFrame()); });
 
     m_stopBtn = createPlayButton("⏹", "Stop");
     connect(m_stopBtn, &QPushButton::clicked, this, &TimelineWidget::onStopClicked);
@@ -714,8 +1120,10 @@ void TimelineWidget::setupUI()
     controlLayout->addSpacing(16);
 
     // Frame Label
-    m_frameLabel = new QLabel("1 / 100");
-    m_frameLabel->setStyleSheet("color: #2a82da; font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; background-color: #1e1e1e; padding: 6px 12px; border-radius: 4px;");
+    m_frameLabel = new QLabel("F 1");
+    m_frameLabel->setStyleSheet(
+        QString("color: %1; font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; background-color: %2; padding: 6px 12px; border-radius: 4px;")
+        .arg(theme().accent, theme().bg4));
     m_frameLabel->setMinimumWidth(90);
     m_frameLabel->setAlignment(Qt::AlignCenter);
     controlLayout->addWidget(m_frameLabel);
@@ -732,26 +1140,30 @@ void TimelineWidget::setupUI()
     volIcon->setStyleSheet("color: #888; font-size: 13px;");
     controlLayout->addWidget(volIcon);
 
-    QSlider *volumeSlider = new QSlider(Qt::Horizontal);
-    volumeSlider->setRange(0, 100);
-    volumeSlider->setValue(80);
-    volumeSlider->setFixedWidth(80);
-    volumeSlider->setToolTip("Master Volume");
-    volumeSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #1e1e1e; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #2a82da; width: 12px; margin: -4px 0; border-radius: 6px; }"
-        "QSlider::handle:horizontal:hover { background: #3a92ea; }"
-        "QSlider::sub-page:horizontal { background: #2a82da; border-radius: 2px; }"
-    );
-    connect(volumeSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_audioOutput->setVolume(value / 100.0f);
+    m_volumeSlider = new QSlider(Qt::Horizontal);
+    m_volumeSlider->setRange(0, 100);
+    m_volumeSlider->setValue(80);
+    m_volumeSlider->setFixedWidth(80);
+    m_volumeSlider->setToolTip("Master Volume");
+    { const auto &t = theme();
+    m_volumeSlider->setStyleSheet(
+        QString("QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
+                "QSlider::handle:horizontal { background: %2; width: 12px; margin: -4px 0; border-radius: 6px; }"
+                "QSlider::handle:horizontal:hover { background: %3; }"
+                "QSlider::sub-page:horizontal { background: %2; border-radius: 2px; }")
+        .arg(t.bg4, t.accent, t.accentHover)); }
+    connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int value) {
+        float vol = value / 100.0f;
+        for (auto &players : m_audioPlayers)
+            for (auto &cp : players)
+                cp.output->setVolume(vol);
     });
-    controlLayout->addWidget(volumeSlider);
+    controlLayout->addWidget(m_volumeSlider);
     controlLayout->addSpacing(8);
 
     // NO GIF EXPORT BUTTONS HERE - MOVED TO MENU BAR
 
-    mainLayout->addWidget(controlBar);
+    mainLayout->addWidget(m_controlBar);
 
     // Splitter Area
     QSplitter *splitter = new QSplitter(Qt::Horizontal);
@@ -763,7 +1175,12 @@ void TimelineWidget::setupUI()
     QScrollArea *scrollArea = new QScrollArea();
     scrollArea->setWidgetResizable(false);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-    scrollArea->setStyleSheet("QScrollArea { background-color: #1a1a1a; border: none; } QScrollBar:horizontal { background: #1e1e1e; height: 10px; } QScrollBar::handle:horizontal { background: #3a3a3a; border-radius: 5px; }");
+    { const auto &t = theme();
+    scrollArea->setStyleSheet(
+        QString("QScrollArea { background-color: %1; border: none; }"
+                "QScrollBar:horizontal { background: %1; height: 10px; }"
+                "QScrollBar::handle:horizontal { background: %2; border-radius: 5px; }")
+        .arg(t.bg0, t.bg2)); }
 
     FrameGridWidget *frameGrid = new FrameGridWidget(m_project);
 
@@ -772,6 +1189,7 @@ void TimelineWidget::setupUI()
     connect(frameGrid, &FrameGridWidget::referenceImageImported, this, &TimelineWidget::handleReferenceImport);
 
     scrollArea->setWidget(frameGrid);
+    frameGrid->adjustSize();   // set initial size from sizeHint() before scroll area is shown
 
     splitter->addWidget(scrollArea);
     splitter->setStretchFactor(0, 0);
@@ -789,62 +1207,137 @@ void TimelineWidget::setupUI()
     });
 }
 
-void TimelineWidget::loadAudioTrack(Layer *layer, const QString &audioPath) {
-    m_audioPlayer->setSource(QUrl::fromLocalFile(audioPath));
-    m_currentAudioLayer = layer;
+void TimelineWidget::ensurePlayersForLayer(Layer *layer) {
+    if (!layer) return;
+    const auto &clips = layer->audioClips();
+    auto &players = m_audioPlayers[layer];
 
-    // Apply the layer's volume immediately
-    if (layer && layer->hasAudio()) {
-        AudioData audio = layer->getAudioData();
-        m_audioOutput->setVolume(audio.muted ? 0.0f : audio.volume);
+    // Add players for new clips
+    for (int i = players.size(); i < clips.size(); ++i) {
+        AudioClipPlayer cp;
+        cp.output = new QAudioOutput(this);
+        cp.player = new QMediaPlayer(this);
+        cp.player->setAudioOutput(cp.output);
+        cp.clipIdx = i;
+        players.append(cp);
+    }
+    // Remove players for removed clips
+    while (players.size() > clips.size()) {
+        auto &cp = players.last();
+        cp.player->stop();
+        cp.player->deleteLater();
+        cp.output->deleteLater();
+        players.removeLast();
+    }
+    // Update sources + volume
+    for (int i = 0; i < clips.size() && i < players.size(); ++i) {
+        const AudioData &clip = clips[i];
+        auto &cp = players[i];
+        // For MIDI: only play the rendered WAV; never feed raw MIDI to QMediaPlayer
+        // (raw MIDI via Qt's backend produces beep-like sounds).
+        // For regular audio: play the file directly.
+        QString playPath;
+        if (clip.isMidi) {
+            if (!clip.renderedPath.isEmpty() && QFile::exists(clip.renderedPath))
+                playPath = clip.renderedPath;
+            // else: no rendered audio available — leave source empty (silent)
+        } else {
+            playPath = clip.filePath;
+        }
+
+        QUrl url = playPath.isEmpty() ? QUrl() : QUrl::fromLocalFile(playPath);
+        if (cp.player->source() != url)
+            cp.player->setSource(url);
+        cp.output->setVolume(clip.muted ? 0.0f : clip.volume);
     }
 }
 
-void TimelineWidget::syncAudioToFrame() {
-    if (!m_currentAudioLayer || !m_currentAudioLayer->hasAudio()) {
-        // Try to find an audio layer dynamically
-        for (Layer *layer : m_project->layers()) {
-            if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
-                AudioData audio = layer->getAudioData();
-                m_audioPlayer->setSource(QUrl::fromLocalFile(audio.filePath));
-                m_currentAudioLayer = layer;
-                break;
-            }
-        }
-        if (!m_currentAudioLayer)
-            return;
+void TimelineWidget::releasePlayersForLayer(Layer *layer) {
+    if (!m_audioPlayers.contains(layer)) return;
+    for (auto &cp : m_audioPlayers[layer]) {
+        cp.player->stop();
+        cp.player->deleteLater();
+        cp.output->deleteLater();
     }
+    m_audioPlayers.remove(layer);
+}
 
-    AudioData audio = m_currentAudioLayer->getAudioData();
+void TimelineWidget::releaseAllPlayers() {
+    for (Layer *layer : m_audioPlayers.keys())
+        releasePlayersForLayer(layer);
+}
 
-    // Apply volume from audio data
-    m_audioOutput->setVolume(audio.muted ? 0.0f : audio.volume);
+void TimelineWidget::loadAudioTracks() {
+    // Rebuild players for ALL audio layers
+    for (Layer *layer : m_project->layers()) {
+        if (layer->layerType() == LayerType::Audio && layer->hasAudio())
+            ensurePlayersForLayer(layer);
+    }
+}
 
+void TimelineWidget::loadAudioTrack(Layer *layer, const QString &/*audioPath*/) {
+    if (layer) ensurePlayersForLayer(layer);
+}
+
+void TimelineWidget::syncAudioToFrame() {
     int currentFrame = m_project->currentFrame();
+    int fps = m_project->fps();
+    qint64 frameDiffMs = 1000 / qMax(1, fps);
 
-    if (currentFrame >= audio.startFrame &&
-        currentFrame < audio.startFrame + audio.durationFrames)
-    {
-        int frameOffset = currentFrame - audio.startFrame;
-        qint64 positionMs = (static_cast<qint64>(frameOffset) * 1000) / m_project->fps();
+    // Ensure we have players for all audio layers
+    for (Layer *layer : m_project->layers()) {
+        if (layer->layerType() != LayerType::Audio || !layer->hasAudio()) continue;
+        ensurePlayersForLayer(layer);
 
-        // Only seek if we're more than one frame off to avoid stuttering
-        qint64 currentPosMs = m_audioPlayer->position();
-        qint64 expectedMs   = positionMs;
-        qint64 frameDiffMs  = 1000 / m_project->fps();
+        const auto &clips  = layer->audioClips();
+        auto       &players = m_audioPlayers[layer];
 
-        if (qAbs(currentPosMs - expectedMs) > frameDiffMs * 2) {
-            m_audioPlayer->setPosition(positionMs);
-        }
+        for (int i = 0; i < clips.size() && i < players.size(); ++i) {
+            const AudioData &clip = clips[i];
+            auto &cp = players[i];
 
-        if (m_isPlaying && !audio.muted) {
-            if (m_audioPlayer->playbackState() != QMediaPlayer::PlayingState) {
-                m_audioPlayer->play();
+            // Effective duration: -1 means "use full audio length"
+            int effDuration = clip.durationFrames > 0
+                ? clip.durationFrames
+                : (cp.player->duration() > 0
+                    ? (int)((cp.player->duration() * fps) / 1000) + 1
+                    : 99999);
+
+            bool inRange = (currentFrame >= clip.startFrame &&
+                            currentFrame < clip.startFrame + effDuration);
+
+            cp.output->setVolume(clip.muted ? 0.0f : clip.volume);
+
+            if (inRange) {
+                int frameOffset = currentFrame - clip.startFrame;
+                qint64 posMs = (static_cast<qint64>(frameOffset) * 1000) / qMax(1, fps);
+
+                bool alreadyPlaying = (cp.player->playbackState() == QMediaPlayer::PlayingState);
+
+                // Only seek if:
+                //  - Not currently playing (scrubbing), OR
+                //  - Drift is very large (> 500ms) which means we jumped to a new position
+                // Do NOT seek every frame while playing — this causes stuttering.
+                if (!alreadyPlaying || !m_isPlaying) {
+                    // Scrubbing: always seek to the correct position
+                    qint64 curPosMs = cp.player->position();
+                    if (qAbs(curPosMs - posMs) > frameDiffMs)
+                        cp.player->setPosition(posMs);
+                } else {
+                    // Playing: only correct large drifts (> 500ms) to avoid stutter
+                    qint64 curPosMs = cp.player->position();
+                    if (qAbs(curPosMs - posMs) > 500)
+                        cp.player->setPosition(posMs);
+                }
+
+                if (m_isPlaying && !clip.muted) {
+                    if (cp.player->playbackState() != QMediaPlayer::PlayingState)
+                        cp.player->play();
+                }
+            } else {
+                if (cp.player->playbackState() == QMediaPlayer::PlayingState)
+                    cp.player->pause();
             }
-        }
-    } else {
-        if (m_audioPlayer->playbackState() == QMediaPlayer::PlayingState) {
-            m_audioPlayer->pause();
         }
     }
 }
@@ -869,30 +1362,26 @@ void TimelineWidget::onFrameChanged(int frame) {
 }
 
 void TimelineWidget::updateFrameDisplay() {
-    int current = m_project->currentFrame();
-    int total = m_project->totalFrames();
-    m_frameLabel->setText(QString("%1 / %2").arg(current).arg(total));
+    m_frameLabel->setText(QString("F %1").arg(m_project->currentFrame()));
 }
 
 void TimelineWidget::startPlayback() {
     m_isPlaying = true;
     m_playPauseBtn->setText("⏸");
-    int interval = 1000 / m_project->fps();
-    m_playbackTimerId = startTimer(interval);
 
-    // Auto-detect first audio layer if none loaded yet
-    if (!m_currentAudioLayer) {
-        for (Layer *layer : m_project->layers()) {
-            if (layer->layerType() == LayerType::Audio && layer->hasAudio()) {
-                AudioData audio = layer->getAudioData();
-                m_audioPlayer->setSource(QUrl::fromLocalFile(audio.filePath));
-                m_currentAudioLayer = layer;
-                break;
-            }
-        }
-    }
+    // Record the wall-clock time and the frame we're starting from so
+    // timerEvent can compute which frame *should* be showing right now
+    // instead of blindly incrementing. This prevents timer drift from
+    // causing audio stutter.
+    m_playStartFrame = m_project->currentFrame();
+    m_playElapsed.restart();
 
-    // Kick off audio at correct position
+    // Fire the timer slightly faster than frame-rate so we never skip a frame
+    // (at 24 fps one frame = 41.67 ms; fire every 10 ms and let timerEvent
+    // decide whether it's actually time to advance).
+    m_playbackTimerId = startTimer(10, Qt::PreciseTimer);
+
+    loadAudioTracks();
     syncAudioToFrame();
 }
 
@@ -903,19 +1392,37 @@ void TimelineWidget::stopPlayback() {
         killTimer(m_playbackTimerId);
         m_playbackTimerId = -1;
     }
-    m_audioPlayer->pause();
+    // Pause all active audio players
+    for (auto &players : m_audioPlayers)
+        for (auto &cp : players)
+            if (cp.player->playbackState() == QMediaPlayer::PlayingState)
+                cp.player->pause();
 }
 
 void TimelineWidget::timerEvent(QTimerEvent *event) {
-    if (event->timerId() == m_playbackTimerId) {
-        int nextFrame = m_project->currentFrame() + 1;
-        if (nextFrame > m_project->totalFrames()) {
-            stopPlayback();
-            m_project->setCurrentFrame(1);
-        } else {
-            m_project->setCurrentFrame(nextFrame);
-        }
+    if (event->timerId() != m_playbackTimerId)
+        return;
+
+    int fps = qMax(1, m_project->fps());
+
+    // Calculate which frame should be shown now based on wall-clock time.
+    // This makes visual frame advance perfectly in sync with audio position
+    // regardless of Qt timer jitter.
+    qint64 elapsedMs  = m_playElapsed.elapsed();
+    int    frameOffset = static_cast<int>((elapsedMs * fps) / 1000);
+    int    targetFrame = m_playStartFrame + frameOffset;
+
+    int stopAt = m_project->highestUsedFrame();
+    if (targetFrame > stopAt) {
+        stopPlayback();
+        m_project->setCurrentFrame(1);
+        return;
     }
+
+    // Only call setCurrentFrame (which is expensive — it triggers a full
+    // refreshFrame) when the frame actually changes.
+    if (targetFrame != m_project->currentFrame())
+        m_project->setCurrentFrame(targetFrame);
 }
 
 void TimelineWidget::setOnionSkinEnabled(bool enabled) {
@@ -924,4 +1431,68 @@ void TimelineWidget::setOnionSkinEnabled(bool enabled) {
         int frames = m_project->onionSkinBefore() + m_project->onionSkinAfter();
         grid->setOnionSkin(enabled, frames);
     }
+}
+
+void TimelineWidget::rerenderMidiClips()
+{
+    // For every MIDI clip across all audio layers: delete the old rendered WAV,
+    // re-render with the now-current soundfont, rebuild the QMediaPlayer source.
+    bool any = false;
+    for (Layer *layer : m_project->layers()) {
+        if (layer->layerType() != LayerType::Audio) continue;
+        for (int i = 0; i < layer->audioClips().size(); ++i) {
+            AudioData clip = layer->audioClips()[i];
+            if (!clip.isMidi) continue;
+
+            // Remove stale rendered WAV
+            if (!clip.renderedPath.isEmpty() && QFile::exists(clip.renderedPath))
+                QFile::remove(clip.renderedPath);
+            clip.renderedPath.clear();
+
+            // Re-render with new soundfont
+            QString newWav = renderMidiToWav(clip.filePath);
+            clip.renderedPath = newWav;
+            layer->setAudioClip(i, clip);
+            any = true;
+        }
+    }
+
+    if (any) {
+        // Rebuild all players so they pick up the new WAV sources
+        releaseAllPlayers();
+        loadAudioTracks();
+    }
+}
+
+void TimelineWidget::applyTheme()
+{
+    const ThemeColors &t = theme();
+
+    m_controlBar->setStyleSheet(
+        QString("background-color: %1; border-bottom: 1px solid %2;").arg(t.bg1, t.bg0));
+
+    QString btnStyle = QString(
+        "QPushButton { background-color: %1; border: none; border-radius: 4px;"
+        " color: white; font-size: 14px; }"
+        "QPushButton:hover { background-color: %2; }"
+        "QPushButton:pressed { background-color: %3; }")
+        .arg(t.bg4, t.accent, t.accentHover);
+
+    for (QPushButton *btn : m_playButtons)
+        btn->setStyleSheet(btnStyle);
+
+    m_frameLabel->setStyleSheet(
+        QString("color: %1; font-family: 'Courier New', monospace; font-size: 13px;"
+                " font-weight: bold; background-color: %2; padding: 6px 12px; border-radius: 4px;")
+        .arg(t.accent, t.bg4));
+
+    m_volumeSlider->setStyleSheet(
+        QString("QSlider::groove:horizontal { background: %1; height: 4px; border-radius: 2px; }"
+                "QSlider::handle:horizontal { background: %2; width: 12px; margin: -4px 0; border-radius: 6px; }"
+                "QSlider::handle:horizontal:hover { background: %3; }"
+                "QSlider::sub-page:horizontal { background: %2; border-radius: 2px; }")
+        .arg(t.bg4, t.accent, t.accentHover));
+
+    // Repaint the painted sub-widgets so QPainter colors update
+    update();
 }

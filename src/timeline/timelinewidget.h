@@ -5,12 +5,16 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QLabel>
+#include <QList>
+#include <QMap>
+#include <QElapsedTimer>
 
 class Project;
 class Layer;
 class QMediaPlayer;
 class QAudioOutput;
 struct AudioData;
+struct AudioClipPlayer;
 
 class FrameGridWidget : public QWidget
 {
@@ -55,6 +59,10 @@ protected:
 
 public slots:
     void setOnionSkinEnabled(bool enabled);
+    void applyTheme();
+    // Re-render all MIDI clips with the currently-selected soundfont.
+    // Call this whenever the SF2 path changes in Settings.
+    void rerenderMidiClips();
 
 private slots:
     void onPlayPauseClicked();
@@ -62,6 +70,7 @@ private slots:
     void onFrameChanged(int frame);
     void updateFrameDisplay();
     void loadAudioTrack(Layer *layer, const QString &audioPath);
+    void loadAudioTracks();
     void syncAudioToFrame();
     void handleReferenceImport(Layer *layer, const QString &imagePath, int frame);
 
@@ -77,11 +86,22 @@ private:
     QLabel *m_fpsLabel;
     bool m_isPlaying;
     int m_playbackTimerId;
+    QElapsedTimer m_playElapsed;   // wall-clock timer for drift-free frame advance
+    int           m_playStartFrame = 1; // frame we were on when playback started
+    QWidget *m_controlBar;
+    QSlider *m_volumeSlider;
+    QList<QPushButton*> m_playButtons;
 
-    // Audio playback
-    QMediaPlayer *m_audioPlayer;
-    QAudioOutput *m_audioOutput;
-    Layer *m_currentAudioLayer = nullptr;
+    // Audio playback — one player per audio layer, supports multiple layers + clips
+    struct AudioClipPlayer {
+        QMediaPlayer  *player  = nullptr;
+        QAudioOutput  *output  = nullptr;
+        int            clipIdx = 0;   // which clip in the layer this player serves
+    };
+    QMap<Layer*, QList<AudioClipPlayer>> m_audioPlayers; // layer -> [player per clip]
+    void ensurePlayersForLayer(Layer *layer);
+    void releasePlayersForLayer(Layer *layer);
+    void releaseAllPlayers();
 };
 
 #endif // TIMELINEWIDGET_H
