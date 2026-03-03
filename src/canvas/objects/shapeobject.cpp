@@ -8,23 +8,19 @@ ShapeObject::ShapeObject(Type type, QGraphicsItem *parent)
 {
 }
 
-VectorObject* ShapeObject::clone() const {
-    // Assuming your constructor takes the shape type
-    ShapeObject* copy = new ShapeObject(this->m_shapeType);
-
-    // Copy Shape-specific geometry (e.g., the rectangle bounds)
-    copy->setRect(this->m_rect);
-
-    // Copy base VectorObject properties
-    copy->setStrokeColor(this->strokeColor());
-    copy->setFillColor(this->fillColor());
-    copy->setStrokeWidth(this->strokeWidth());
-    copy->setObjectOpacity(this->objectOpacity());
-
-    copy->setPos(this->pos());
-    copy->setRotation(this->rotation());
-    copy->setScale(this->scale());
-
+VectorObject* ShapeObject::clone() const
+{
+    ShapeObject *copy = new ShapeObject(m_shapeType);
+    copy->setRect(m_rect);
+    copy->setStrokeColor(strokeColor());
+    copy->setFillColor(fillColor());
+    copy->setStrokeWidth(strokeWidth());
+    copy->setObjectOpacity(objectOpacity());
+    copy->setRoundedCorners(m_roundedCorners);
+    copy->setCornerRadius(m_cornerRadius);
+    copy->setPos(pos());
+    copy->setRotation(rotation());
+    copy->setScale(scale());
     return copy;
 }
 
@@ -39,8 +35,8 @@ void ShapeObject::setRect(const QRectF &rect)
 
 QRectF ShapeObject::boundingRect() const
 {
-    qreal penWidth = m_strokeWidth / 2.0;
-    return m_rect.adjusted(-penWidth, -penWidth, penWidth, penWidth);
+    qreal pw = qMax(m_strokeWidth, 1.0) / 2.0;
+    return m_rect.adjusted(-pw, -pw, pw, pw);
 }
 
 void ShapeObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget)
@@ -50,26 +46,29 @@ void ShapeObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *optio
 
     painter->setRenderHint(QPainter::Antialiasing);
 
-    QPen pen(m_strokeColor, m_strokeWidth);
-    painter->setPen(pen);
-
-    if (m_fillColor != Qt::transparent && m_fillColor.alpha() > 0) {
-        painter->setBrush(m_fillColor);
+    // Stroke
+    if (m_strokeWidth > 0) {
+        painter->setPen(QPen(m_strokeColor, m_strokeWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     } else {
-        painter->setBrush(Qt::NoBrush);
+        painter->setPen(Qt::NoPen);
     }
 
+    // Fill
+    painter->setBrush((m_fillColor.alpha() > 0) ? QBrush(m_fillColor) : Qt::NoBrush);
+
     if (m_shapeType == Rectangle) {
-        painter->drawRect(m_rect);
+        if (m_roundedCorners && m_cornerRadius > 0)
+            painter->drawRoundedRect(m_rect, m_cornerRadius, m_cornerRadius);
+        else
+            painter->drawRect(m_rect);
     } else {
         painter->drawEllipse(m_rect);
     }
 
-    // Draw selection outline if selected
+    // Selection highlight
     if (isSelected()) {
-        QPen selectPen(Qt::blue, 1, Qt::DashLine);
-        painter->setPen(selectPen);
+        painter->setPen(QPen(QColor(42, 130, 218), 1.5, Qt::DashLine));
         painter->setBrush(Qt::NoBrush);
-        painter->drawRect(boundingRect());
+        painter->drawRect(boundingRect().adjusted(1, 1, -1, -1));
     }
 }

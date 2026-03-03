@@ -23,6 +23,12 @@ public:
 
     Type shapeType() const { return m_shapeType; }
 
+    // Rounded corners (rectangles only)
+    void setRoundedCorners(bool rounded) { m_roundedCorners = rounded; update(); }
+    bool roundedCorners() const { return m_roundedCorners; }
+    void setCornerRadius(qreal radius) { m_cornerRadius = radius; update(); }
+    qreal cornerRadius() const { return m_cornerRadius; }
+
     // QGraphicsItem interface
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
@@ -31,6 +37,8 @@ public:
 private:
     Type m_shapeType;
     QRectF m_rect;
+    bool m_roundedCorners = false;
+    qreal m_cornerRadius  = 12.0;
 };
 
 #endif // SHAPEOBJECT_H

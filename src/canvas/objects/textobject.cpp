@@ -42,7 +42,7 @@ VectorObject* TextObject::clone() const
     copy->setPos(pos());
     copy->setRotation(rotation());
     copy->setScale(scale());
-    copy->setZValue(zValue());
+    // NOTE: do NOT copy zValue() — display clones must use natural stacking (z=0)
 
     return copy;
 }

@@ -11,7 +11,8 @@ enum class VectorObjectType {
     Rectangle,
     Ellipse,
     Text,
-    Image
+    Image,
+    Group
 };
 
 class VectorObject : public QGraphicsItem
@@ -44,6 +45,13 @@ public:
 
     // --- QGraphicsItem Interface ---
     QRectF boundingRect() const override = 0;
+
+    // Move this object by (dx,dy) in scene coordinates.
+    // PathObject overrides this to translate path points (since path is in scene coords).
+    // Other objects can use the default setPos() implementation.
+    virtual void moveBy(qreal dx, qreal dy) {
+        setPos(pos() + QPointF(dx, dy));
+    }
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
                QWidget *widget = nullptr) override = 0;
 
