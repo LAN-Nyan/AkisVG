@@ -7,6 +7,7 @@
 #include "core/layer.h"
 #include "utils/thememanager.h"
 
+#include <QEventLoop>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPushButton>
