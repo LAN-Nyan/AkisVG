@@ -80,15 +80,21 @@ void ShapeTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas 
                                                      ShapeObject::Rectangle : ShapeObject::Ellipse);
             shape->setRect(rect);
             shape->setStrokeColor(m_strokeColor);
-            
-            // Apply fill only if fillByDefault is enabled
+
+            // FIX #18: Use separate shapeFillColor so stroke and fill can be different colors
             if (m_fillByDefault) {
-                shape->setFillColor(m_fillColor);
+                shape->setFillColor(m_shapeFillColor);
             } else {
                 shape->setFillColor(Qt::transparent);
             }
-            
+
             shape->setStrokeWidth(m_strokeWidth);
+
+            // Apply rounded corners setting from tool
+            if (m_shapeType == ShapeType::Rectangle) {
+                shape->setRoundedCorners(m_roundedCorners);
+                shape->setCornerRadius(m_cornerRadius);
+            }
 
             canvas->addObject(shape);
         }

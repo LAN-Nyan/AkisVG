@@ -1,9 +1,10 @@
 #include "eyedroppertool.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/vectorobject.h"
+#include <QGraphicsSceneMouseEvent>
 
 EyedropperTool::EyedropperTool(QObject *parent)
-    : Tool(ToolType::Select, parent) // Using Select type or adding a new Eyedropper type
+    : Tool(ToolType::eyedropper, parent) // Add 'Eyedropper' to your ToolType enum
 {
     m_name = "Color Picker";
 }
@@ -15,12 +16,11 @@ void EyedropperTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanv
     VectorObject *vObj = dynamic_cast<VectorObject*>(item);
 
     if (vObj) {
-        // 2. Extract colors from your VectorObject DNA
+        // 2. Extract colors
         QColor pickedStroke = vObj->strokeColor();
         QColor pickedFill = vObj->fillColor();
 
-        // 3. Update the global tool settings (inherited from tool.h)
-        // If user holds Shift, maybe pick Fill; otherwise pick Stroke
+        // 3. Update settings based on modifiers
         if (event->modifiers() & Qt::ShiftModifier) {
             canvas->currentTool()->setFillColor(pickedFill);
         } else {
@@ -28,14 +28,23 @@ void EyedropperTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanv
         }
 
         emit colorPicked(pickedStroke, pickedFill);
+
+        // 4. CRITICAL: Tell Qt you handled the event so it doesn't
+        // start dragging the ItemIsMovable object
+        event->accept();
+    } else {
+        // If we hit empty space, ignore so the canvas can deselect items
+        event->ignore();
     }
 }
 
 void EyedropperTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    // Optional: Update a "Preview" UI element as the user hovers
     QGraphicsItem *item = canvas->itemAt(event->scenePos(), QTransform());
-    if (VectorObject *vObj = dynamic_cast<VectorObject*>(item)) {
-        // You could emit a signal here for a "live preview" magnifying glass
+
+    // Check if we are hovering over a valid object
+    if (dynamic_cast<VectorObject*>(item)) {
+        // You can update a cursor or a small preview UI here later
+        event->accept();
     }
 }

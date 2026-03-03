@@ -2,6 +2,7 @@
 #define BRUSHTOOL_H
 
 #include "tool.h"
+#include <QDateTime>
 
 class PathObject;
 
@@ -17,8 +18,10 @@ public:
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
 
 private:
-    QPointF m_lastPoint;
     PathObject *m_currentPath;
+    QPointF     m_lastPoint;
+    qreal       m_lastPressure;  // smoothed pressure from previous sample
+    qint64      m_lastEventMs;   // timestamp of last registered point (for time-based sim)
 };
 
 #endif // BRUSHTOOL_H

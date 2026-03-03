@@ -6,6 +6,7 @@
 #include <QSet>
 
 class PathObject;
+class VectorObject;
 
 class LiquifyTool : public Tool
 {

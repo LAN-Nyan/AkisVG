@@ -174,46 +174,52 @@ QColor BlendTool::pickColorAtPoint(const QPointF &pos, VectorCanvas *canvas)
 {
     if (!canvas) return QColor();
 
-    qreal radius = m_strokeWidth / 2.0;
-    QRectF searchRect(pos.x() - radius, pos.y() - radius, radius * 2, radius * 2);
-    QList<QGraphicsItem*> itemsAtPoint = canvas->items(searchRect, Qt::IntersectsItemBoundingRect);
+    // FIX #16: Use pixel buffer / texture sampling instead of object lookup.
+    // Temporarily hide the active smear so we sample the underlying canvas content.
+    bool smearWasVisible = false;
+    if (m_activeSmear) {
+        smearWasVisible = m_activeSmear->isVisible();
+        m_activeSmear->setVisible(false);
+    }
 
-    PathObject *closestPath = nullptr;
-    qreal closestDistance = radius * 2;
-    int checkedCount = 0;
+    QImage img = canvas->currentImage();
 
-    for (QGraphicsItem *item : itemsAtPoint) {
-        if (checkedCount >= 5) break;
+    if (m_activeSmear && smearWasVisible)
+        m_activeSmear->setVisible(true);
 
-        PathObject *pathObj = dynamic_cast<PathObject*>(item);
-        if (!pathObj) continue;
+    if (img.isNull()) return QColor();
 
-        if (pathObj == m_activeSmear) continue;
-        if (pathObj->opacity() < 0.99) continue;
+    // Average a small region around the sample point for stability
+    QRect sceneRect = canvas->sceneRect().toRect();
+    int imgW = img.width();
+    int imgH = img.height();
 
-        checkedCount++;
-        QPointF pathCenter = pathObj->boundingRect().center();
-        qreal distance = QLineF(pos, pathCenter).length();
+    // Map scene pos to image coordinates
+    qreal scaleX = imgW / (qreal)(sceneRect.width()  > 0 ? sceneRect.width()  : imgW);
+    qreal scaleY = imgH / (qreal)(sceneRect.height() > 0 ? sceneRect.height() : imgH);
+    int px = qRound((pos.x() - sceneRect.x()) * scaleX);
+    int py = qRound((pos.y() - sceneRect.y()) * scaleY);
 
-        if (distance < closestDistance) {
-            closestDistance = distance;
-            closestPath = pathObj;
+    // Sample a 5x5 kernel and average
+    int sampleR = 0, sampleG = 0, sampleB = 0, sampleA = 0, count = 0;
+    int radius = 2;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            int sx = px + dx;
+            int sy = py + dy;
+            if (sx < 0 || sy < 0 || sx >= imgW || sy >= imgH) continue;
+            QColor c = img.pixelColor(sx, sy);
+            if (c.alpha() < 5) continue;
+            sampleR += c.red();
+            sampleG += c.green();
+            sampleB += c.blue();
+            sampleA += c.alpha();
+            count++;
         }
     }
 
-    if (closestPath) {
-        QColor c = closestPath->strokeColor();
-        if (!c.isValid() || c.alpha() < 10) {
-            c = closestPath->fillColor();
-        }
-
-        // ===== FIX: Only return color if it's actually visible =====
-        if (c.isValid() && c.alpha() > 10) {
-            return c;
-        }
-    }
-
-    return QColor();
+    if (count == 0) return QColor();
+    return QColor(sampleR/count, sampleG/count, sampleB/count, sampleA/count);
 }
 
 QColor BlendTool::blendColors(const QColor &color1, const QColor &color2, qreal factor)

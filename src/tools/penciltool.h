@@ -17,8 +17,8 @@ public:
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
 
 private:
-    PathObject *m_currentPath;\
-    QPointF m_lastPoint;
+    PathObject *m_currentPath;
+    QPointF     m_lastPoint;
 };
 
 #endif // PENCILTOOL_H
