@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QUndoStack>
+#include <QList>
 
 class Project;
 class VectorCanvas;
@@ -18,6 +19,13 @@ class VectorObject;
 class QPushButton;
 class QWidget;
 class ProjectSettings;
+class SplineOverlay;
+class ObjectGroup;
+class EyedropperTool;
+// ── NEW TOOL INCLUDES ────────────────────────────────────────────────────────
+class LassoTool;
+class MagicWandTool;
+class SelectTool;
 
 class MainWindow : public QMainWindow
 {
@@ -26,6 +34,10 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    // Called by main() after startup dialog
+    void applyStartupSettings(const QString &name, int width, int height, int fps);
+    void openProjectFile(const QString &path);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -39,6 +51,8 @@ private slots:
     void about();
     void updateWindowTitle();
 
+    void onSplineCommitted(const QList<QPointF> &nodes);
+    void onInstanceGroupRequested(ObjectGroup *group);
     // Import functions
     void importAudio();
     void importImage();
@@ -48,6 +62,12 @@ private slots:
     void exportGifKeyframes();
     void exportGifAllFrames();
 
+    // ── NEW: Lasso / Magic Wand action slots ─────────────────────────────────
+    void onLassoFill(const QPolygonF &poly, const QColor &color);
+    void onLassoCut (const QPolygonF &poly);
+    void onLassoCopy(const QPolygonF &poly);
+    void onLassoPull(const QPolygonF &poly, QPointF dragStart);
+    void provideWandSnapshot(MagicWandTool *wand);
 
 private:
     void createActions();
@@ -55,6 +75,7 @@ private:
     void createToolBars();
     void createDockWindows();
     void setupCanvas();
+    void startInterpolationMode();
 
     bool maybeSave();
 
@@ -68,6 +89,19 @@ private:
     AssetLibrary *m_assetLibrary;
     TimelineWidget *m_timeline;
     ProjectSettings *m_projectSettings;
+    SplineOverlay *m_splineOverlay = nullptr;
+    EyedropperTool *m_eyedropperTool;
+
+    // ── NEW TOOLS ────────────────────────────────────────────────────────────
+    LassoTool     *m_lassoTool     = nullptr;
+    MagicWandTool *m_magicWandTool = nullptr;
+
+    // Clipboard for cut/copy
+    QList<VectorObject*> m_clipboard;
+    QList<VectorObject*> m_interpolationTargets;
+    int  m_interpTotalFrames = 24;
+    bool m_interpAdvanced    = false;
+    QList<int> m_interpKeyframeTimes;
 
     QMenu *m_fileMenu;
     QMenu *m_editMenu;

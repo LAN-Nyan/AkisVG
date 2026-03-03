@@ -1,35 +1,55 @@
 #include "mainwindow.h"
+#include "ui/startupdialog.h"
+#include "core/project.h"
 #include <QApplication>
 #include <QStyleFactory>
-#include <QGuiApplication>
 
 int main(int argc, char *argv[])
 {
-    // 1. High DPI scaling is ENABLED by default in Qt 6.
-    // Manual AA_EnableHighDpiScaling calls are actually ignored in Qt 6.
-    
-    // 2. Fix for Windows "Tiny/Huge" scaling inconsistency:
-    // We set the policy BEFORE the QApplication constructor.
+    // ── DPI scaling ──────────────────────────────────────────────────────────
 #ifdef Q_OS_WIN
-    // 'Round' can cause things to snap to 100% (too small) or 200% (too big).
-    // 'PassThrough' allows Qt to use the exact Windows scaling (e.g., 125%).
-    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::Round);
+#else
+    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif
 
     QApplication app(argc, argv);
-
-    // 3. Metadata
     app.setOrganizationName("AkisVG");
+    app.setOrganizationDomain("akisvg by LAN-Nyan");
     app.setApplicationName("AkisVG");
     app.setApplicationVersion("1.0.0");
 
-    // 4. Style: Fusion is the best cross-platform dark-theme base.
-    // It handles custom color palettes much better than the native 'Windows' style.
+#ifdef Q_OS_WIN
     app.setStyle(QStyleFactory::create("Fusion"));
+#endif
 
+    // ── Startup dialog ───────────────────────────────────────────────────────
+    StartupDialog startup;
+    if (startup.exec() != QDialog::Accepted) {
+        return 0; // user closed the dialog → quit
+    }
+
+    // ── Build main window ────────────────────────────────────────────────────
     MainWindow window;
-    window.show();
+
+    if (startup.action() == StartupDialog::Action::OpenProject) {
+        // Open existing project file
+        window.show();
+        window.openProjectFile(startup.openPath());
+    } else {
+        // Apply new-project settings before showing the window
+        window.applyStartupSettings(
+            startup.projectName(),
+            startup.canvasWidth(),
+            startup.canvasHeight(),
+            startup.fps());
+        window.show();
+    }
 
     return app.exec();
 }

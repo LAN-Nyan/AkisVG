@@ -1,8 +1,17 @@
+// TODO:
+//1. Fix ffmpeg intergration! Gid, Mkv, Mp4, nne of them work, even though ffmpeg is installed (via packman on arch)
+//2. Add MP$/Mkv import.
+//3. Speed up export (it sclaes Fuckig' awful!)
+
 #include "mainwindow.h"
 #include "core/project.h"
 #include "canvas/vectorcanvas.h"
+#include "canvas/objects/pathobject.h"
+#include "canvas/objects/shapeobject.h"
 #include "canvas/canvasview.h"
 #include "canvas/objects/imageobject.h"
+#include "canvas/objects/objectgroup.h"
+#include "canvas/splineoverlay.h"
 #include "panels/toolbox.h"
 #include "panels/layerpanel.h"
 #include "panels/colorpicker.h"
@@ -11,16 +20,24 @@
 #include "timeline/timelinewidget.h"
 #include "tools/tool.h"
 #include "tools/selecttool.h"
+#include "tools/lassotool.h"
+#include "tools/magicwandtool.h"
+#include "canvas/objects/transformableimageobject.h"
 #include "io/gifexporter.h"
 #include "panels/settingspanel.h"
+#include "tools/eyedroppertool.h"
+#include "utils/thememanager.h"
 
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
 #include <QDockWidget>
+#include <QInputDialog>
+#include <QDialog>
 #include <QTabWidget>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QCloseEvent>
 #include <QSettings>
 #include <QVBoxLayout>
@@ -29,10 +46,13 @@
 #include <QSplitter>
 #include <QProcess>
 #include <QDir>
+#include <QStandardPaths>
+#include <QDateTime>
 #include <QProcess>
 #include <QProgressDialog>
 #include <QBuffer>
 #include <QPainter>
+#include <QSvgGenerator>
 #include <QApplication>
 #include <QMediaPlayer>
 #include <QAudioOutput> // ADDED
@@ -41,6 +61,10 @@
 #include <QUrl>
 #include <QPushButton> // ADDED
 #include <QMessageBox>
+#include <QKeyEvent>
+#include <QPolygonF>
+#include <QShortcut>
+#include <QClipboard>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -59,59 +83,108 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1800, 1000);
     setMinimumSize(1200, 700);
 
+    // FIX #2: Set application logo/icon using SVG asset to replace default Wayland icon
+    setWindowIcon(QIcon(":/icons/pencil.svg"));
+
     // Set dark stylesheet
     setStyleSheet(R"(
+        /* Main Window & Central Widget */
         QMainWindow {
-            background-color: #1a1a1a;
+            background-color: #1e1e1e;
         }
+
+        /* Menu Bar */
         QMenuBar {
-            background-color: #2d2d2d;
+            background-color: #1e1e1e;
             color: #e0e0e0;
-            border-bottom: 1px solid #000;
-            padding: 4px;
+            border-bottom: 1px solid #282828;
+            padding: 2px;
         }
         QMenuBar::item {
             background-color: transparent;
             padding: 6px 12px;
-            border-radius: 4px;
+            border-radius: 2px;
         }
         QMenuBar::item:selected {
-            background-color: #3a3a3a;
+            background-color: #282828;
+            color: #c0392b;
         }
+
+        /* Dropdown Menus */
         QMenu {
-            background-color: #2d2d2d;
+            background-color: #242424;
             color: #e0e0e0;
-            border: 1px solid #000;
+            border: 1px solid #282828;
+            padding: 4px;
         }
         QMenu::item {
             padding: 6px 24px 6px 12px;
+            border-radius: 2px;
         }
         QMenu::item:selected {
-            background-color: #2a82da;
+            background-color: #c0392b;
+            color: #ffffff;
         }
+        QMenu::separator {
+            height: 1px;
+            background: #333333;
+            margin: 4px 8px;
+        }
+
+        /* ToolBars */
         QToolBar {
-            background-color: #2d2d2d;
-            border: none;
-            spacing: 4px;
+            background-color: #1e1e1e;
+            border-bottom: 1px solid #282828;
+            border-top: none;
+            spacing: 6px;
             padding: 4px;
         }
-        QStatusBar {
-            background-color: #2d2d2d;
-            color: #a0a0a0;
-            border-top: 1px solid #000;
+        QToolBar::separator {
+            width: 1px;
+            background: #333333;
+            margin: 6px;
         }
+
+        /* Dock Widgets */
         QDockWidget {
-            color: #e0e0e0;
-            titlebar-close-icon: url(close.png);
-            titlebar-normal-icon: url(float.png);
+            color: #999;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 10px;
         }
         QDockWidget::title {
-            background-color: #3a3a3a;
-            padding: 6px;
-            border-bottom: 1px solid #000;
+            background-color: #1e1e1e;
+            padding: 8px;
+            border-bottom: 1px solid #282828;
+            text-align: left;
+            letter-spacing: 1.5px;
+        }
+
+        /* Status Bar */
+        QStatusBar {
+            background-color: #1e1e1e;
+            color: #666;
+            border-top: 1px solid #282828;
+            font-size: 10px;
+        }
+        QStatusBar::item { border: none; }
+
+        /* Tool Buttons (inside toolbars/panels) */
+        QToolButton {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 4px;
+        }
+        QToolButton:hover {
+            background-color: #282828;
+            border: 1px solid #c0392b;
+        }
+        QToolButton:checked {
+            background-color: #c0392b;
+            color: white;
         }
     )");
-
 
 
     // Force the menu bar to render inline (prevents KDE/GNOME global menu from stealing it)
@@ -125,15 +198,48 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Connect signals
     connect(m_toolBox, &ToolBox::toolChanged, m_canvas, &VectorCanvas::setCurrentTool);
+
+    // INSTANT COLOR SYNC: When the tool changes, update the color picker to
+    // reflect that tool's current stroke color immediately.
+    // We do NOT block signals — instead we let setColor run fully (wheel repaints,
+    // hex field updates, opacity syncs), but we guard against the resulting
+    // colorChanged from overwriting the *new* tool's color by checking whether
+    // the color actually changed.
+    connect(m_toolBox, &ToolBox::toolChanged, this, [this](Tool *tool) {
+        if (!tool) return;
+        QColor toolColor = tool->strokeColor();
+        if (m_colorPicker->currentColor() != toolColor) {
+            // Temporarily disconnect the colorChanged → tool update path
+            // so setting the picker color doesn't immediately write back into the tool
+            disconnect(m_colorPicker, &ColorPicker::colorChanged, this, nullptr);
+            m_colorPicker->setColor(toolColor);
+            // Reconnect
+            connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &color) {
+                if (m_toolBox->currentTool()) {
+                    m_toolBox->currentTool()->setStrokeColor(color);
+                    m_toolBox->currentTool()->setFillColor(color);
+                }
+            });
+        }
+    });
     connect(m_project, &Project::modified, this, [this]() {
         m_isModified = true;
         updateWindowTitle();
     });
 
-    // Connect color picker to toolbox
+    // Re-sync the selected image pointer after every refreshFrame.
+    // VectorCanvas deletes and recreates display clones on each refresh,
+    // so m_selectedImage in CanvasView would otherwise become a dangling pointer.
+    connect(m_project, &Project::currentFrameChanged,
+            m_canvasView, &CanvasView::syncSelectedImage);
+    connect(m_project, &Project::modified,
+            m_canvasView, &CanvasView::syncSelectedImage);
+
+    // Initial color picker → tool connection (also re-established in toolChanged handler above)
     connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &color) {
         if (m_toolBox->currentTool()) {
             m_toolBox->currentTool()->setStrokeColor(color);
+            m_toolBox->currentTool()->setFillColor(color);
         }
     });
     //NSTANT UNDO/REDO REFRESH
@@ -161,6 +267,48 @@ MainWindow::MainWindow(QWidget *parent)
 
     statusBar()->showMessage("Ready - Use Pencil tool to draw", 5000);
     updateWindowTitle();
+
+    // ── Lasso & Magic Wand: get toolbox instances (do NOT create new ones) ──
+    // The toolbox owns the tool instances that VectorCanvas activates via toolChanged.
+    // Creating separate instances here would mean our signal connections never fire.
+    m_lassoTool     = qobject_cast<LassoTool*>(m_toolBox->getTool(ToolType::Lasso));
+    m_magicWandTool = qobject_cast<MagicWandTool*>(m_toolBox->getTool(ToolType::MagicWand));
+
+    if (m_lassoTool) {
+        connect(m_lassoTool, &LassoTool::actionFill, this, &MainWindow::onLassoFill);
+        connect(m_lassoTool, &LassoTool::actionCut,  this, &MainWindow::onLassoCut);
+        connect(m_lassoTool, &LassoTool::actionCopy, this, &MainWindow::onLassoCopy);
+        // Start marching-ants animation when a selection is formed
+        connect(m_lassoTool, &LassoTool::selectionChanged, this, [this]() {
+            if (m_lassoTool->hasSelection())
+                m_canvasView->startAntTimer();
+        });
+        connect(m_lassoTool, &LassoTool::actionPull, this, &MainWindow::onLassoPull);
+    }
+    if (m_magicWandTool) {
+        connect(m_magicWandTool, &MagicWandTool::actionFill, this, &MainWindow::onLassoFill);
+        connect(m_magicWandTool, &MagicWandTool::actionCut,  this, &MainWindow::onLassoCut);
+        connect(m_magicWandTool, &MagicWandTool::actionCopy, this, &MainWindow::onLassoCopy);
+    }
+
+    // Feed Magic Wand a fresh canvas snapshot on tool switch and before each click
+    connect(m_toolBox, &ToolBox::toolChanged, this, [this](Tool *tool) {
+        if (tool && tool->type() == ToolType::MagicWand) {
+            if (auto *wand = qobject_cast<MagicWandTool*>(tool))
+                provideWandSnapshot(wand);
+        }
+    });
+    connect(m_canvasView, &CanvasView::wandAboutToClick, this, [this]() {
+        if (m_magicWandTool)
+            provideWandSnapshot(m_magicWandTool);
+    });
+
+    // Escape cancels in-progress lasso/wand
+    new QShortcut(QKeySequence(Qt::Key_Escape), this, [this]() {
+        if (m_lassoTool)     m_lassoTool->cancel();
+        if (m_magicWandTool) m_magicWandTool->cancel();
+        m_canvasView->viewport()->update();
+    });
 }
 
 MainWindow::~MainWindow()
@@ -169,17 +317,191 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupCanvas()
 {
-    // Create central widget with proper layout
+    // 1. UI Layout Setup
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout(centralWidget);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
 
-    // Canvas area with grey background (infinite canvas feel)
     m_canvasView->setStyleSheet("QGraphicsView { background-color: #3c3c3c; border: none; }");
     layout->addWidget(m_canvasView);
-
     setCentralWidget(centralWidget);
+
+    // 2. Initialize Spline Overlay ONCE and parent to Viewport
+    m_splineOverlay = new SplineOverlay(m_canvasView->viewport());
+    m_splineOverlay->hide();
+    m_canvasView->setSplineOverlay(m_splineOverlay);
+
+    // ─── CRITICAL: Re-link the Enter/Esc keys ───
+    connect(m_splineOverlay, &SplineOverlay::committed, this, &MainWindow::onSplineCommitted);
+    connect(m_splineOverlay, &SplineOverlay::exitRequested, this, [this]() {
+        m_interpolationTargets.clear();
+        m_canvas->exitInterpolationMode();
+    });
+
+    // Forward node changes to settings panel for advanced per-node controls
+    connect(m_splineOverlay, &SplineOverlay::splineChanged, this, [this](const QList<QPointF> &nodes) {
+        if (m_toolBox && m_toolBox->settingsPanel())
+            m_toolBox->settingsPanel()->updateInterpolationNodes(nodes.size());
+    });
+
+    connect(m_canvasView, &CanvasView::viewportResized, this, [this]() {
+        m_splineOverlay->resize(m_canvasView->viewport()->size());
+    });
+
+    connect(m_canvasView, &CanvasView::frameNavigationRequested, this, [this](int delta) {
+        if (!m_project) return;
+        int next = qBound(1, m_project->currentFrame() + delta, m_project->totalFrames());
+        m_project->setCurrentFrame(next);
+    });
+
+    // 3. Handle Interpolation Mode State
+    connect(m_canvas, &VectorCanvas::interpolationModeChanged, this, [this](bool active) {
+        if (active) {
+            m_splineOverlay->resize(m_canvasView->viewport()->size());
+            m_splineOverlay->show();
+
+            // --- THE FOCUS TRAP ---
+            m_splineOverlay->setFocusPolicy(Qt::StrongFocus);
+            m_splineOverlay->setFocus();
+            m_splineOverlay->raise();
+
+            setWindowTitle("AkisVG — ✦ Interpolating…");
+
+            // Show interpolation controls in tool settings panel
+            if (m_toolBox && m_toolBox->settingsPanel())
+                m_toolBox->settingsPanel()->showInterpolationControls(m_interpTotalFrames);
+        } else {
+            m_splineOverlay->hide();
+            m_canvasView->setFocus();
+            updateWindowTitle();
+
+            // Restore normal select controls
+            if (m_toolBox && m_toolBox->settingsPanel())
+                m_toolBox->settingsPanel()->hideInterpolationControls();
+        }
+    });
+
+    // Listen for settings changes from the panel
+    if (m_toolBox && m_toolBox->settingsPanel()) {
+        connect(m_toolBox->settingsPanel(), &ToolSettingsPanel::interpolationSettingsChanged,
+                this, [this](int totalFrames, bool advanced, QList<int> keyframeTimes) {
+            m_interpTotalFrames  = totalFrames;
+            m_interpAdvanced     = advanced;
+            m_interpKeyframeTimes = keyframeTimes;
+        });
+    }
+
+    // 4. Tool & Asset Connections
+    m_eyedropperTool = qobject_cast<EyedropperTool*>(m_toolBox->getTool(ToolType::eyedropper));
+    if (m_eyedropperTool) {
+        connect(m_eyedropperTool, &EyedropperTool::colorPicked, this, [this](const QColor &stroke, const QColor &fill){
+            Q_UNUSED(fill);
+            if (m_colorPicker) m_colorPicker->setColor(stroke);
+        });
+    }
+
+    connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &newColor){
+        Tool *activeTool = m_toolBox->currentTool();
+        if (activeTool) {
+            activeTool->setStrokeColor(newColor);
+            activeTool->setFillColor(newColor);
+            m_canvas->update();
+        }
+    });
+
+    connect(m_assetLibrary, &AssetLibrary::groupInstanceRequested, this, &MainWindow::onInstanceGroupRequested);
+
+    // 5. RESTORED: Full Context Menu
+    connect(m_canvas, &VectorCanvas::contextMenuRequestedAt, this, [this](const QPoint &globalPos, const QPointF &scenePos) {
+
+        // ── Build selection list ─────────────────────────────────────────────
+        // We stripped ItemIsSelectable from display clones (needed so drawing
+        // tools work over filled shapes), so m_canvas->selectedItems() is always
+        // empty.  Instead, ask SelectTool what it has selected.  If the user
+        // right-clicked while using a different tool, fall back to the topmost
+        // object under the cursor so single-object actions still work.
+
+        QList<VectorObject*> selected;
+
+        // 1. Try SelectTool's tracked selection first
+        if (SelectTool *sel = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select))) {
+            for (VectorObject *src : sel->selectedObjects()) {
+                if (src) selected.append(src);
+            }
+        }
+
+        // 2. If nothing selected via SelectTool, pick topmost object under cursor
+        if (selected.isEmpty()) {
+            for (QGraphicsItem *it : m_canvas->items(scenePos, Qt::IntersectsItemShape, Qt::DescendingOrder)) {
+                if (VectorObject *vo = dynamic_cast<VectorObject*>(it)) {
+                    // Resolve display clone → source
+                    VectorObject *src = m_canvas->sourceObject(vo);
+                    if (src) selected.append(src);
+                    else     selected.append(vo);
+                    break;
+                }
+            }
+        }
+
+        QMenu menu(this);
+        menu.setStyleSheet("QMenu { background:#2d2d2d; color:white; border:1px solid #1a1a1a; }");
+
+        // Restore Actions
+        QAction *groupAct  = menu.addAction("⊞  Group Selected");
+        QAction *interpAct = menu.addAction("⟳  Interpolate");
+        menu.addSeparator();
+        QAction *cutAct    = menu.addAction("✂  Cut");
+        QAction *copyAct   = menu.addAction("⎘  Copy");
+        menu.addSeparator();
+        QAction *deleteAct = menu.addAction("🗑  Delete");
+        menu.addSeparator();
+        QAction *saveAct   = menu.addAction("💾  Save as Asset…");
+
+        bool hasSel = !selected.isEmpty();
+        groupAct->setEnabled(selected.size() >= 2);
+        interpAct->setEnabled(hasSel);
+        cutAct->setEnabled(hasSel);
+        copyAct->setEnabled(hasSel);
+        deleteAct->setEnabled(hasSel);
+        saveAct->setEnabled(hasSel);
+
+        QAction *chosen = menu.exec(globalPos);
+        if (!chosen) return;
+
+        if (chosen == groupAct) {
+            bool ok;
+            QString name = QInputDialog::getText(this, "Group", "Name:", QLineEdit::Normal, "Group", &ok);
+            if (ok) {
+                // FIX: pass 'selected' explicitly — groupSelectedObjects() relied on Qt's
+                // native selectedItems() which is always empty because SelectTool tracks
+                // its own list and never calls item->setSelected(true).
+                ObjectGroup *grp = m_canvas->groupObjects(selected, name);
+                if (grp) m_assetLibrary->addObjectGroup(grp);
+            }
+        } else if (chosen == interpAct) {
+            // Snapshot now — use the 'selected' list built at menu open time,
+            // resolve each display clone to its layer-owned source object.
+            m_interpolationTargets.clear();
+            for (VectorObject *obj : selected)
+                m_interpolationTargets.append(m_canvas->sourceObject(obj));
+            m_canvas->enterInterpolationMode();
+        } else if (chosen == cutAct) {
+            m_clipboard = selected;
+            for (VectorObject *obj : selected) m_canvas->removeObject(obj);
+        } else if (chosen == copyAct) {
+            m_clipboard = selected;
+        } else if (chosen == deleteAct) {
+            for (VectorObject *obj : selected) m_canvas->removeObject(obj);
+        } else if (chosen == saveAct) {
+            bool ok;
+            QString name = QInputDialog::getText(this, "Save Asset", "Name:", QLineEdit::Normal, "Asset", &ok);
+            if (ok && !name.isEmpty()) {
+                ObjectGroup *grp = m_canvas->groupObjects(selected, name);
+                if (grp) m_assetLibrary->addObjectGroup(grp);
+            }
+        }
+    });
 }
 
 void MainWindow::createActions()
@@ -194,9 +516,12 @@ void MainWindow::createMenus()
 
     QAction *newAct = m_fileMenu->addAction("&New Project", this, &MainWindow::newProject);
     newAct->setShortcut(QKeySequence::New);
+    newAct->setIcon(QIcon(":/icons/addframe.svg"));
 
     QAction *openAct = m_fileMenu->addAction("&Open...", this, &MainWindow::openProject);
     openAct->setShortcut(QKeySequence::Open);
+    // FIX #1: Use SVG icon for Open action instead of default system folder icon
+    openAct->setIcon(QIcon(":/icons/newlayer.svg"));
 
     QAction *saveAct = m_fileMenu->addAction("&Save", this, &MainWindow::saveProject);
     saveAct->setShortcut(QKeySequence::Save);
@@ -254,6 +579,31 @@ void MainWindow::createMenus()
     });
     clearAct->setShortcut(QKeySequence("Ctrl+Shift+X"));
 
+    m_editMenu->addSeparator();
+
+    QAction *groupAct = m_editMenu->addAction("Group Selected", this, [this]() {
+        bool ok;
+        QString name = QInputDialog::getText(this, "Group Name",
+                                             "Name this group:", QLineEdit::Normal,
+                                             "Group", &ok);
+        if (!ok) name = "Group";
+        // FIX: use SelectTool's tracked list — canvas->groupSelectedObjects uses
+        // Qt's selectedItems() which is always empty since SelectTool tracks its own.
+        QList<VectorObject*> sel;
+        if (SelectTool *st = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select)))
+            sel = st->selectedObjects();
+        ObjectGroup *grp = sel.isEmpty()
+            ? m_canvas->groupSelectedObjects(name)   // fallback
+            : m_canvas->groupObjects(sel, name);
+        if (grp) m_assetLibrary->addObjectGroup(grp);
+    });
+    groupAct->setShortcut(QKeySequence("Ctrl+G"));
+
+    QAction *ungroupAct = m_editMenu->addAction("Ungroup", this, [this]() {
+        m_canvas->ungroupSelected();
+    });
+    ungroupAct->setShortcut(QKeySequence("Ctrl+Shift+G"));
+
     // View Menu
     m_viewMenu = menuBar()->addMenu("&View");
 
@@ -270,7 +620,12 @@ void MainWindow::createMenus()
     onionSkinAct->setCheckable(true);
     onionSkinAct->setChecked(true);
     onionSkinAct->setShortcut(QKeySequence("Ctrl+O"));
-    connect(onionSkinAct, &QAction::toggled, m_canvas, &VectorCanvas::setOnionSkinEnabled);
+    connect(onionSkinAct, &QAction::toggled, this, [this](bool enabled) {
+        // Update both the project's setting and the canvas flag, then refresh
+        m_project->setOnionSkinEnabled(enabled);
+        m_canvas->setOnionSkinEnabled(enabled);
+        m_canvas->refreshFrame();   // redraw immediately, no geometry change = no jump
+    });
 
     m_viewMenu->addSeparator();
 
@@ -309,25 +664,80 @@ void MainWindow::createToolBars()
 
     // Set better icons with fallback
     if (m_undoAction->icon().isNull()) {
-      m_undoAction->setText("↶ Undo");  // Fallback text icon
+        m_undoAction->setText("↶");
     }
     if (m_redoAction->icon().isNull()) {
-      m_redoAction->setText("↷ Redo");  // Fallback text icon
+        m_redoAction->setText("↷");
     }
 
     m_mainToolBar->addSeparator();
 
-    // Add zoom controls
-    QAction *zoomInAct = m_mainToolBar->addAction("Zoom In", m_canvasView, &CanvasView::zoomIn);
+    // Icon-only zoom controls — text shown only in tooltip, not on button
+    QAction *zoomInAct = m_mainToolBar->addAction("🔍+", m_canvasView, &CanvasView::zoomIn);
     zoomInAct->setToolTip("Zoom In (Ctrl++)");
 
-    QAction *zoomOutAct = m_mainToolBar->addAction("Zoom Out", m_canvasView, &CanvasView::zoomOut);
+    QAction *zoomOutAct = m_mainToolBar->addAction("🔍−", m_canvasView, &CanvasView::zoomOut);
     zoomOutAct->setToolTip("Zoom Out (Ctrl+-)");
 
-    QAction *resetZoomAct = m_mainToolBar->addAction("Reset", m_canvasView, &CanvasView::resetZoom);
+    QAction *resetZoomAct = m_mainToolBar->addAction("⊡", m_canvasView, &CanvasView::resetZoom);
     resetZoomAct->setToolTip("Reset Zoom (Ctrl+0)");
 
     m_mainToolBar->addSeparator();
+
+    // Toolbar style: icon-only, no text visible
+    m_mainToolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+
+    m_mainToolBar->addSeparator();
+
+    // ── Settings popup button ────────────────────────────────────────────────
+    QAction *settingsAct = m_mainToolBar->addAction("⚙");
+    settingsAct->setToolTip("Project Settings  (canvas size, FPS, onion skin)");
+    connect(settingsAct, &QAction::triggered, this, [this]() {
+        // Guard: if m_projectSettings not yet created, skip
+        if (!m_projectSettings) return;
+
+        // Create a new dialog each time (cheap — settings widget is kept, dialog is not)
+        QDialog *dlg = new QDialog(this);
+        dlg->setWindowTitle("Project Settings");
+        dlg->setModal(false);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(380, 540);
+        dlg->setStyleSheet(styleSheet());
+
+        QVBoxLayout *lay = new QVBoxLayout(dlg);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(0);
+
+        // Re-parent settings widget into dialog
+        m_projectSettings->setParent(dlg);
+        m_projectSettings->show();
+        lay->addWidget(m_projectSettings, 1);
+
+        const ThemeColors &ct = theme();
+        QPushButton *closeBtn = new QPushButton("Close");
+        closeBtn->setStyleSheet(
+            QString("QPushButton { background:%1; color:white; border:none; border-radius:4px; padding:7px 24px; }"
+                    "QPushButton:hover { background:%2; }").arg(ct.accent, ct.accentHover));
+        connect(closeBtn, &QPushButton::clicked, dlg, &QDialog::accept);
+        QHBoxLayout *btnRow = new QHBoxLayout();
+        btnRow->setContentsMargins(12, 8, 12, 12);
+        btnRow->addStretch();
+        btnRow->addWidget(closeBtn);
+        lay->addLayout(btnRow);
+
+        // When dialog closes, rescue the widget back to MainWindow so it
+        // isn't destroyed (WA_DeleteOnClose would delete the dialog, not the widget)
+        connect(dlg, &QDialog::finished, this, [this](int) {
+            if (m_projectSettings) {
+                m_projectSettings->setParent(this);
+                m_projectSettings->hide(); // hide it — it's not in any layout now
+            }
+        });
+
+        dlg->show();
+        dlg->raise();
+        dlg->activateWindow();
+    });
 }
 
 void MainWindow::createDockWindows()
@@ -346,9 +756,9 @@ void MainWindow::createDockWindows()
     rightTabs->setObjectName("rightPanelTabs");
 
     rightTabs->setStyleSheet(
-        "QTabWidget::pane { border: none; background-color: #2d2d2d; }"
-        "QTabBar::tab { background-color: #3a3a3a; color: #aaa; padding: 8px 16px; border: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }"
-        "QTabBar::tab:selected { background-color: #2d2d2d; color: white; }"
+        "QTabWidget::pane { border: none; background-color: #282828; }"
+        "QTabBar::tab { background-color: #333333; color: #aaa; padding: 8px 16px; border: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }"
+        "QTabBar::tab:selected { background-color: #282828; color: white; }"
         "QTabBar::tab:hover { background-color: #4a4a4a; }"
     );
 
@@ -377,17 +787,72 @@ void MainWindow::createDockWindows()
                                          m_toolBox->currentTool());
     }
 
+    // When current layer changes to/from an audio layer, update tool settings panel
+    connect(m_project, &Project::currentLayerChanged, this,
+            [this, rightTabs, toolSettingsPanel](Layer *layer) {
+        if (layer && layer->layerType() == LayerType::Audio) {
+            toolSettingsPanel->showAudioLayerControls(layer);
+            int idx = rightTabs->indexOf(toolSettingsPanel);
+            if (idx >= 0) rightTabs->setCurrentIndex(idx);
+        } else if (m_toolBox->currentTool()) {
+            toolSettingsPanel->updateForTool(m_toolBox->currentTool()->type(),
+                                              m_toolBox->currentTool());
+        }
+    });
+
     // 4. Assets Tab
     rightTabs->addTab(m_assetLibrary, "Assets");
 
+    // Settings are now a toolbar popup — create the widget but don't add as tab.
+    // Hide it immediately so it doesn't appear as a floating rectangle in the
+    // corner when the application first loads (fixes settingspanel.cpp TODO #1).
     m_projectSettings = new ProjectSettings(m_project, this);
-    rightTabs->addTab(m_projectSettings, "Settings");
+    m_projectSettings->hide();
 
     // Connect the settings changed signal so the canvas updates in real-time
+    connect(m_projectSettings, &ProjectSettings::themeChanged, this, [this](int index) {
+        // Update the global ThemeManager first so all widgets can read new colors
+        ThemeManager::instance().setTheme(index);
+        const ThemeColors &t = theme();
+
+        // Rebuild the global stylesheet with the new bg colors
+        setStyleSheet(QString(R"(
+            QMainWindow { background-color: %1; }
+            QMenuBar { background-color: %1; color: #e0e0e0; border-bottom: 1px solid %2; padding: 2px; }
+            QMenuBar::item { background-color: transparent; padding: 6px 12px; border-radius: 2px; }
+            QMenuBar::item:selected { background-color: %2; color: %3; }
+            QMenu { background-color: %4; color: #e0e0e0; border: 1px solid %2; padding: 4px; }
+            QMenu::item { padding: 6px 24px 6px 12px; border-radius: 2px; }
+            QMenu::item:selected { background-color: %3; color: white; }
+            QMenu::separator { height: 1px; background: %5; margin: 4px 8px; }
+            QToolBar { background-color: %1; border-bottom: 1px solid %2; border-top: none; spacing: 6px; padding: 4px; }
+            QToolBar::separator { width: 1px; background: %5; margin: 6px; }
+            QDockWidget { color: #999; font-weight: bold; font-size: 10px; }
+            QDockWidget::title { background-color: %1; padding: 8px; border-bottom: 1px solid %2; text-align: left; letter-spacing: 1.5px; }
+            QStatusBar { background-color: %1; color: #666; border-top: 1px solid %2; font-size: 10px; }
+            QStatusBar::item { border: none; }
+            QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 4px; }
+            QToolButton:hover { background-color: %2; border: 1px solid %3; }
+            QToolButton:checked { background-color: %3; color: white; }
+        )").arg(t.bg0, t.bg1, t.accent, t.bg4, t.bg2));
+
+        // Repaint dynamic painted widgets so their QPainter colors update
+        if (m_timeline) { m_timeline->applyTheme(); m_timeline->update(); }
+        if (m_layerPanel) m_layerPanel->applyTheme();
+        if (m_colorPicker) m_colorPicker->applyTheme();
+        if (m_toolBox) m_toolBox->applyTheme();
+        if (m_toolBox && m_toolBox->settingsPanel()) m_toolBox->settingsPanel()->applyTheme();
+        if (m_assetLibrary) m_assetLibrary->applyTheme();
+        if (m_projectSettings) m_projectSettings->applyTheme();
+    });
     connect(m_projectSettings, &ProjectSettings::settingsChanged, this, [this]() {
-        m_canvasView->setFixedSize(m_project->width(), m_project->height());
+        m_canvas->setSceneRect(0, 0, m_project->width(), m_project->height());
+        m_canvasView->resetCachedContent();
+        m_canvasView->centerOn(m_canvas->sceneRect().center());
         m_canvas->update();
         m_timeline->update();
+        // If the MIDI soundfont path changed, re-render all MIDI clips immediately
+        m_timeline->rerenderMidiClips();
         m_isModified = true;
         updateWindowTitle();
     });
@@ -409,6 +874,25 @@ void MainWindow::createDockWindows()
     timelineDock->setMinimumHeight(200);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
     m_viewMenu->addAction(timelineDock->toggleViewAction());
+
+    // FIX #21: Load persisted preferences on startup
+    QSettings settings("AkisVG", "AkisVG");
+    int savedTheme = settings.value("theme/index", 0).toInt();
+    if (savedTheme != 0) {
+        ThemeManager::instance().setTheme(savedTheme);
+        // Re-apply theme to all panels now that they've been created
+        if (m_timeline)        m_timeline->applyTheme();
+        if (m_layerPanel)      m_layerPanel->applyTheme();
+        if (m_colorPicker)     m_colorPicker->applyTheme();
+        if (m_toolBox)         m_toolBox->applyTheme();
+        if (m_toolBox && m_toolBox->settingsPanel()) m_toolBox->settingsPanel()->applyTheme();
+        if (m_assetLibrary)    m_assetLibrary->applyTheme();
+        if (m_projectSettings) m_projectSettings->applyTheme();
+    }
+    if (settings.contains("window/geometry"))
+        restoreGeometry(settings.value("window/geometry").toByteArray());
+    if (settings.contains("window/state"))
+        restoreState(settings.value("window/state").toByteArray());
 }
 
 void MainWindow::newProject()
@@ -426,6 +910,7 @@ void MainWindow::newProject()
     }
 
     m_project->createNew(1920, 1080, 24);
+    m_canvas->clearDisplay();
     m_canvas->refreshFrame();
     m_isModified = false;
     m_currentFile.clear();
@@ -449,6 +934,7 @@ void MainWindow::openProject()
             m_currentFile = fileName;
             m_isModified = false;
             updateWindowTitle();
+            m_canvas->clearDisplay();
             m_canvas->refreshFrame();
             m_layerPanel->rebuildLayerList();
             statusBar()->showMessage("Project opened: " + fileName, 3000);
@@ -504,29 +990,116 @@ void MainWindow::exportFrame()
                                                     "Export Frame", "", "SVG Files (*.svg);;PNG Files (*.png)");
 
     if (!fileName.isEmpty()) {
-        // TODO: Implement frame export
-        statusBar()->showMessage("Frame exported: " + fileName, 3000);
+        // Determine export format from extension
+        QString ext = QFileInfo(fileName).suffix().toLower();
+
+        // Grab the current frame by rendering the scene into a QImage
+        int w = m_project->width();
+        int h = m_project->height();
+        QImage image(w, h, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        m_canvas->render(&painter, QRectF(0, 0, w, h), QRectF(0, 0, w, h));
+        painter.end();
+
+        bool success = false;
+        if (ext == "svg") {
+            // Export as SVG using QSvgGenerator (available whenever QtSvg is linked)
+#ifdef QT_SVG_LIB
+            QSvgGenerator generator;
+            generator.setFileName(fileName);
+            generator.setSize(QSize(w, h));
+            generator.setViewBox(QRect(0, 0, w, h));
+            generator.setTitle(m_project->name());
+            generator.setDescription("Exported by AkisVG");
+            QPainter svgPainter(&generator);
+            svgPainter.setRenderHint(QPainter::Antialiasing);
+            m_canvas->render(&svgPainter, QRectF(0, 0, w, h), QRectF(0, 0, w, h));
+            svgPainter.end();
+            success = true;
+#else
+            // Fallback: save as PNG when QtSvg is not linked
+            QString pngPath = QFileInfo(fileName).absolutePath() + "/" +
+                              QFileInfo(fileName).completeBaseName() + ".png";
+            success = image.save(pngPath, "PNG");
+            statusBar()->showMessage("SVG export unavailable — saved as PNG instead.", 4000);
+            return;
+#endif
+        } else {
+            // PNG, JPEG, BMP, etc. — delegate to Qt's image writer
+            success = image.save(fileName);
+        }
+
+        if (success) {
+            statusBar()->showMessage("Frame exported: " + fileName, 3000);
+        } else {
+            QMessageBox::warning(this, "Export Failed",
+                                 "Could not write file:\n" + fileName);
+        }
+    }
+}
+
+void MainWindow::applyStartupSettings(const QString &name, int width, int height, int fps)
+{
+    if (!name.isEmpty())
+        setWindowTitle(QString("AkisVG  —  %1").arg(name));
+
+    // Apply canvas size and fps to the project
+    if (m_project) {
+        if (width  > 0) m_project->setWidth(width);
+        if (height > 0) m_project->setHeight(height);
+        if (fps    > 0) m_project->setFps(fps);
+    }
+
+    // Sync canvas scene rect
+    if (m_canvas)
+        m_canvas->setSceneRect(0, 0, m_project->width(), m_project->height());
+
+    m_isModified = false;
+    updateWindowTitle();
+}
+
+void MainWindow::openProjectFile(const QString &path)
+{
+    if (path.isEmpty() || !QFileInfo::exists(path)) return;
+
+    if (m_project->loadFromFile(path)) {
+        m_currentFile = path;
+        m_isModified  = false;
+        updateWindowTitle();
+        m_canvas->clearDisplay();
+        m_canvas->refreshFrame();
+        m_layerPanel->rebuildLayerList();
+        statusBar()->showMessage("Project opened: " + path, 3000);
+    } else {
+        QMessageBox::critical(this, "Load Error",
+                              "Failed to open project from:\n" + path);
     }
 }
 
 void MainWindow::about()
 {
-  QMessageBox::about(this, "About AkisVG",
-      "<h2>AkisVG 0.3</h2>"
-      "<p><i>A high-performance, lightweight vector animation suite.</i></p>"
-      "<hr noshade size='1'>"
-      "<p>AkisVG combines the speed of <b>C++17</b> with the flexibility of <b>Qt 6</b> "
-      "to provide a fluid, hardware-accelerated creative environment.</p>"
+    QMessageBox::about(this, "About AkisVG",
+        "<h2>AkisVG 0.4 <span style='color: #2a82da;'>Experimental</span></h2>"
+        "<p><i>A high-performance, lightweight vector animation suite built for the modern creator.</i></p>"
+        "<hr noshade size='1' style='background-color: #444;'>"
 
-      "<p><b>Core Capabilities:</b></p>"
-      "<ul>"
-      "<li><b>Expressive Drawing:</b> Versatile vector tools with rich brush textures.</li>"
-      "<li><b>Smart Animation:</b> Layer-based workflow with automated interpolation.</li>"
-      "<li><b>Precise Control:</b> Frame-by-frame timeline for traditional workflows.</li>"
-      "<li><b>High Performance:</b> GPU-accelerated rendering for real-time previews.</li>"
-      "</ul>"
+        "<p>AkisVG leverages <b>C++17</b> and <b>Qt 6</b> to provide a fluid, hardware-accelerated "
+        "environment for both traditional and automated animation workflows.</p>"
 
-      "<p><small>Optimized for efficiency and creative freedom.</small></p>");
+        "<p><b>Latest Features:</b></p>"
+        "<ul>"
+        "<li><b>Smart Interpolation:</b> Automated motion tweening between keyframes using path-based logic.</li>"
+        "<li><b>Pro Export Engine:</b> High-quality video rendering via <b>FFmpeg</b> (MP4/MKV) and optimized GIF generation.</li>"
+        "<li><b>Multimedia Integration:</b> Full support for synchronized audio layers and image asset imports.</li>"
+        "<li><b>Infinite Canvas:</b> GPU-accelerated 2D engine with real-time onion skinning and zoom.</li>"
+        "</ul>"
+
+        "<p style='color: #a0a0a0;'><small><b>System Info:</b> Running on Qt " QT_VERSION_STR " with FFmpeg Integration.</small></p>"
+        "<p><small>Optimized for efficiency, precision, and creative freedom.</small></p>");
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -548,6 +1121,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
     } else {
         event->accept();
     }
+
+    // FIX #21: Persist preferences (theme, window geometry, etc.) on close
+    if (event->isAccepted()) {
+        QSettings settings("AkisVG", "AkisVG");
+        settings.setValue("theme/index", ThemeManager::instance().currentIndex());
+        settings.setValue("window/geometry", saveGeometry());
+        settings.setValue("window/state", saveState());
+    }
 }
 
 void MainWindow::updateWindowTitle()
@@ -564,135 +1145,126 @@ void MainWindow::updateWindowTitle()
 
 void MainWindow::exportToMp4()
 {
-    // Let user choose format
     QString fileName = QFileDialog::getSaveFileName(
-        this,
-        "Export to Video",
-        "",
-        "MP4 Video (*.mp4);;MKV Video (*.mkv);;All Files (*)");  // ADDED .mkv option
+        this, "Export to Video", "",
+        "MP4 Video (*.mp4);;MKV Video (*.mkv);;All Files (*)");
 
-    if (fileName.isEmpty()) {
+    if (fileName.isEmpty())
+        return;
+
+    QString format = "mp4";
+    if (fileName.endsWith(".mkv", Qt::CaseInsensitive))
+        format = "mkv";
+    else if (!fileName.endsWith(".mp4", Qt::CaseInsensitive))
+        fileName += ".mp4";
+
+    // Export only up to the last frame that has actual content
+    int startFrame = 1;
+    int endFrame   = qMax(1, m_project->highestUsedFrame());
+    int fps        = m_project->fps();
+
+    // ── Locate ffmpeg binary (QProcess::start(singleString) does NOT invoke
+    //    a shell on Linux, so we must pass program + args separately) ────────
+    QString ffmpegBin = QStandardPaths::findExecutable("ffmpeg");
+    if (ffmpegBin.isEmpty()) {
+        for (const char *p : {"/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"})
+            if (QFile::exists(p)) { ffmpegBin = p; break; }
+    }
+    if (ffmpegBin.isEmpty()) {
+        QMessageBox::critical(this, "Export Error",
+            "ffmpeg was not found.\n\nInstall it with:  sudo pacman -S ffmpeg");
         return;
     }
 
-    // Detect format from extension
-    QString format = "mp4";
-    if (fileName.endsWith(".mkv", Qt::CaseInsensitive)) {
-        format = "mkv";
-    } else if (!fileName.endsWith(".mp4", Qt::CaseInsensitive)) {
-        fileName += ".mp4";  // Default to mp4
-    }
-
-    // Get export range
-    int startFrame = 1;
-    int endFrame = m_project->totalFrames();
-    int fps = m_project->fps();
-
-    // Create progress dialog
-    QProgressDialog progress("Exporting frames...", "Cancel", 0, endFrame - startFrame + 1, this);
+    QProgressDialog progress("Exporting frames…", "Cancel", 0, endFrame, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
     progress.setValue(0);
 
-    // Export frames to temporary directory
     QString tempDir = QDir::temp().filePath("akisvg_export_" +
                       QString::number(QDateTime::currentMSecsSinceEpoch()));
     QDir().mkpath(tempDir);
 
-    // Render each frame
+    int savedFrame = m_project->currentFrame();
+
     for (int frame = startFrame; frame <= endFrame; ++frame) {
         if (progress.wasCanceled()) {
             QDir(tempDir).removeRecursively();
+            m_project->setCurrentFrame(savedFrame);
+            m_canvas->refreshFrame();
             return;
         }
 
         m_project->setCurrentFrame(frame);
         m_canvas->refreshFrame();
 
-        // Render frame to image
         QImage image(m_project->width(), m_project->height(), QImage::Format_ARGB32);
         image.fill(Qt::white);
         QPainter painter(&image);
         painter.setRenderHint(QPainter::Antialiasing);
-        m_canvas->render(&painter);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        m_canvas->render(&painter,
+                          QRectF(0, 0, m_project->width(), m_project->height()),
+                          QRectF(0, 0, m_project->width(), m_project->height()));
         painter.end();
 
-        // Save frame
-        QString framePath = tempDir + QString("/frame_%1.png").arg(frame, 6, 10, QChar('0'));
-        image.save(framePath, "PNG");
-
-        progress.setValue(frame - startFrame + 1);
+        image.save(tempDir + QString("/frame_%1.png").arg(frame, 6, 10, QChar('0')), "PNG");
+        progress.setValue(frame);
         QApplication::processEvents();
     }
 
-    // Build ffmpeg command based on format
-    QString ffmpegCmd;
+    // Build argument list — NOT a shell string
+    QStringList args;
+    args << "-y"
+         << "-framerate"    << QString::number(fps)
+         << "-start_number" << QString::number(startFrame)
+         << "-i"            << (tempDir + "/frame_%06d.png")
+         << "-c:v"          << "libx264"
+         << "-preset"       << (format == "mkv" ? "medium" : "slow")
+         << "-crf"          << "18"
+         << "-pix_fmt"      << "yuv420p"
+         << fileName;
 
-    if (format == "mkv") {
-        // MKV format with H.264 codec
-        ffmpegCmd = QString("ffmpeg -y -framerate %1 -i \"%2/frame_%%06d.png\" "
-                           "-c:v libx264 -preset medium -crf 18 "
-                           "-pix_fmt yuv420p \"%3\"")
-                    .arg(fps)
-                    .arg(tempDir)
-                    .arg(fileName);
-    } else {
-        // MP4 format (original)
-        ffmpegCmd = QString("ffmpeg -y -framerate %1 -i \"%2/frame_%%06d.png\" "
-                           "-c:v libx264 -preset slow -crf 18 "
-                           "-pix_fmt yuv420p \"%3\"")
-                    .arg(fps)
-                    .arg(tempDir)
-                    .arg(fileName);
-    }
-
-    // Execute ffmpeg
-    progress.setLabelText(QString("Encoding %1 video...").arg(format.toUpper()));
-    progress.setRange(0, 0);  // Indeterminate progress
+    progress.setLabelText(QString("Encoding %1…").arg(format.toUpper()));
+    progress.setRange(0, 0);
+    QApplication::processEvents();
 
     QProcess ffmpeg;
-    ffmpeg.start(ffmpegCmd);
+    ffmpeg.setProgram(ffmpegBin);
+    ffmpeg.setArguments(args);
+    ffmpeg.setProcessChannelMode(QProcess::MergedChannels);
+    ffmpeg.start();
 
-    if (!ffmpeg.waitForStarted()) {
+    if (!ffmpeg.waitForStarted(5000)) {
         QMessageBox::critical(this, "Export Error",
-                            "Failed to start ffmpeg.\n\n"
-                            "Make sure ffmpeg is installed and in your system PATH.");
+            QString("Failed to launch ffmpeg:\n%1\n\n%2")
+            .arg(ffmpegBin, ffmpeg.errorString()));
         QDir(tempDir).removeRecursively();
+        m_project->setCurrentFrame(savedFrame);
+        m_canvas->refreshFrame();
         return;
     }
 
-    ffmpeg.waitForFinished(-1);  // Wait indefinitely
-
-    // Check result
-    if (ffmpeg.exitCode() == 0) {
-        QMessageBox::information(this, "Export Complete",
-                               QString("Video exported successfully to:\n%1\n\n"
-                                      "Format: %2\n"
-                                      "Frames: %3-%4\n"
-                                      "FPS: %5")
-                               .arg(fileName)
-                               .arg(format.toUpper())
-                               .arg(startFrame)
-                               .arg(endFrame)
-                               .arg(fps));
-    } else {
-        QString errorOutput = ffmpeg.readAllStandardError();
-        QMessageBox::critical(this, "Export Error",
-                            QString("ffmpeg failed with exit code %1\n\n%2")
-                            .arg(ffmpeg.exitCode())
-                            .arg(errorOutput));
+    while (!ffmpeg.waitForFinished(200)) {
+        QApplication::processEvents();
+        if (progress.wasCanceled()) { ffmpeg.kill(); break; }
     }
 
-    // Cleanup
     QDir(tempDir).removeRecursively();
-
-    // Restore current frame
+    m_project->setCurrentFrame(savedFrame);
     m_canvas->refreshFrame();
 
-    statusBar()->showMessage(QString("%1 video exported: %2")
-                            .arg(format.toUpper())
-                            .arg(QFileInfo(fileName).fileName()),
-                            5000);
+    if (ffmpeg.exitCode() == 0) {
+        statusBar()->showMessage(
+            QString("%1 exported: %2").arg(format.toUpper(), QFileInfo(fileName).fileName()), 5000);
+        QMessageBox::information(this, "Export Complete",
+            QString("Exported to:\n%1\n\n%2  |  %3 frames  |  %4 fps")
+            .arg(fileName, format.toUpper()).arg(endFrame).arg(fps));
+    } else {
+        QMessageBox::critical(this, "Export Error",
+            QString("ffmpeg exited %1.\n\n%2")
+            .arg(ffmpeg.exitCode()).arg(QString(ffmpeg.readAll()).right(2000)));
+    }
 }
 
 void MainWindow::exportGifKeyframes() {
@@ -771,18 +1343,23 @@ void MainWindow::exportGifAllFrames() {
 
 void MainWindow::importAudio()
 {
+    // Support all common audio formats + MIDI
     QString fileName = QFileDialog::getOpenFileName(
-        this, "Import Audio", "",
-        "Audio Files (*.mp3 *.wav *.ogg *.m4a *.flac *.aac);;All Files (*)");
+        this, "Import Audio / Sound", "",
+        "All Supported Audio (*.mp3 *.wav *.ogg *.m4a *.flac *.aac *.opus *.wma *.mid *.midi);;"
+        "WAV Files (*.wav);;"
+        "MP3 Files (*.mp3);;"
+        "OGG / Vorbis (*.ogg);;"
+        "FLAC Lossless (*.flac);;"
+        "AAC / M4A (*.aac *.m4a);;"
+        "Opus (*.opus);;"
+        "MIDI Files (*.mid *.midi);;"
+        "All Files (*)");
 
-    if (fileName.isEmpty()) {
-        return;
-    }
+    if (fileName.isEmpty()) return;
 
-    // Check if file exists
     if (!QFile::exists(fileName)) {
-        QMessageBox::warning(this, "Import Error",
-            "Audio file not found: " + fileName);
+        QMessageBox::warning(this, "Import Error", "Audio file not found: " + fileName);
         return;
     }
 
@@ -793,78 +1370,57 @@ void MainWindow::importAudio()
         return;
     }
 
-    // Create a media player to get duration
-    QMediaPlayer *player = new QMediaPlayer(this);
-    QAudioOutput *audioOutput = new QAudioOutput(this); // Required for Qt6
-    player->setAudioOutput(audioOutput);
-    player->setSource(QUrl::fromLocalFile(fileName));
-
-    // Wait for media to load
-    QEventLoop loop;
-    bool loaded = false;
-
-    connect(player, &QMediaPlayer::mediaStatusChanged, [&](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::InvalidMedia) {
-            loaded = true;
-            loop.quit();
-        }
-    });
-
-    // Timeout after 5 seconds
-    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
-    loop.exec();
-
-    if (!loaded || player->mediaStatus() == QMediaPlayer::InvalidMedia) {
+    // Ensure the layer is an audio layer
+    if (currentLayer->layerType() != LayerType::Audio) {
         QMessageBox::warning(this, "Import Error",
-            "Failed to load audio file. The file may be corrupted or in an unsupported format.");
-        delete player;
+            "Selected layer is not an Audio layer.\nAdd an audio layer first.");
         return;
     }
 
-    // Calculate duration in frames
-    qint64 durationMs = player->duration();
-    int fps = m_project->fps();
-    int durationFrames = (durationMs * fps) / 1000;
+    bool isMidi = fileName.endsWith(".mid", Qt::CaseInsensitive) ||
+                  fileName.endsWith(".midi", Qt::CaseInsensitive);
 
-    // Create audio data
-    AudioData audioData(fileName, m_project->currentFrame(), durationFrames);
+    // For MIDI: check that FluidSynth + a soundfont are available before importing
+    if (isMidi) {
+        QString fluidsynth = QStandardPaths::findExecutable("fluidsynth");
+        if (fluidsynth.isEmpty()) {
+            QMessageBox::warning(this, "MIDI Import — FluidSynth Not Found",
+                "MIDI playback requires FluidSynth to render audio.\n\n"
+                "Install FluidSynth and a GM soundfont:\n"
+                "  • Arch:    sudo pacman -S fluidsynth soundfont-fluid\n"
+                "  • Ubuntu:  sudo apt install fluidsynth fluid-soundfont-gm\n"
+                "  • Fedora:  sudo dnf install fluidsynth fluid-soundfont\n\n"
+                "You can also set a custom soundfont path in Settings → Audio → MIDI Soundfont.\n\n"
+                "Without FluidSynth the MIDI clip will be shown in the timeline\n"
+                "but will play silently.");
+        }
+    }
+
+    // Create audio clip — duration = -1 (Auto, uses natural length)
+    AudioData audioData(fileName, m_project->currentFrame(), -1);
     audioData.volume = 1.0f;
-    audioData.muted = false;
+    audioData.muted  = false;
+    audioData.isMidi = isMidi;
 
-    // Set audio data to layer
-    currentLayer->setAudioData(audioData);
+    // Add clip to layer (multi-clip)
+    currentLayer->addAudioClip(audioData);
 
     // Update UI
     m_canvas->refreshFrame();
     m_layerPanel->rebuildLayerList();
 
-    statusBar()->showMessage(QString("Audio imported: %1 (%2 frames)")
-        .arg(QFileInfo(fileName).fileName())
-        .arg(durationFrames), 5000);
-
-    QMessageBox::information(this, "Audio Imported",
-        QString("Audio file imported successfully!\n\n"
-                "File: %1\n"
-                "Duration: %2 seconds (%3 frames at %4 FPS)\n"
-                "Starting at frame: %5")
-        .arg(QFileInfo(fileName).fileName())
-        .arg(durationMs / 1000.0, 0, 'f', 2)
-        .arg(durationFrames)
-        .arg(fps)
-        .arg(m_project->currentFrame()));
-
-    delete player;
+    statusBar()->showMessage(
+        QString("Audio clip added: %1").arg(QFileInfo(fileName).fileName()), 5000);
 }
 
 void MainWindow::importImage()
 {
     QString fileName = QFileDialog::getOpenFileName(
         this, "Import Image", "",
-        "Image Files (*.png *.jpg *.jpeg *.bmp *.svg *.webp *.gif);;All Files (*)");
+        "Image Files (*.png *.jpg *.jpeg *.bmp *.webp *.gif);;All Files (*)");
 
-    if (fileName.isEmpty()) {
+    if (fileName.isEmpty())
         return;
-    }
 
     QImage image(fileName);
     if (image.isNull()) {
@@ -881,25 +1437,558 @@ void MainWindow::importImage()
         return;
     }
 
-    // Create ImageObject
-    ImageObject *imgObj = new ImageObject();
-    imgObj->setImage(QPixmap::fromImage(image));
+    // ── Use TransformableImageObject so the user gets interactive handles ──
+    auto *imgObj = new TransformableImageObject(image);
 
-    // Center the image on the canvas
-    qreal x = (m_project->width() - image.width()) / 2.0;
-    qreal y = (m_project->height() - image.height()) / 2.0;
-    imgObj->setPos(x, y);
+    // Centre on canvas
+    imgObj->setPosition(QPointF(m_project->width()  / 2.0,
+                                m_project->height() / 2.0));
 
-    // Add to current layer at current frame
     currentLayer->addObjectToFrame(m_project->currentFrame(), imgObj);
 
-    // Update canvas
+    // Select immediately so handles appear right away
+    m_canvasView->setSelectedImage(imgObj);
+
     m_canvas->refreshFrame();
     m_isModified = true;
     updateWindowTitle();
 
-    statusBar()->showMessage(QString("Image imported: %1 (%2x%3)")
+    statusBar()->showMessage(QString("Image imported: %1 (%2×%3 px)")
         .arg(QFileInfo(fileName).fileName())
         .arg(image.width())
         .arg(image.height()), 5000);
+}
+
+void MainWindow::onSplineCommitted(const QList<QPointF> &nodes)
+{
+    if (nodes.size() < 2 || !m_project || !m_project->currentLayer()) {
+        statusBar()->showMessage(QString("Spline commit failed: nodes=%1 project=%2 layer=%3")
+            .arg(nodes.size()).arg(m_project ? 1 : 0)
+            .arg((m_project && m_project->currentLayer()) ? 1 : 0), 5000);
+        return;
+    }
+
+    // Use the targets snapshotted when interpolation mode was entered —
+    // the live selection is empty by now because the overlay stole focus.
+    QList<VectorObject*> targets = m_interpolationTargets;
+    m_interpolationTargets.clear();
+
+    if (targets.isEmpty()) {
+        statusBar()->showMessage("Spline commit failed: no targets were saved — select objects BEFORE right-clicking Interpolate", 5000);
+        m_splineOverlay->clearNodes();
+        m_splineOverlay->hide();
+        m_canvas->exitInterpolationMode();
+        return;
+    }
+
+    QPainterPath scenePath;
+    scenePath.moveTo(m_canvasView->mapToScene(nodes.first().toPoint()));
+    for (int i = 1; i < nodes.size(); ++i)
+        scenePath.lineTo(m_canvasView->mapToScene(nodes[i].toPoint()));
+
+    int startFrame = m_project->currentFrame();
+    int duration   = m_interpTotalFrames;
+
+    // Compute each object's scene-space center on the start frame so we can
+    // move it by the delta to the path point — not re-center from boundingRect origin.
+    // (PathObject stores strokes in scene coords with pos()=(0,0), so boundingRect()
+    //  is already in scene space and setPos() would double-offset it.)
+    QList<QPointF> startCenters;
+    for (VectorObject *obj : targets) {
+        QRectF br = obj->boundingRect();
+        QPointF localCenter = br.center();
+        QPointF sceneCenter = obj->mapToScene(localCenter);
+        startCenters.append(sceneCenter);
+    }
+
+    QPointF pathStart = scenePath.pointAtPercent(0.0);
+
+    // Build the list of (targetFrame, t) pairs to generate
+    // Advanced mode: use per-node times to map each path node to a specific frame,
+    //   then interpolate between nodes for in-between frames.
+    // Basic mode: evenly distribute duration frames along the path.
+    QList<QPair<int,qreal>> frames; // {targetFrame, t along scenePath}
+
+    if (m_interpAdvanced && m_interpKeyframeTimes.size() >= 2
+        && m_interpKeyframeTimes.size() == nodes.size()) {
+        // Advanced: for each segment between consecutive nodes, generate frames
+        int totalNodes = nodes.size();
+        for (int seg = 0; seg < totalNodes - 1; ++seg) {
+            int frameA = m_interpKeyframeTimes[seg];
+            int frameB = m_interpKeyframeTimes[seg + 1];
+            qreal tA = static_cast<qreal>(seg)     / (totalNodes - 1);
+            qreal tB = static_cast<qreal>(seg + 1) / (totalNodes - 1);
+            int segFrames = qAbs(frameB - frameA);
+            for (int f = (seg == 0 ? 1 : 0); f <= segFrames; ++f) {
+                qreal segT = static_cast<qreal>(f) / segFrames;
+                qreal t = tA + segT * (tB - tA);
+                frames.append({startFrame + frameA + f, t});
+            }
+        }
+        duration = frames.isEmpty() ? 0 : (frames.last().first - startFrame);
+    } else {
+        // Basic: evenly space `duration` frames
+        for (int i = 1; i <= duration; ++i) {
+            qreal t = static_cast<qreal>(i) / duration;
+            frames.append({startFrame + i, t});
+        }
+    }
+
+    for (auto &[targetFrame, t] : frames) {
+        QPointF pathPoint = scenePath.pointAtPercent(t);
+        QPointF delta = pathPoint - pathStart;
+
+        for (int oi = 0; oi < targets.size(); ++oi) {
+            VectorObject *obj = targets[oi];
+            VectorObject *frameClone = obj->clone();
+            QPointF newSceneCenter = startCenters[oi] + delta;
+            QRectF br = frameClone->boundingRect();
+            QPointF localCenter = br.center();
+            frameClone->setPos(newSceneCenter - localCenter);
+            m_project->currentLayer()->addMotionPathObjectToFrame(targetFrame, frameClone);
+        }
+    }
+
+    m_splineOverlay->clearNodes();
+    m_splineOverlay->hide();
+    m_canvas->exitInterpolationMode();
+    m_canvas->refreshFrame();
+
+    statusBar()->showMessage(QString("Created %1 frame animation with %2 object(s)")
+        .arg(duration).arg(targets.size()));
+}
+
+void MainWindow::onInstanceGroupRequested(ObjectGroup *group)
+{
+    if (!group || !m_project) return;
+
+    // FIX: Change qobject_cast to dynamic_cast
+    ObjectGroup *newInstance = dynamic_cast<ObjectGroup*>(group->clone());
+
+    if (!newInstance) return; // Safety check
+
+    // Determine the target position (Center of the visible screen)
+    QPointF targetPos = m_canvasView->mapToScene(m_canvasView->viewport()->rect().center());
+
+    // Offset the position so the center of the art is at the cursor
+    QRectF bounds = newInstance->boundingRect();
+    newInstance->setPos(targetPos.x() - bounds.width()/2,
+                        targetPos.y() - bounds.height()/2);
+
+    Layer *currentLayer = m_project->currentLayer();
+    if (currentLayer) {
+        currentLayer->addObjectToFrame(m_project->currentFrame(), newInstance);
+    }
+
+    m_canvas->addItem(newInstance);
+    m_canvas->update();
+}
+
+void MainWindow::startInterpolationMode() {
+    if (!m_splineOverlay) return;
+
+    m_splineOverlay->setGeometry(m_canvasView->geometry());
+    m_splineOverlay->show();
+
+    // These two lines stop the "stuck" behavior
+    m_splineOverlay->raise();
+    m_splineOverlay->setFocus(Qt::OtherFocusReason);
+
+    statusBar()->showMessage("Draw motion path. [ENTER] to Finish, [ESC] to Cancel.");
+}
+
+// ── NEW: Lasso / Magic Wand action slots ─────────────────────────────────────
+
+// Returns true if the display clone `obj` (in the scene) intersects `poly` (scene coords).
+// PathObject stores paths in scene coords with pos()=(0,0), so we use scenePos()+boundingRect().
+static bool objectIntersectsPoly(VectorObject *obj, const QPolygonF &poly)
+{
+    // Map the object's bounding rect to scene coordinates
+    QRectF br     = obj->boundingRect();
+    QPointF sp    = obj->scenePos();
+    QRectF sceneR = br.translated(sp);
+
+    // Quick reject
+    if (!poly.boundingRect().intersects(sceneR))
+        return false;
+
+    // Test all four corners + center; also test whether the poly center is inside the rect
+    QVector<QPointF> testPts = {
+        sceneR.topLeft(), sceneR.topRight(),
+        sceneR.bottomLeft(), sceneR.bottomRight(),
+        sceneR.center()
+    };
+    for (const QPointF &pt : testPts)
+        if (poly.containsPoint(pt, Qt::WindingFill))
+            return true;
+
+    // Also test poly vertices inside the bounding rect
+    for (const QPointF &pt : poly)
+        if (sceneR.contains(pt))
+            return true;
+
+    return false;
+}
+
+void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
+{
+    if (!m_project || !m_project->currentLayer()) return;
+
+    // Operate on display items in the scene so scenePos() is available.
+    // Resolve each display clone back to its source before modifying.
+    bool changed = false;
+    for (QGraphicsItem *item : m_canvas->items()) {
+        auto *obj = dynamic_cast<VectorObject*>(item);
+        if (!obj) continue;
+        if (!objectIntersectsPoly(obj, poly)) continue;
+
+        VectorObject *src = m_canvas->sourceObject(obj);
+        if (!src) src = obj;
+        src->setFillColor(color);
+        changed = true;
+    }
+    if (changed) m_canvas->refreshFrame();
+}
+
+void MainWindow::onLassoCut(const QPolygonF &poly)
+{
+    // ── Photoshop-style lasso split ──────────────────────────────────────────
+    // For each object that intersects the lasso polygon:
+    //   • PathObject / ShapeObject: split into two pieces using QPainterPath
+    //     boolean ops — the part INSIDE stays as a new object, the part OUTSIDE
+    //     stays as the original (modified in place).  Both pieces are kept so
+    //     the user can drag them apart independently.
+    //   • ImageObject: just removed (raster split would need pixel ops).
+    // If the lasso is entirely outside an object, nothing happens to it.
+    // If the lasso entirely contains an object, it is removed (nothing left outside).
+
+    if (!m_project || !m_project->currentLayer()) return;
+
+    Layer *layer = m_project->currentLayer();
+    int   frame  = m_project->currentFrame();
+
+    // Build the clip path from the lasso polygon (scene coords)
+    QPainterPath lassoPath;
+    lassoPath.addPolygon(poly);
+    lassoPath.closeSubpath();
+
+    // Collect display items first (don't modify while iterating)
+    QVector<VectorObject*> displayItems;
+    for (QGraphicsItem *item : m_canvas->items()) {
+        if (auto *obj = dynamic_cast<VectorObject*>(item))
+            displayItems << obj;
+    }
+
+    bool anyChange = false;
+
+    for (VectorObject *display : displayItems) {
+        if (!objectIntersectsPoly(display, poly)) continue;
+
+        VectorObject *src = m_canvas->sourceObject(display);
+        if (!src) src = display;
+
+        // ── PathObject split ─────────────────────────────────────────────────
+        if (auto *path = dynamic_cast<PathObject*>(src)) {
+            QPainterPath pp = path->path();
+            // Map lasso to object's local coords (PathObject uses scene coords,
+            // pos=(0,0), so no transform needed for PathObject)
+            QPointF offset = src->pos();
+            QPainterPath lassoLocal = lassoPath.translated(-offset);
+
+            QPainterPath insidePart  = pp.intersected(lassoLocal);
+            QPainterPath outsidePart = pp.subtracted(lassoLocal);
+
+            bool hasInside  = !insidePart.isEmpty()  && insidePart.boundingRect().width()  > 0.5;
+            bool hasOutside = !outsidePart.isEmpty() && outsidePart.boundingRect().width() > 0.5;
+
+            if (!hasInside && !hasOutside) {
+                // Fully inside lasso — remove
+                m_canvas->removeObject(display);
+                anyChange = true;
+                continue;
+            }
+
+            if (hasInside && hasOutside) {
+                // True split: modify original to be the outside piece,
+                // add a new object for the inside piece
+                path->setPath(outsidePart);
+                path->update();
+
+                PathObject *insideObj = new PathObject();
+                insideObj->setPath(insidePart);
+                insideObj->setPos(src->pos());
+                insideObj->setStrokeColor(path->strokeColor());
+                insideObj->setFillColor(path->fillColor());
+                insideObj->setStrokeWidth(path->strokeWidth());
+                insideObj->setObjectOpacity(path->objectOpacity());
+                insideObj->setZValue(path->zValue() + 0.001);
+                layer->addObjectToFrame(frame, insideObj);
+                anyChange = true;
+
+            } else if (hasInside && !hasOutside) {
+                // Object is entirely inside the lasso — just remove it
+                m_canvas->removeObject(display);
+                anyChange = true;
+
+            } else {
+                // Object is entirely outside — nothing to do
+            }
+            continue;
+        }
+
+        // ── ShapeObject split ────────────────────────────────────────────────
+        if (auto *shape = dynamic_cast<ShapeObject*>(src)) {
+            // Shapes store their path differently — build a painter path from the rect
+            QPainterPath shapePath;
+            QPointF offset = src->pos();
+            if (shape->shapeType() == ShapeObject::Rectangle)
+                shapePath.addRect(shape->rect().translated(offset));
+            else
+                shapePath.addEllipse(shape->rect().translated(offset));
+
+            QPainterPath insidePart  = shapePath.intersected(lassoPath);
+            QPainterPath outsidePart = shapePath.subtracted(lassoPath);
+
+            bool hasInside  = !insidePart.isEmpty()  && insidePart.boundingRect().width()  > 0.5;
+            bool hasOutside = !outsidePart.isEmpty() && outsidePart.boundingRect().width() > 0.5;
+
+            if (!hasInside) continue; // lasso doesn't cover the shape
+
+            if (hasInside && hasOutside) {
+                // Create two PathObjects from the split shape
+                PathObject *insideObj = new PathObject();
+                insideObj->setPath(insidePart.translated(-offset));
+                insideObj->setPos(offset);
+                insideObj->setFillColor(shape->fillColor());
+                insideObj->setStrokeColor(shape->strokeColor());
+                insideObj->setStrokeWidth(shape->strokeWidth());
+                insideObj->setObjectOpacity(shape->objectOpacity());
+                insideObj->setZValue(shape->zValue() + 0.001);
+
+                PathObject *outsideObj = new PathObject();
+                outsideObj->setPath(outsidePart.translated(-offset));
+                outsideObj->setPos(offset);
+                outsideObj->setFillColor(shape->fillColor());
+                outsideObj->setStrokeColor(shape->strokeColor());
+                outsideObj->setStrokeWidth(shape->strokeWidth());
+                outsideObj->setObjectOpacity(shape->objectOpacity());
+                outsideObj->setZValue(shape->zValue());
+
+                // Remove original shape, add both pieces
+                m_canvas->removeObject(display);
+                layer->addObjectToFrame(frame, insideObj);
+                layer->addObjectToFrame(frame, outsideObj);
+                anyChange = true;
+
+            } else if (hasInside && !hasOutside) {
+                m_canvas->removeObject(display);
+                anyChange = true;
+            }
+            continue;
+        }
+
+        // ── ImageObject or other — just remove ───────────────────────────────
+        m_canvas->removeObject(display);
+        anyChange = true;
+    }
+
+    if (anyChange) {
+        m_canvas->refreshFrame();
+        m_isModified = true;
+        updateWindowTitle();
+    }
+}
+
+void MainWindow::onLassoCopy(const QPolygonF &poly)
+{
+    // Render the full canvas to an image, then mask to the lasso polygon.
+    // The resulting image is placed on the clipboard as a standard image
+    // so it can be pasted anywhere (other apps, or back into AkisVG via Import Image).
+    QRectF sceneR(0, 0, m_project->width(), m_project->height());
+
+    QImage snapshot(sceneR.size().toSize(), QImage::Format_ARGB32_Premultiplied);
+    snapshot.fill(Qt::transparent);
+    QPainter p(&snapshot);
+    p.setRenderHint(QPainter::Antialiasing);
+    m_canvas->render(&p, sceneR, sceneR);
+    p.end();
+
+    // Clip to polygon shape
+    QImage masked(snapshot.size(), QImage::Format_ARGB32_Premultiplied);
+    masked.fill(Qt::transparent);
+    QPainter mp(&masked);
+    mp.setRenderHint(QPainter::Antialiasing);
+    QPainterPath clipPath;
+    clipPath.addPolygon(poly);
+    mp.setClipPath(clipPath);
+    mp.drawImage(0, 0, snapshot);
+    mp.end();
+
+    // Crop to the polygon bounding rect so the clipboard image isn't canvas-sized
+    QRect cropRect = poly.boundingRect().toRect().intersected(snapshot.rect());
+    QGuiApplication::clipboard()->setImage(masked.copy(cropRect));
+
+    statusBar()->showMessage(
+        QString("Copied selection (%1×%2 px) — paste with Ctrl+V or File > Import Image")
+        .arg(cropRect.width()).arg(cropRect.height()), 4000);
+}
+
+void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
+{
+    // ── Pull: split geometry along lasso boundary, select the inside pieces,
+    //    then switch to Select tool so the user can drag them away.
+    //
+    //    This uses the same boolean-op split logic as onLassoCut, but instead
+    //    of discarding the pieces it hands them to SelectTool for dragging.
+
+    if (!m_project || !m_project->currentLayer()) return;
+
+    Layer *layer = m_project->currentLayer();
+    int    frame = m_project->currentFrame();
+
+    QPainterPath lassoPath;
+    lassoPath.addPolygon(poly);
+    lassoPath.closeSubpath();
+
+    // Snapshot display items before we modify the layer
+    QVector<VectorObject*> displayItems;
+    for (QGraphicsItem *item : m_canvas->items()) {
+        if (auto *obj = dynamic_cast<VectorObject*>(item))
+            displayItems << obj;
+    }
+
+    QList<VectorObject*> pulledPieces; // pieces that end up inside the lasso
+    bool anyChange = false;
+
+    for (VectorObject *display : displayItems) {
+        if (!objectIntersectsPoly(display, poly)) continue;
+
+        VectorObject *src = m_canvas->sourceObject(display);
+        if (!src) src = display;
+
+        // ── PathObject ───────────────────────────────────────────────────────
+        if (auto *path = dynamic_cast<PathObject*>(src)) {
+            QPainterPath pp = path->path();
+            QPointF offset  = src->pos();
+            QPainterPath lassoLocal = lassoPath.translated(-offset);
+
+            QPainterPath insidePart  = pp.intersected(lassoLocal);
+            QPainterPath outsidePart = pp.subtracted(lassoLocal);
+
+            bool hasInside  = !insidePart.isEmpty()
+                              && insidePart.boundingRect().width()  > 0.5;
+            bool hasOutside = !outsidePart.isEmpty()
+                              && outsidePart.boundingRect().width() > 0.5;
+
+            if (hasInside && hasOutside) {
+                // Modify original to keep the outside piece
+                path->setPath(outsidePart);
+                path->update();
+
+                // Create a new object for the inside piece — this is what gets pulled
+                PathObject *insideObj = new PathObject();
+                insideObj->setPath(insidePart);
+                insideObj->setPos(offset);
+                insideObj->setStrokeColor(path->strokeColor());
+                insideObj->setFillColor(path->fillColor());
+                insideObj->setStrokeWidth(path->strokeWidth());
+                insideObj->setObjectOpacity(path->objectOpacity());
+                insideObj->setZValue(path->zValue() + 0.001);
+                layer->addObjectToFrame(frame, insideObj);
+                pulledPieces << insideObj;
+                anyChange = true;
+
+            } else if (hasInside && !hasOutside) {
+                // Whole object is inside — pull the entire object
+                pulledPieces << src;
+                // Don't remove — it stays, just gets selected for dragging
+                anyChange = true;
+            }
+            continue;
+        }
+
+        // ── ShapeObject ──────────────────────────────────────────────────────
+        if (auto *shape = dynamic_cast<ShapeObject*>(src)) {
+            QPointF offset = src->pos();
+            QPainterPath shapePath;
+            if (shape->shapeType() == ShapeObject::Rectangle)
+                shapePath.addRect(shape->rect().translated(offset));
+            else
+                shapePath.addEllipse(shape->rect().translated(offset));
+
+            QPainterPath insidePart  = shapePath.intersected(lassoPath);
+            QPainterPath outsidePart = shapePath.subtracted(lassoPath);
+
+            bool hasInside  = !insidePart.isEmpty()
+                              && insidePart.boundingRect().width()  > 0.5;
+            bool hasOutside = !outsidePart.isEmpty()
+                              && outsidePart.boundingRect().width() > 0.5;
+
+            if (!hasInside) continue;
+
+            if (hasInside && hasOutside) {
+                PathObject *insideObj = new PathObject();
+                insideObj->setPath(insidePart.translated(-offset));
+                insideObj->setPos(offset);
+                insideObj->setFillColor(shape->fillColor());
+                insideObj->setStrokeColor(shape->strokeColor());
+                insideObj->setStrokeWidth(shape->strokeWidth());
+                insideObj->setObjectOpacity(shape->objectOpacity());
+                insideObj->setZValue(shape->zValue() + 0.001);
+
+                PathObject *outsideObj = new PathObject();
+                outsideObj->setPath(outsidePart.translated(-offset));
+                outsideObj->setPos(offset);
+                outsideObj->setFillColor(shape->fillColor());
+                outsideObj->setStrokeColor(shape->strokeColor());
+                outsideObj->setStrokeWidth(shape->strokeWidth());
+                outsideObj->setObjectOpacity(shape->objectOpacity());
+                outsideObj->setZValue(shape->zValue());
+
+                m_canvas->removeObject(display);
+                layer->addObjectToFrame(frame, insideObj);
+                layer->addObjectToFrame(frame, outsideObj);
+                pulledPieces << insideObj;
+                anyChange = true;
+
+            } else if (hasInside && !hasOutside) {
+                pulledPieces << src;
+                anyChange = true;
+            }
+            continue;
+        }
+    }
+
+    if (!anyChange || pulledPieces.isEmpty()) return;
+
+    // Refresh the canvas so the new split objects appear as display clones
+    m_canvas->refreshFrame();
+    m_isModified = true;
+    updateWindowTitle();
+
+    // Switch to Select tool and pre-select the pulled pieces
+    m_toolBox->activateTool(ToolType::Select);
+
+    SelectTool *sel = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select));
+    if (sel) {
+        sel->clearSelection();
+        sel->setSelectedObjects(pulledPieces);
+    }
+
+    statusBar()->showMessage(
+        QString("Pulled %1 piece(s) — drag to reposition, click elsewhere to deselect")
+        .arg(pulledPieces.size()), 4000);
+}
+
+void MainWindow::provideWandSnapshot(MagicWandTool *wand)
+{
+    if (!wand || !m_project) return;
+    QRectF sceneR(0, 0, m_project->width(), m_project->height());
+    QImage snapshot(sceneR.size().toSize(), QImage::Format_ARGB32_Premultiplied);
+    snapshot.fill(Qt::white);  // white background matches canvas
+    QPainter p(&snapshot);
+    p.setRenderHint(QPainter::Antialiasing);
+    m_canvas->render(&p, sceneR, sceneR);
+    p.end();
+    wand->setCanvasSnapshot(snapshot, sceneR.topLeft());
 }
