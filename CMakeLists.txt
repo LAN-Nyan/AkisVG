@@ -54,6 +54,15 @@ set(SOURCES
     src/tools/liquifytool.cpp
     src/tools/eyedroppertool.cpp
     src/ui/startupscreen.cpp
+    src/canvas/objects/objectgroup.cpp
+    src/ui/startupdialog.cpp
+    src/canvas/splineoverlay.cpp
+    # ── NEW TOOLS ──────────────────────────────────────────────────────────────
+    src/tools/lassotool.cpp
+    src/tools/gradienttool.cpp
+    src/canvas/objects/gradientobject.cpp
+    src/tools/magicwandtool.cpp
+    src/canvas/objects/transformableimageobject.cpp
 )
 
 set(HEADERS
@@ -74,6 +83,13 @@ set(HEADERS
     src/canvas/objects/imageobject.h
     src/io/gifexporter.h
     src/ui/startupscreen.h
+    src/utils/thememanager.h
+    # ── NEW TOOLS ──────────────────────────────────────────────────────────────
+    src/tools/lassotool.h
+    src/tools/gradienttool.h
+    src/canvas/objects/gradientobject.h
+    src/tools/magicwandtool.h
+    src/canvas/objects/transformableimageobject.h
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
