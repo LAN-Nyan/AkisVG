@@ -63,4 +63,19 @@ private:
 // Shorthand accessor used everywhere
 inline const ThemeColors& theme() { return ThemeManager::instance().colors(); }
 
+// ── UI scale helpers ────────────────────────────────────────────────────────
+// Returns the user's chosen UI scale factor (e.g. 0.5, 1.0, 2.0).
+// Reads QSettings on first call and caches the result for the lifetime of
+// the process.  Call invalidateUiScaleCache() after the user changes the
+// setting so widgets that read it at construction time can be recreated.
+double uiScale();
+void invalidateUiScaleCache();
+
+// Scale an integer pixel value by the current UI scale factor.
+inline int sc(int px) {
+    extern double uiScale();
+void invalidateUiScaleCache();
+    return static_cast<int>(px * uiScale() + 0.5);
+}
+
 #endif // THEMEMANAGER_H
