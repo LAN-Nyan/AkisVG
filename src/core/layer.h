@@ -119,7 +119,11 @@ public:
     void addMotionPathObjectToFrame(int frameNumber, VectorObject *obj); // marks frame as motion-path generated
     void removeObjectFromFrame(int frameNumber, VectorObject *obj);
     bool isMotionPathFrame(int frameNumber) const { return m_motionPathFrames.contains(frameNumber); }
+    QSet<int> motionPathFrames() const { return m_motionPathFrames; }
+    void addMotionPathFrame(int frameNumber) { m_motionPathFrames.insert(frameNumber); }
+    QMap<int, FrameInterpolation> allInterpolationRanges() const { return m_interpolations; }
     void clearFrame(int frameNumber);
+    void duplicateFrame(int srcFrame, int destFrame);
     bool hasContentAtFrame(int frameNumber) const;
     // Returns all frame numbers that have direct content (for dynamic frame sizing)
     QList<int> allFrameNumbers() const { return m_frames.keys(); }

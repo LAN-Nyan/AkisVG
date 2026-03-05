@@ -118,7 +118,11 @@ QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
             const QList<VectorObject*> &startObjs = m_frames.value(interp.startFrame);
             const QList<VectorObject*> &endObjs   = m_frames.value(interp.endFrame);
 
-            if (startObjs.isEmpty()) break; // nothing to interpolate from
+            // FIX #31 — Doppelganger bug:
+            // If startObjs is empty the range exists but has no source objects.
+            // Returning {} stops the fall-through to the extended-frame lookup which
+            // would find the PREVIOUS range's endFrame objects and ghost them here.
+            if (startObjs.isEmpty()) return QList<VectorObject*>();
 
             // Compute how far along we are (0..1)
             int totalFrames = interp.endFrame - interp.startFrame;
@@ -229,8 +233,31 @@ void Layer::removeObjectFromFrame(int frameNumber, VectorObject *obj)
     }
 }
 
-void Layer::clearFrame(int frameNumber)
+// Duplicates the content of srcFrame into destFrame (cloning all objects).
+// If destFrame already has content it is cleared first.
+void Layer::duplicateFrame(int srcFrame, int destFrame)
 {
+    if (srcFrame == destFrame) return;
+
+    // Get the source objects (respects extensions & interpolation via objectsAtFrame,
+    // but for a straight duplicate we want the raw key-frame data only).
+    const QList<VectorObject*> srcObjs = m_frames.value(srcFrame, QList<VectorObject*>());
+    if (srcObjs.isEmpty()) return;
+
+    // Clear destination
+    clearFrame(destFrame);
+
+    // Clone each object into the destination frame
+    for (VectorObject *obj : srcObjs) {
+        if (!obj) continue;
+        VectorObject *copy = obj->clone();
+        m_frames[destFrame].append(copy);
+    }
+
+    emit modified();
+}
+
+void Layer::clearFrame(int frameNumber){
     if (m_frames.contains(frameNumber)) {
         qDeleteAll(m_frames[frameNumber]);
         m_frames.remove(frameNumber);

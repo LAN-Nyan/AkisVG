@@ -6,6 +6,7 @@
 #include "canvas/objects/shapeobject.h"
 #include "canvas/objects/textobject.h"
 #include "canvas/objects/imageobject.h"
+#include "canvas/objects/transformableimageobject.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -386,6 +387,26 @@ bool Project::saveToFile(const QString &filePath)
         }
         layerObj["frames"] = framesArray;
 
+        // Save interpolation ranges (tween ranges) — FIX #26: was not previously saved
+        QJsonArray interpRangesArray;
+        for (const FrameInterpolation &ir : layer->allInterpolationRanges()) {
+            QJsonObject irObj;
+            irObj["startFrame"] = ir.startFrame;
+            irObj["endFrame"]   = ir.endFrame;
+            irObj["easing"]     = ir.easingType;
+            interpRangesArray.append(irObj);
+        }
+        if (!interpRangesArray.isEmpty())
+            layerObj["interpRanges"] = interpRangesArray;
+
+        // Save motion path frames — FIX #26: frame colors (purple) now persist
+        QJsonArray motionPathArray;
+        for (int f : layer->motionPathFrames()) {
+            motionPathArray.append(f);
+        }
+        if (!motionPathArray.isEmpty())
+            layerObj["motionPathFrames"] = motionPathArray;
+
         // Save frame extensions (hold/repeat frames)
         QJsonArray extensionsArray;
         for (int keyFr : layer->allFrameNumbers()) {
@@ -559,6 +580,25 @@ bool Project::loadFromFile(const QString &filePath)
         }
 
         m_layers.append(layer);
+
+        // Load interpolation ranges — FIX #26
+        if (layerObj.contains("interpRanges")) {
+            for (const QJsonValue &irVal : layerObj["interpRanges"].toArray()) {
+                QJsonObject irObj = irVal.toObject();
+                int startF  = irObj["startFrame"].toInt();
+                int endF    = irObj["endFrame"].toInt();
+                QString easing = irObj["easing"].toString("linear");
+                if (startF > 0 && endF > startF)
+                    layer->setInterpolation(startF, endF, easing);
+            }
+        }
+
+        // Load motion path frames — FIX #26 (purple frame color persistence)
+        if (layerObj.contains("motionPathFrames")) {
+            for (const QJsonValue &fVal : layerObj["motionPathFrames"].toArray()) {
+                layer->addMotionPathFrame(fVal.toInt());
+            }
+        }
     }
 
     if (m_layers.isEmpty()) {
@@ -637,11 +677,26 @@ static QJsonObject serializeVectorObject(VectorObject *obj)
     }
 
     case VectorObjectType::Image: {
-        ImageObject *img = static_cast<ImageObject*>(obj);
-        QPixmap pixmap = img->image();
-        QImage image = pixmap.toImage();
+        // Handle both ImageObject and TransformableImageObject (which also reports Image type)
+        QImage image;
+        qreal imgW = 0, imgH = 0;
+        QPointF imgPos;
+        qreal imgAngle = 0;
+        bool isTransformable = false;
 
-        // Convert image to base64
+        if (auto *timg = dynamic_cast<TransformableImageObject*>(obj)) {
+            // TransformableImageObject stores its own position, size, angle
+            image = timg->getImage();
+            imgW = timg->imgWidth();
+            imgH = timg->imgHeight();
+            imgPos = timg->position();
+            imgAngle = timg->imgAngle();
+            isTransformable = true;
+        } else if (auto *img = dynamic_cast<ImageObject*>(obj)) {
+            QPixmap pixmap = img->image();
+            image = pixmap.toImage();
+        }
+
         QByteArray ba;
         QBuffer buffer(&ba);
         buffer.open(QIODevice::WriteOnly);
@@ -649,6 +704,14 @@ static QJsonObject serializeVectorObject(VectorObject *obj)
         data["imageData"] = QString(ba.toBase64());
         data["imageWidth"] = image.width();
         data["imageHeight"] = image.height();
+        if (isTransformable) {
+            data["isTransformable"] = true;
+            data["img_w"] = imgW;
+            data["img_h"] = imgH;
+            data["img_pos_x"] = imgPos.x();
+            data["img_pos_y"] = imgPos.y();
+            data["img_angle"] = imgAngle;
+        }
         break;
     }
     }
@@ -733,14 +796,25 @@ static VectorObject* deserializeVectorObject(const QJsonObject &data)
     }
 
     case VectorObjectType::Image: {
-        ImageObject *img = new ImageObject();
-
         // Decode base64 image data
         QByteArray ba = QByteArray::fromBase64(data["imageData"].toString().toLatin1());
         QImage image;
         image.loadFromData(ba, "PNG");
-        img->setImage(QPixmap::fromImage(image));
-        obj = img;
+
+        if (data["isTransformable"].toBool(false)) {
+            // Reconstruct as TransformableImageObject
+            auto *timg = new TransformableImageObject(image);
+            timg->setImgSize(data["img_w"].toDouble(image.width()),
+                             data["img_h"].toDouble(image.height()));
+            timg->setPosition(QPointF(data["img_pos_x"].toDouble(0),
+                                     data["img_pos_y"].toDouble(0)));
+            timg->setImgAngle(data["img_angle"].toDouble(0));
+            obj = timg;
+        } else {
+            ImageObject *img = new ImageObject();
+            img->setImage(QPixmap::fromImage(image));
+            obj = img;
+        }
         break;
     }
     }
