@@ -60,9 +60,10 @@ jobs:
       - name: Configure and Build
         shell: bash
         run: |
-          # This line tells the OS to look in the Qt lib folder first, the reason i need this? I HAVE NO IDEA (Thanks Reddit) 
+          # Point the linker to the Qt library directory
           export LD_LIBRARY_PATH="${{ env.QT_ROOT_DIR }}/lib:$LD_LIBRARY_PATH"
           
+          # Run the build as usual
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           cmake --build build
 
