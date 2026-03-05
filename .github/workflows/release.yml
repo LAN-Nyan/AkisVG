@@ -59,8 +59,8 @@ jobs:
           fi
       - name: Configure and Build
         shell: bash
+        # Setting 'env' here is more reliable than 'export' inside 'run'
         env:
-          # This is the "Force" button for the Linux Linker
           LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib:${{ env.LD_LIBRARY_PATH }}
         run: |
           # 1. Configure
