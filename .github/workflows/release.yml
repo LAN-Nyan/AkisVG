@@ -60,19 +60,15 @@ jobs:
       - name: Configure and Build
         shell: bash
         env:
-          # ensures the libraries are found during the build process
-          LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib:$LD_LIBRARY_PATH
+          # This is the "Force" button for the Linux Linker
+          LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib:${{ env.LD_LIBRARY_PATH }}
         run: |
-          # 1. Create build directory
-          mkdir -p build
-          
-          # 2. Configure with explicit RCC path to be safe
+          # 1. Configure
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
-            -DQT_RCC_EXECUTABLE="${{ env.QT_ROOT_DIR }}/bin/rcc"
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           
-          # 3. Build
+          # 2. Build
           cmake --build build
       - name: Package Windows
         if: matrix.os == 'windows-latest'
