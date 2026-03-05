@@ -29,14 +29,21 @@ public:
     explicit LassoTool(QObject *parent = nullptr);
     ~LassoTool() override = default;
 
+    ToolType toolType() const override { return ToolType::Lasso; }
+
     void mousePressEvent  (QMouseEvent *event, QPointF scenePos) override;
     void mouseMoveEvent   (QMouseEvent *event, QPointF scenePos) override;
     void mouseReleaseEvent(QMouseEvent *event, QPointF scenePos) override;
+    void keyPressEvent    (QKeyEvent   *event) override;
     void draw(QPainter *painter) override;
 
     void cancel();
     bool      hasSelection()     const { return m_closed; }
     QPolygonF selectionPolygon() const { return m_polygon; }
+
+    // FIX #22: "Work as Fill Tool" mode
+    void setFillMode(bool on) { m_fillMode = on; }
+    bool fillMode() const { return m_fillMode; }
 
 signals:
     void selectionChanged();
@@ -64,6 +71,9 @@ private:
     // Marching ants
     qreal   m_antOffset  = 0.0;
     qint64  m_lastTickMs = 0;
+
+    // FIX #22: Fill tool mode — click to add points, Del to remove last, close to fill
+    bool    m_fillMode   = false;
 
     bool isInsideSelection(QPointF scenePos) const;
     void closeLasso();

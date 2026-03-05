@@ -49,6 +49,7 @@ void Tool::setStrokeWidth(qreal width)
 void Tool::mousePressEvent  (QMouseEvent *event, QPointF) { event->ignore(); }
 void Tool::mouseMoveEvent   (QMouseEvent *event, QPointF) { event->ignore(); }
 void Tool::mouseReleaseEvent(QMouseEvent *event, QPointF) { event->ignore(); }
+void Tool::keyPressEvent    (QKeyEvent   *event)          { event->ignore(); }
 void Tool::draw(QPainter *painter)                        { Q_UNUSED(painter) }
 
 // ── Legacy scene events (existing tools override these) ───────────────────────

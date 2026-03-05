@@ -16,7 +16,7 @@ class BlendTool : public Tool
 
 public:
     explicit BlendTool(QObject *parent = nullptr);
-
+    ToolType toolType() const override { return ToolType::Blend; }
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

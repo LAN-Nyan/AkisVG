@@ -7,13 +7,13 @@
 #include <QPen>
 #include <QBrush>
 
-ShapeTool::ShapeTool(ShapeType shapeType, QObject *parent)
-    : Tool(shapeType == ShapeType::Rectangle ? ToolType::Rectangle : ToolType::Ellipse, parent)
-    , m_shapeType(shapeType)
-    , m_previewItem(nullptr)
-    , m_fillByDefault(true)  // Default to filling shapes - more intuitive
-{
-}
+//ShapeTool::ShapeTool(ShapeType shapeType, QObject *parent)
+  //  : Tool(shapeType == ShapeType::Rectangle ? ToolType::Rectangle : ToolType::Ellipse, parent)
+  //  , m_shapeType(shapeType)
+  //  , m_previewItem(nullptr)
+  //  , m_fillByDefault(true)  // Default to filling shapes - more intuitive
+//{
+//}
 
 void ShapeTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {

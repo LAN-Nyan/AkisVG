@@ -12,7 +12,7 @@ class EraserTool : public Tool
 
 public:
     explicit EraserTool(QObject *parent = nullptr);
-
+    ToolType toolType() const override { return ToolType::Eraser; }
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

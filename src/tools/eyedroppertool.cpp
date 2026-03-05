@@ -2,6 +2,11 @@
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/vectorobject.h"
 #include <QGraphicsSceneMouseEvent>
+#include <QScreen>
+#include <QGuiApplication>
+#include <QPixmap>
+#include <QImage>
+#include <QGraphicsView>
 
 EyedropperTool::EyedropperTool(QObject *parent)
     : Tool(ToolType::eyedropper, parent) // Add 'Eyedropper' to your ToolType enum
@@ -9,18 +14,49 @@ EyedropperTool::EyedropperTool(QObject *parent)
     m_name = "Color Picker";
 }
 
+// FIX #16: Sample a 1px region of the screen at the given scene position.
+// Falls back to VectorObject stroke/fill if screen grab fails.
+static QColor screenColorAt(const QPointF &scenePos, VectorCanvas *canvas)
+{
+    if (!canvas || canvas->views().isEmpty())
+        return QColor();
+
+    QGraphicsView *view = canvas->views().first();
+    // Convert scene → viewport → global screen coords
+    QPoint vpPt   = view->mapFromScene(scenePos);
+    QPoint globalPt = view->viewport()->mapToGlobal(vpPt);
+
+    // Grab a 1×1 pixel from the screen at that position
+    QScreen *screen = QGuiApplication::screenAt(globalPt);
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen) return QColor();
+
+    QPixmap px = screen->grabWindow(0, globalPt.x(), globalPt.y(), 1, 1);
+    if (px.isNull()) return QColor();
+
+    return px.toImage().pixelColor(0, 0);
+}
+
 void EyedropperTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
-    // 1. Find the item at the clicked position
+    // FIX #16: Try screen-pixel sampling first so the tool works on images
+    // and any complex/raster content, not just VectorObject stroke/fill.
+    QColor screenColor = screenColorAt(event->scenePos(), canvas);
+
+    if (screenColor.isValid()) {
+        emit colorPicked(screenColor, screenColor);
+        event->accept();
+        return;
+    }
+
+    // Fallback: extract from VectorObject (stroke/fill metadata)
     QGraphicsItem *item = canvas->itemAt(event->scenePos(), QTransform());
     VectorObject *vObj = dynamic_cast<VectorObject*>(item);
 
     if (vObj) {
-        // 2. Extract colors
         QColor pickedStroke = vObj->strokeColor();
         QColor pickedFill = vObj->fillColor();
 
-        // 3. Update settings based on modifiers
         if (event->modifiers() & Qt::ShiftModifier) {
             canvas->currentTool()->setFillColor(pickedFill);
         } else {
@@ -28,12 +64,8 @@ void EyedropperTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanv
         }
 
         emit colorPicked(pickedStroke, pickedFill);
-
-        // 4. CRITICAL: Tell Qt you handled the event so it doesn't
-        // start dragging the ItemIsMovable object
         event->accept();
     } else {
-        // If we hit empty space, ignore so the canvas can deselect items
         event->ignore();
     }
 }
@@ -44,7 +76,6 @@ void EyedropperTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanva
 
     // Check if we are hovering over a valid object
     if (dynamic_cast<VectorObject*>(item)) {
-        // You can update a cursor or a small preview UI here later
         event->accept();
     }
 }

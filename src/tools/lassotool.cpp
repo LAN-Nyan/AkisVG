@@ -7,6 +7,7 @@
 #include <QColorDialog>
 #include <QApplication>
 #include <QDateTime>
+#include <QTimer>
 #include <cmath>
 
 LassoTool::LassoTool(QObject *parent)
@@ -23,6 +24,8 @@ LassoTool::LassoTool(QObject *parent)
 bool LassoTool::isInsideSelection(QPointF p) const
 {
     if (!m_closed || m_polygon.isEmpty()) return false;
+    // FIX #10: Quick bounding-rect reject before the O(n) contains test
+    if (!m_polygon.boundingRect().contains(p)) return false;
     QPainterPath pp;
     pp.addPolygon(m_polygon);
     pp.closeSubpath();
@@ -54,6 +57,41 @@ void LassoTool::mousePressEvent(QMouseEvent *event, QPointF scenePos)
     }
 
     if (event->button() != Qt::LeftButton) return;
+
+    // ── FIX #22: Fill-tool / point-click mode ─────────────────────────────────
+    // In this mode, each click adds a precise point. Del removes the last point.
+    // Clicking near the start point (or double-clicking) closes the polygon.
+    if (m_fillMode) {
+        if (m_closed) {
+            // Closed selection exists — treat as fill/action
+            event->accept();
+            showActionMenu();
+            return;
+        }
+
+        if (!m_polygon.isEmpty()) {
+            // Check if near start → close
+            QPointF ds = scenePos - m_polygon.first();
+            if (m_polygon.size() >= 3 && std::hypot(ds.x(), ds.y()) < 20.0) {
+                closeLasso();
+                event->accept();
+                return;
+            }
+        }
+
+        // Add new point
+        if (m_polygon.isEmpty()) {
+            m_drawing = true;
+            m_antOffset = 0.0;
+            m_lastTickMs = QDateTime::currentMSecsSinceEpoch();
+        }
+        m_polygon << scenePos;
+        m_cursorPos = scenePos;
+        emit selectionChanged();
+        event->accept();
+        return;
+    }
+    // ── End fill-tool mode ────────────────────────────────────────────────────
 
     // ── Left-click inside a closed selection → start pull ────────────────────
     if (m_closed && isInsideSelection(scenePos)) {
@@ -112,10 +150,20 @@ void LassoTool::mouseMoveEvent(QMouseEvent *event, QPointF scenePos)
 
     // ── Drawing phase: accumulate points ─────────────────────────────────────
     if (m_drawing && !m_closed && !m_polygon.isEmpty()) {
-        QPointF d = scenePos - m_polygon.last();
-        if (std::hypot(d.x(), d.y()) >= MIN_POINT_DISTANCE) {
-            m_polygon << scenePos;
-            emit selectionChanged();
+        if (m_fillMode) {
+            // Fill-tool mode: just track cursor for rubber-band preview, don't accumulate
+            // Points are placed on click only
+        } else {
+            QPointF d = scenePos - m_polygon.last();
+            if (std::hypot(d.x(), d.y()) >= MIN_POINT_DISTANCE) {
+                // FIX #10: Cap point count — very long strokes with thousands of
+                // points cause slow QPainterPath construction and can OOM/segfault
+                // downstream when boolean ops are applied.
+                constexpr int MAX_LASSO_POINTS = 4000;
+                if (m_polygon.size() < MAX_LASSO_POINTS)
+                    m_polygon << scenePos;
+                emit selectionChanged();
+            }
         }
     }
 
@@ -136,6 +184,12 @@ void LassoTool::mouseReleaseEvent(QMouseEvent *event, QPointF scenePos)
 
     // ── End drawing: close the loop ───────────────────────────────────────────
     if (!m_drawing) return;
+
+    // In fill-tool mode, points are placed on click — don't close on release
+    if (m_fillMode) {
+        event->accept();
+        return;
+    }
 
     // Add final point if far enough
     if (!m_polygon.isEmpty()) {
@@ -161,16 +215,31 @@ void LassoTool::draw(QPainter *painter)
 {
     if (m_polygon.isEmpty()) return;
 
+    // FIX #10: Snapshot the polygon so the painter never reads a list that is
+    // being mutated by a concurrent mouse event (can happen during fast gestures).
+    // Also skip any point that contains NaN/Inf which crashes QPainterPath.
+    QPolygonF poly;
+    poly.reserve(m_polygon.size());
+    for (const QPointF &pt : m_polygon) {
+        if (std::isfinite(pt.x()) && std::isfinite(pt.y()))
+            poly << pt;
+    }
+    if (poly.isEmpty()) return;
+
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     if (m_drawing && !m_closed) {
         // ── Live freehand path while dragging ────────────────────────────────
         QPainterPath path;
-        path.moveTo(m_polygon.first());
-        for (int i = 1; i < m_polygon.size(); ++i)
-            path.lineTo(m_polygon[i]);
-        path.lineTo(m_cursorPos);  // rubber-band tail
+        path.moveTo(poly.first());
+        for (int i = 1; i < poly.size(); ++i)
+            path.lineTo(poly[i]);
+
+        if (m_fillMode && !poly.isEmpty())
+            path.lineTo(m_cursorPos);
+        else if (!m_fillMode)
+            path.lineTo(m_cursorPos);
 
         // Dark shadow for contrast on any background
         painter->setPen(QPen(QColor(0,0,0,160), 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
@@ -183,26 +252,33 @@ void LassoTool::draw(QPainter *painter)
         painter->setPen(dp);
         painter->drawPath(path);
 
-        // Start-point handle — shows where the loop will close to
+        // Start-point handle
         painter->setPen(QPen(QColor(0,0,0,200), 1.5));
         painter->setBrush(Qt::white);
-        painter->drawEllipse(m_polygon.first(), 5.0, 5.0);
+        painter->drawEllipse(poly.first(), 5.0, 5.0);
 
-        // Closing-snap indicator: when cursor is close to start, turn green
-        QPointF ds = m_cursorPos - m_polygon.first();
-        if (!m_polygon.isEmpty() && m_polygon.size() >= 3
-                && std::hypot(ds.x(), ds.y()) < 20.0) {
+        // Fill-tool mode: dot at each placed point
+        if (m_fillMode && poly.size() > 1) {
+            painter->setPen(QPen(QColor(255,140,0), 1.5));
+            painter->setBrush(QColor(255,200,50,200));
+            for (int i = 1; i < poly.size(); ++i)
+                painter->drawEllipse(poly[i], 4.0, 4.0);
+        }
+
+        // Closing-snap indicator: turn green when near start
+        QPointF ds = m_cursorPos - poly.first();
+        if (poly.size() >= 3 && std::hypot(ds.x(), ds.y()) < 20.0) {
             painter->setPen(QPen(QColor(0,220,80), 2.0));
             painter->setBrush(QColor(0,220,80,60));
-            painter->drawEllipse(m_polygon.first(), 10.0, 10.0);
+            painter->drawEllipse(poly.first(), 10.0, 10.0);
         }
 
     } else if (m_closed) {
         // ── Closed selection — marching ants + pull hint ──────────────────────
         QPainterPath selPath;
-        selPath.moveTo(m_polygon.first());
-        for (int i = 1; i < m_polygon.size(); ++i)
-            selPath.lineTo(m_polygon[i]);
+        selPath.moveTo(poly.first());
+        for (int i = 1; i < poly.size(); ++i)
+            selPath.lineTo(poly[i]);
         selPath.closeSubpath();
 
         // Subtle fill tint
@@ -222,16 +298,13 @@ void LassoTool::draw(QPainter *painter)
         painter->setPen(antPen);
         painter->drawPath(selPath);
 
-        // Cursor-aware hint text
         bool inside = isInsideSelection(m_cursorPos);
         QRectF bb = selPath.boundingRect();
 
         if (inside) {
-            // Highlight the fill to show "you can drag"
             painter->setPen(Qt::NoPen);
             painter->setBrush(QColor(0, 140, 255, 45));
             painter->drawPath(selPath);
-
             painter->setFont(QFont("sans-serif", 9, QFont::Bold));
             painter->setPen(QColor(255,255,255,220));
             painter->drawText(bb.center() + QPointF(0, -8), "Drag to Pull");
@@ -257,6 +330,10 @@ void LassoTool::closeLasso()
     m_drawing = false;
     m_closed  = true;
     emit selectionChanged();
+    // FIX #22: In fill-tool mode, immediately show the action menu so user can fill
+    if (m_fillMode) {
+        QTimer::singleShot(50, this, [this]() { showActionMenu(); });
+    }
     // Don't show menu immediately — let user pull or right-click
 }
 
@@ -303,4 +380,20 @@ void LassoTool::cancel()
     m_pullEmitted= false;
     m_antOffset  = 0.0;
     emit selectionChanged();
+}
+
+// FIX #22: Del key removes last point in fill-tool (click-to-place) mode
+void LassoTool::keyPressEvent(QKeyEvent *event)
+{
+    if (m_fillMode && !m_closed &&
+        (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)) {
+        if (!m_polygon.isEmpty()) {
+            m_polygon.removeLast();
+            if (m_polygon.isEmpty()) m_drawing = false;
+            emit selectionChanged();
+            event->accept();
+        }
+        return;
+    }
+    event->ignore();
 }

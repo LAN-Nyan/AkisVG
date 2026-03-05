@@ -15,7 +15,7 @@ public:
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
-
+    ToolType toolType() const override { return ToolType::Line; }
     // FIX #19: Expose dash style and arrow settings
     void setLineDashStyle(PathDashStyle style) { m_lineDashStyle = style; }
     PathDashStyle lineDashStyle() const { return m_lineDashStyle; }

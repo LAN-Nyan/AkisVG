@@ -13,6 +13,8 @@ class BrushTool : public Tool
 public:
     explicit BrushTool(QObject *parent = nullptr);
 
+    ToolType toolType() const override { return ToolType::Brush; }
+
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

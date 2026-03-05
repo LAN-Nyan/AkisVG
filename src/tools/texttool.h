@@ -23,7 +23,7 @@ public:
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
-
+    ToolType toolType() const override { return ToolType::Text; }
     // ── Font settings (read / write by ToolSettingsPanel) ──
     QString fontFamily()  const { return m_fontFamily;  }
     int     fontSize()    const { return m_fontSize;    }

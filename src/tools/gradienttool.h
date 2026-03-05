@@ -19,6 +19,8 @@ class GradientTool : public Tool
 public:
     explicit GradientTool(QObject *parent = nullptr);
 
+    ToolType toolType() const override { return ToolType::Gradient; }
+
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

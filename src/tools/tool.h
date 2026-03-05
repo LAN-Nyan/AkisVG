@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QGraphicsSceneMouseEvent>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QColor>
 #include <QCursor>
 #include <QPainter>
@@ -39,6 +40,7 @@ class Tool : public QObject
 public:
     explicit Tool(ToolType type, QObject *parent = nullptr);
     virtual ~Tool() = default;
+      virtual ToolType toolType() const = 0;
 
     void setTexture(ToolTexture tex) { m_texture = tex; }
     ToolTexture texture() const { return m_texture; }
@@ -76,6 +78,7 @@ public:
     virtual void mousePressEvent  (QMouseEvent *event, QPointF scenePos);
     virtual void mouseMoveEvent   (QMouseEvent *event, QPointF scenePos);
     virtual void mouseReleaseEvent(QMouseEvent *event, QPointF scenePos);
+    virtual void keyPressEvent    (QKeyEvent   *event);
     virtual void draw(QPainter *painter);
 
     // ── Legacy scene events (existing tools) ─────────────────────────────────

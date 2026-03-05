@@ -12,7 +12,7 @@ class LiquifyTool : public Tool
 {
 public:
     explicit LiquifyTool(QObject *parent = nullptr);
-
+    ToolType toolType() const override { return ToolType::Liquify; }
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

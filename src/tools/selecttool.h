@@ -16,6 +16,7 @@ class SelectTool : public Tool
 public:
     explicit SelectTool(QObject *parent = nullptr);
     ~SelectTool();
+    ToolType toolType() const override { return ToolType::Select; }
 
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;

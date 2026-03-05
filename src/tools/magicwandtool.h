@@ -13,6 +13,8 @@ public:
     explicit MagicWandTool(QObject *parent = nullptr);
     ~MagicWandTool() override = default;
 
+    ToolType toolType() const override { return ToolType::MagicWand; }
+
     int  tolerance()   const { return m_tolerance; }
     void setTolerance(int t)  { m_tolerance = qBound(0, t, 255); }
 

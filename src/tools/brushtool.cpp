@@ -12,7 +12,7 @@ BrushTool::BrushTool(QObject *parent)
     , m_lastEventMs(0)
 {
     setStrokeWidth(8.0);
-    m_pressureSensitive = true;
+    m_pressureSensitive = false;  // Off by default — user can enable in tool options
 }
 
 void BrushTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)

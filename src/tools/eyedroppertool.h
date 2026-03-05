@@ -9,7 +9,7 @@ class EyedropperTool : public Tool
     Q_OBJECT
 public:
     explicit EyedropperTool(QObject *parent = nullptr);
-
+    ToolType toolType() const override { return ToolType::eyedropper; }
     // We override these to sample colors
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
