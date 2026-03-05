@@ -5,6 +5,7 @@
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QContextMenuEvent>
 #include <QTabletEvent>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -24,9 +25,13 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     , m_currentZoom(1.0)
     , m_antTimer(nullptr)
 {
-    setRenderHint(QPainter::Antialiasing);
-    setRenderHint(QPainter::SmoothPixmapTransform);
-    setRenderHint(QPainter::TextAntialiasing);
+    setRenderHints(QPainter::Antialiasing |
+                   QPainter::SmoothPixmapTransform |
+                   QPainter::TextAntialiasing);
+    // Ensure antialiasing survives zoom transformations.
+    // Qt can drop render hints during scale operations; re-assert here.
+    setOptimizationFlag(QGraphicsView::DontAdjustForAntialiasing, false);
+    setOptimizationFlag(QGraphicsView::DontSavePainterState, false);
     setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
     setCacheMode(QGraphicsView::CacheBackground);
     setDragMode(QGraphicsView::NoDrag);
@@ -48,6 +53,15 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     });
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
+
+    // Clear m_selectedImage BEFORE display clones are deleted, preventing use-after-free crash.
+    // Project::modified fires AFTER refreshFrame, which is too late — we need aboutToRefreshFrame.
+    if (canvas) {
+        connect(canvas, &VectorCanvas::aboutToRefreshFrame, this, [this]() {
+            // Null the pointer before the item it points to is deleted
+            m_selectedImage = nullptr;
+        });
+    }
 
     viewport()->installEventFilter(this);
 
@@ -85,7 +99,8 @@ void CanvasView::handleFrameNavKey(QKeyEvent *event)
 QVector<TransformableImageObject*> CanvasView::currentFrameImages()
 {
     QVector<TransformableImageObject*> result;
-    // Walk all items in the scene looking for TransformableImageObject instances
+    // Walk all items in the scene looking for TransformableImageObject instances.
+    // These are display clones — callers that need to edit must resolve to source.
     for (QGraphicsItem *item : scene()->items()) {
         if (auto *img = dynamic_cast<TransformableImageObject*>(item))
             result << img;
@@ -110,8 +125,18 @@ void CanvasView::setSelectedImage(TransformableImageObject *img)
     if (m_selectedImage)
         m_selectedImage->setSelected(true);
 
-    // 5. Notify the rest of the app and redraw
-    emit syncSelectedImage();
+    // 5. Redraw
+    viewport()->update();
+}
+
+void CanvasView::syncSelectedImage()
+{
+    // After refreshFrame(), all display clones are new objects.
+    // The old m_selectedImage pointer is now dangling (the item was deleted).
+    // Check if it's still in a scene; if not, clear the pointer so we don't crash.
+    if (m_selectedImage && !m_selectedImage->scene()) {
+        m_selectedImage = nullptr;
+    }
     viewport()->update();
 }
 // g
@@ -149,9 +174,15 @@ void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
 
 void CanvasView::drawForeground(QPainter *painter, const QRectF & /*rect*/)
 {
-    // Draw transform handles for selected image (on top of everything)
-    if (m_selectedImage)
-        m_selectedImage->drawHandles(painter);
+    // FIX #19: Draw transform handles ONLY when Select tool is active
+    if (m_selectedImage) {
+        bool isSelectTool = false;
+        if (auto *canvas = qobject_cast<VectorCanvas*>(scene()))
+            if (auto *tool = canvas->currentTool())
+                isSelectTool = (tool->type() == ToolType::Select);
+        if (isSelectTool)
+            m_selectedImage->drawHandles(painter);
+    }
 
     // Let the active tool draw its overlay (Lasso, MagicWand, etc.)
     // VectorCanvas exposes the current tool via currentTool()
@@ -179,6 +210,10 @@ void CanvasView::setZoom(qreal factor)
     qreal scaleFactor = factor / m_currentZoom;
     scale(scaleFactor, scaleFactor);
     m_currentZoom = factor;
+    // Re-assert antialiasing after scale — Qt6 can clear render hints on transform change
+    setRenderHints(QPainter::Antialiasing |
+                   QPainter::SmoothPixmapTransform |
+                   QPainter::TextAntialiasing);
 }
 
 void CanvasView::recenterCanvas()
@@ -210,6 +245,14 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
     if (m_splineOverlay && m_splineOverlay->isVisible()) {
         QGraphicsView::keyPressEvent(event);
         return;
+    }
+
+    // Forward to current tool first (e.g. Lasso Del key in fill mode)
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+        if (auto *tool = canvas->currentTool()) {
+            tool->keyPressEvent(event);
+            if (event->isAccepted()) return;
+        }
     }
 
     int key = event->key();
@@ -287,6 +330,12 @@ void CanvasView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
+    // Right-clicks are handled by contextMenuEvent() — don't forward to scene.
+    if (event->button() == Qt::RightButton) {
+        event->accept();
+        return;
+    }
+
     // ── Image transform hit test (Select tool only) ─────────────────────────
     // Images can only be moved/resized when the Select tool is active.
     bool isSelectTool = false;
@@ -303,6 +352,12 @@ void CanvasView::mousePressEvent(QMouseEvent *event)
             if (h.has_value()) {
                 m_activeHandle = h;
                 m_selectedImage->beginTransform(*h, scenePos);
+                // Also begin transform on source
+                if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+                    VectorObject *src = canvas->sourceObject(m_selectedImage);
+                    if (auto *srcImg = dynamic_cast<TransformableImageObject*>(src))
+                        if (srcImg != m_selectedImage) srcImg->beginTransform(*h, scenePos);
+                }
                 return; // swallow — don't pass to scene
             }
         }
@@ -362,6 +417,14 @@ void CanvasView::mouseReleaseEvent(QMouseEvent *event)
 
     // Finish image transform drag
     if (m_selectedImage && (m_activeHandle.has_value() || m_movingImage)) {
+        // Also end transform on source object so the change persists
+        if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
+            VectorObject *src = canvas->sourceObject(m_selectedImage);
+            if (auto *srcImg = dynamic_cast<TransformableImageObject*>(src)) {
+                if (srcImg != m_selectedImage)
+                    srcImg->endTransform();
+            }
+        }
         m_selectedImage->endTransform();
         m_activeHandle = std::nullopt;
         m_movingImage  = false;
@@ -399,16 +462,36 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
 
     QPointF scenePos = mapToScene(event->pos());
 
-    // Image transform move / resize
-    if (m_selectedImage) {
+    // Image transform move / resize — only active when Select tool is chosen
+    // FIX #19: Without this guard the transform cursor appears for ALL tools.
+    bool isSelectToolNow = false;
+    if (auto *canvas = qobject_cast<VectorCanvas*>(scene()))
+        if (auto *tool = canvas->currentTool())
+            isSelectToolNow = (tool->type() == ToolType::Select);
+
+    if (m_selectedImage && isSelectToolNow) {
+        auto *canvas = qobject_cast<VectorCanvas*>(scene());
+        // Resolve display clone → source so edits persist through refreshFrame
+        TransformableImageObject *srcImg = nullptr;
+        if (canvas) {
+            VectorObject *src = canvas->sourceObject(m_selectedImage);
+            srcImg = dynamic_cast<TransformableImageObject*>(src);
+        }
+
         if (m_activeHandle.has_value()) {
             m_selectedImage->continueTransform(scenePos);
+            if (srcImg && srcImg != m_selectedImage) {
+                srcImg->continueTransform(scenePos);
+            }
             viewport()->update();
             return;
         }
         if (m_movingImage) {
             QPointF delta = scenePos - m_lastMouseScene;
             m_selectedImage->setPosition(m_selectedImage->position() + delta);
+            if (srcImg && srcImg != m_selectedImage) {
+                srcImg->setPosition(srcImg->position() + delta);
+            }
             m_lastMouseScene = scenePos;
             viewport()->update();
             return;
@@ -449,4 +532,19 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
 
     viewport()->update(); // repaint tool overlay (lasso preview)
     QGraphicsView::mouseMoveEvent(event);
+}
+
+void CanvasView::contextMenuEvent(QContextMenuEvent *event)
+{
+    // Qt calls contextMenuEvent AFTER the right mouse button has been fully
+    // released and all implicit mouse grabs have been cleared.  This is the
+    // only correct place to open a QMenu::exec() — every other approach
+    // (mousePressEvent, mouseReleaseEvent, QTimer::singleShot) still has
+    // the native grab active, causing menu items to be unresponsive.
+    auto *canvas = qobject_cast<VectorCanvas*>(scene());
+    if (!canvas) return;
+
+    QPointF scenePos = mapToScene(event->pos());
+    emit canvas->contextMenuRequestedAt(event->globalPos(), scenePos);
+    event->accept();
 }

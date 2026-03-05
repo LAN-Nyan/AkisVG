@@ -37,6 +37,11 @@ signals:
     void viewportResized();
     void frameNavigationRequested(int delta);
     void wandAboutToClick();  // emitted before MagicWand processes a click so MainWindow can refresh snapshot
+
+public slots:
+    // Called after refreshFrame() to re-point m_selectedImage at the new display clone.
+    // Since refreshFrame deletes and recreates all display items, m_selectedImage would
+    // otherwise become a dangling pointer.
     void syncSelectedImage();
 
 protected:
@@ -49,6 +54,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void tabletEvent(QTabletEvent *event) override;
 

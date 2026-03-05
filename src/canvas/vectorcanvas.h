@@ -55,6 +55,9 @@ public:
     VectorObject* sourceObject(VectorObject *displayItem) const;
 
 signals:
+    // Emitted just before display items are destroyed during refreshFrame().
+    // Connect to clear any raw pointers to display clones before they become dangling.
+    void aboutToRefreshFrame();
     void referenceImageDropped(const QString &path, const QPointF &position);
     void audioDropped(const QString &path);
     void objectGroupCreated(ObjectGroup *group);

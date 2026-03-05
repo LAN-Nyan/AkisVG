@@ -19,6 +19,7 @@
 #include <QDateTime>
 #include <QGraphicsView>
 #include <QGraphicsRectItem>
+#include <QTimer>
 
 VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *parent)
     : QGraphicsScene(parent)
@@ -95,6 +96,10 @@ void VectorCanvas::refreshFrame()
             removeItem(m_liveDrawingItem);
         m_liveDrawingItem = nullptr;
     }
+
+    // Notify listeners (e.g. CanvasView) that display clones are about to be
+    // destroyed, so they can null any raw pointers to them before we delete.
+    emit aboutToRefreshFrame();
 
     // Tear down all previous display items.
     for (VectorObject *item : m_displayItems) {
@@ -335,19 +340,7 @@ void VectorCanvas::mousePressEvent(QGraphicsSceneMouseEvent *event)
     }
 
     if (event->button() == Qt::RightButton) {
-        QList<QGraphicsItem*> under = items(event->scenePos(), Qt::IntersectsItemShape, Qt::DescendingOrder);
-        bool hasSel = false;
-        for (QGraphicsItem *it : under) { if (it->isSelected()) { hasSel = true; break; } }
-        if (!hasSel && !under.isEmpty()) {
-            for (QGraphicsItem *it : selectedItems()) it->setSelected(false);
-            for (QGraphicsItem *it : under) {
-                if (dynamic_cast<VectorObject*>(it)) { it->setSelected(true); break; }
-            }
-        }
-        QPoint globalPos;
-        if (!views().isEmpty())
-            globalPos = views().first()->mapToGlobal(views().first()->mapFromScene(event->scenePos()));
-        emit contextMenuRequestedAt(globalPos, event->scenePos());
+        // Right-click is handled by CanvasView::contextMenuEvent — swallow here.
         event->accept();
         return;
     }
@@ -384,6 +377,12 @@ void VectorCanvas::mouseMoveEvent(QGraphicsSceneMouseEvent *event)
 
 void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
 {
+    if (event->button() == Qt::RightButton) {
+        // Right-click context menu is handled by CanvasView::contextMenuEvent.
+        event->accept();
+        return;
+    }
+
     if (event->button() == Qt::LeftButton) {
         // Always forward to tool, not just when m_isDrawing.
         // SelectTool needs release to commit drag-move even when m_isDrawing=false.

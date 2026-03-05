@@ -8,13 +8,11 @@
 #include <QMouseEvent>
 
 /**
- * SplineOverlay — a transparent widget that sits on top of the CanvasView
- * during interpolation mode.  Users click to add control nodes; dragging
- * a node repositions it.  The curve is drawn as a cubic Bezier spline
- * through all nodes using Catmull-Rom parameterisation.
+ * SplineOverlay — transparent widget on top of CanvasView's viewport.
  *
- * The overlay emits splineChanged() whenever nodes move so the
- * InterpolationEngine can read them.
+ * FIX #30: Nodes are now stored in SCENE (canvas) coordinates so they
+ * remain correctly positioned regardless of zoom/pan.  The overlay
+ * converts to/from viewport coordinates on every paint and mouse event.
  */
 class SplineOverlay : public QWidget
 {
@@ -27,13 +25,12 @@ public:
     QList<QPointF> nodes() const { return m_nodes; }
     void clearNodes();
 
-    // Call to commit the spline as animation keyframes
     void commitSpline();
 
 signals:
     void splineChanged(const QList<QPointF> &nodes);
     void committed(const QList<QPointF> &nodes);
-    void exitRequested();           // user clicked "Done"
+    void exitRequested();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -44,15 +41,20 @@ protected:
 
 private:
     static const int NODE_RADIUS = 8;
-    static const int HIT_RADIUS  = 12;
+    static const int HIT_RADIUS  = 14;
 
-    int nodeAt(const QPointF &pos) const;
-    void drawSpline(QPainter &p) const;
-    QList<QPointF> catmullRomPoints(int segments = 20) const;
-
+    // m_nodes stores positions in SCENE (canvas) coordinates
     QList<QPointF> m_nodes;
     int  m_draggingIdx = -1;
     bool m_dragging    = false;
+
+    // Coordinate conversion: scene ↔ viewport pixels
+    QPointF sceneToViewport(const QPointF &scenePos) const;
+    QPointF viewportToScene(const QPointF &vpPos) const;
+
+    int nodeAt(const QPointF &vpPos) const;
+    void drawSpline(QPainter &p, const QList<QPointF> &vpNodes) const;
+    QList<QPointF> catmullRomPoints(const QList<QPointF> &vpNodes, int segments = 20) const;
 };
 
 #endif // SPLINEOVERLAY_H
