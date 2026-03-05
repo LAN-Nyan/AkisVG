@@ -60,10 +60,8 @@ jobs:
       - name: Configure and Build
         shell: bash
         run: |
-          # Crucial: Tell the OS to look in Qt's lib folder for libicui18n.so.56
-          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
-            export LD_LIBRARY_PATH="${{ env.QT_ROOT_DIR }}/lib:$LD_LIBRARY_PATH"
-          fi
+          # This line tells the OS to look in the Qt lib folder first, the reason i need this? I HAVE NO IDEA (Thanks Reddit) 
+          export LD_LIBRARY_PATH="${{ env.QT_ROOT_DIR }}/lib:$LD_LIBRARY_PATH"
           
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
           cmake --build build
