@@ -7,13 +7,16 @@
 int main(int argc, char *argv[])
 {
     // ── DPI scaling ──────────────────────────────────────────────────────────
+    // AA_EnableHighDpiScaling is deprecated in Qt 6 (always on), but harmless.
+    // On Windows round to nearest integer scale; on Linux/macOS pass through
+    // fractional factors so HiDPI monitors (e.g. 1.5×, 1.25×) look correct.
 #ifdef Q_OS_WIN
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::Round);
 #else
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif
@@ -24,9 +27,10 @@ int main(int argc, char *argv[])
     app.setApplicationName("AkisVG");
     app.setApplicationVersion("1.0.0");
 
-#ifdef Q_OS_WIN
+    // Apply Fusion style on all platforms — this ensures consistent widget
+    // geometry, font metrics, and scaling behaviour regardless of desktop theme.
+    // Without this, native GTK/KDE themes can produce mis-sized widgets on HiDPI.
     app.setStyle(QStyleFactory::create("Fusion"));
-#endif
 
     // ── Startup dialog ───────────────────────────────────────────────────────
     StartupDialog startup;

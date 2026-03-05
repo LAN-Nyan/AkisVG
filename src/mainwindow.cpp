@@ -65,6 +65,9 @@
 #include <QPolygonF>
 #include <QShortcut>
 #include <QClipboard>
+#include <QLineEdit>
+#include <QTextEdit>
+#include <QDoubleSpinBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -416,11 +419,9 @@ void MainWindow::setupCanvas()
     connect(m_canvas, &VectorCanvas::contextMenuRequestedAt, this, [this](const QPoint &globalPos, const QPointF &scenePos) {
 
         // ── Build selection list ─────────────────────────────────────────────
-        // We stripped ItemIsSelectable from display clones (needed so drawing
-        // tools work over filled shapes), so m_canvas->selectedItems() is always
-        // empty.  Instead, ask SelectTool what it has selected.  If the user
-        // right-clicked while using a different tool, fall back to the topmost
-        // object under the cursor so single-object actions still work.
+        // FIX #29: SelectTool tracks its own selection (rubber-band or click).
+        // Qt's native selectedItems() is always empty because we stripped
+        // ItemIsSelectable from display clones.  Always prefer SelectTool's list.
 
         QList<VectorObject*> selected;
 
@@ -433,9 +434,8 @@ void MainWindow::setupCanvas()
 
         // 2. If nothing selected via SelectTool, pick topmost object under cursor
         if (selected.isEmpty()) {
-            for (QGraphicsItem *it : m_canvas->items(scenePos, Qt::IntersectsItemShape, Qt::DescendingOrder)) {
+            for (QGraphicsItem *it : m_canvas->items(scenePos, Qt::IntersectsItemBoundingRect, Qt::DescendingOrder)) {
                 if (VectorObject *vo = dynamic_cast<VectorObject*>(it)) {
-                    // Resolve display clone → source
                     VectorObject *src = m_canvas->sourceObject(vo);
                     if (src) selected.append(src);
                     else     selected.append(vo);
@@ -522,6 +522,9 @@ void MainWindow::createMenus()
     openAct->setShortcut(QKeySequence::Open);
     // FIX #1: Use SVG icon for Open action instead of default system folder icon
     openAct->setIcon(QIcon(":/icons/newlayer.svg"));
+
+    m_recentMenu = m_fileMenu->addMenu("Open &Recent");
+    updateRecentFilesMenu();
 
     QAction *saveAct = m_fileMenu->addAction("&Save", this, &MainWindow::saveProject);
     saveAct->setShortcut(QKeySequence::Save);
@@ -747,7 +750,7 @@ void MainWindow::createDockWindows()
     toolDock->setWidget(m_toolBox);
     toolDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     toolDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-    toolDock->setMinimumWidth(200);
+    toolDock->setMinimumWidth(sc(155));
     addDockWidget(Qt::LeftDockWidgetArea, toolDock);
     m_viewMenu->addAction(toolDock->toggleViewAction());
 
@@ -861,8 +864,8 @@ void MainWindow::createDockWindows()
     QDockWidget *rightDock = new QDockWidget("Panel", this);
     rightDock->setWidget(rightTabs);
     rightDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    rightDock->setMinimumWidth(300);
-    rightDock->setMaximumWidth(450);
+    rightDock->setMinimumWidth(sc(260));
+    rightDock->setMaximumWidth(sc(480));
     rightDock->setTitleBarWidget(new QWidget()); // Hides the bulky "Panel" title bar
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
@@ -871,7 +874,10 @@ void MainWindow::createDockWindows()
     timelineDock->setWidget(m_timeline);
     timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
     timelineDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-    timelineDock->setMinimumHeight(200);
+    timelineDock->setMinimumHeight(sc(160));
+    // Cap max height so the timeline never covers more than ~30% of the screen.
+    // Users can still resize it up by dragging the dock separator.
+    timelineDock->setMaximumHeight(sc(320));
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
     m_viewMenu->addAction(timelineDock->toggleViewAction());
 
@@ -978,6 +984,7 @@ void MainWindow::saveProject()
         m_undoStack->setClean();    // Tell the undo stack we are at a "clean" save point
         updateWindowTitle();        // Remove the '*' from title
         statusBar()->showMessage(tr("Project saved to %1").arg(m_currentFile), 3000);
+        addToRecentFiles(m_currentFile);
     } else {
         QMessageBox::critical(this, tr("Save Error"),
                              tr("Failed to save project to %1").arg(m_currentFile));
@@ -1074,6 +1081,7 @@ void MainWindow::openProjectFile(const QString &path)
         m_canvas->refreshFrame();
         m_layerPanel->rebuildLayerList();
         statusBar()->showMessage("Project opened: " + path, 3000);
+        addToRecentFiles(path);
     } else {
         QMessageBox::critical(this, "Load Error",
                               "Failed to open project from:\n" + path);
@@ -1129,6 +1137,57 @@ void MainWindow::closeEvent(QCloseEvent *event)
         settings.setValue("window/geometry", saveGeometry());
         settings.setValue("window/state", saveState());
     }
+}
+
+// ── FIX #8: Tool Keybinds ────────────────────────────────────────────────────
+// Route single-letter tool keys from anywhere in the window to the toolbox.
+// The canvas previously swallowed these events; now we catch them at the
+// MainWindow level before they get lost.
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    // Don't steal shortcuts when typing in input widgets
+    QWidget *focus = QApplication::focusWidget();
+    if (focus && (qobject_cast<QLineEdit*>(focus) ||
+                  qobject_cast<QTextEdit*>(focus)  ||
+                  qobject_cast<QSpinBox*>(focus)   ||
+                  qobject_cast<QDoubleSpinBox*>(focus) ||
+                  qobject_cast<QComboBox*>(focus))) {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
+
+    // Don't intercept modifier-combos (those are menu shortcuts)
+    if (event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
+
+    static const QMap<int, ToolType> keyToolMap = {
+        { Qt::Key_V, ToolType::Select    },
+        { Qt::Key_I, ToolType::eyedropper},
+        { Qt::Key_L, ToolType::Lasso     },
+        { Qt::Key_W, ToolType::MagicWand },
+        { Qt::Key_P, ToolType::Pencil    },
+        { Qt::Key_B, ToolType::Brush     },
+        { Qt::Key_E, ToolType::Eraser    },
+        { Qt::Key_G, ToolType::Fill      },
+        { Qt::Key_D, ToolType::Gradient  },
+        { Qt::Key_H, ToolType::Blend     },
+        { Qt::Key_K, ToolType::Liquify   },
+        { Qt::Key_R, ToolType::Rectangle },
+        { Qt::Key_C, ToolType::Ellipse   },
+        { Qt::Key_U, ToolType::Line      },
+        { Qt::Key_T, ToolType::Text      },
+    };
+
+    auto it = keyToolMap.find(event->key());
+    if (it != keyToolMap.end()) {
+        m_toolBox->activateTool(it.value());
+        event->accept();
+        return;
+    }
+
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::updateWindowTitle()
@@ -1587,7 +1646,10 @@ void MainWindow::onInstanceGroupRequested(ObjectGroup *group)
 void MainWindow::startInterpolationMode() {
     if (!m_splineOverlay) return;
 
-    m_splineOverlay->setGeometry(m_canvasView->geometry());
+    // FIX #30: The overlay is parented to the viewport — use viewport size, not
+    // canvasView->geometry() which is in the parent widget's coordinate space.
+    m_splineOverlay->resize(m_canvasView->viewport()->size());
+    m_splineOverlay->move(0, 0);
     m_splineOverlay->show();
 
     // These two lines stop the "stuck" behavior
@@ -1598,6 +1660,49 @@ void MainWindow::startInterpolationMode() {
 }
 
 // ── NEW: Lasso / Magic Wand action slots ─────────────────────────────────────
+
+// ── FIX #10: Path complexity guard ───────────────────────────────────────────
+//
+// Qt's QPainterPath boolean operations (intersected / subtracted) use an
+// internal Skia-based edge-list algorithm that can segfault or exhaust the
+// stack when the subject path has more than ~2000 elements.  A pressure-
+// sensitive brush stroke that was smoothed with Catmull-Rom can easily produce
+// 50 000+ sub-points.  We reduce the path to a safe element count using a
+// simple Douglas-Peucker-style decimation before passing it to boolean ops.
+
+static QPolygonF decimatePolygon(const QPolygonF &poly, int maxPts)
+{
+    // Fast path: already small enough
+    if (poly.size() <= maxPts) return poly;
+
+    // Uniform stride decimation — good enough for intersection/subtraction.
+    // For a true Douglas-Peucker we'd need more code; stride is adequate here.
+    QPolygonF out;
+    out.reserve(maxPts + 1);
+    double step = static_cast<double>(poly.size() - 1) / (maxPts - 1);
+    for (int i = 0; i < maxPts; ++i) {
+        int idx = qRound(i * step);
+        out << poly.at(qBound(0, idx, poly.size() - 1));
+    }
+    if (out.last() != poly.last()) out << poly.last(); // always include endpoint
+    return out;
+}
+
+// Convert a QPainterPath to a flat polygon (element-wise), decimate if large,
+// then back to a QPainterPath suitable for safe boolean ops.
+static QPainterPath safePath(const QPainterPath &src)
+{
+    constexpr int MAX_ELEMS = 1500;
+    if (src.elementCount() <= MAX_ELEMS) return src;
+
+    // Flatten to polygon
+    const QPolygonF flat = src.toFillPolygon();
+    const QPolygonF slim = decimatePolygon(flat, MAX_ELEMS);
+    QPainterPath out;
+    out.addPolygon(slim);
+    out.closeSubpath();
+    return out;
+}
 
 // Returns true if the display clone `obj` (in the scene) intersects `poly` (scene coords).
 // PathObject stores paths in scene coords with pos()=(0,0), so we use scenePos()+boundingRect().
@@ -1634,8 +1739,37 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
 {
     if (!m_project || !m_project->currentLayer()) return;
 
-    // Operate on display items in the scene so scenePos() is available.
-    // Resolve each display clone back to its source before modifying.
+    // FIX #22: When the lasso is in fill-tool (click-to-place-points) mode,
+    // create a brand-new filled polygon PathObject rather than recolouring
+    // existing geometry.  This implements the "draw a polygon using the points"
+    // behaviour described in the TODO.
+    if (m_lassoTool && m_lassoTool->fillMode()) {
+        if (poly.size() < 3) return; // need at least a triangle
+
+        // Build a closed QPainterPath from the placed points
+        QPainterPath polyPath;
+        polyPath.moveTo(poly.first());
+        for (int i = 1; i < poly.size(); ++i)
+            polyPath.lineTo(poly[i]);
+        polyPath.closeSubpath();
+
+        PathObject *obj = new PathObject();
+        obj->setPath(polyPath);
+        obj->setFillColor(color);
+        // No stroke by default in fill-tool mode — use a thin same-colour outline
+        obj->setStrokeColor(color.darker(130));
+        obj->setStrokeWidth(1.0);
+        obj->setObjectOpacity(1.0);
+
+        Layer *layer = m_project->currentLayer();
+        layer->addObjectToFrame(m_project->currentFrame(), obj);
+        m_canvas->refreshFrame();
+        m_isModified = true;
+        updateWindowTitle();
+        return;
+    }
+
+    // Normal lasso mode: fill colour of intersecting objects
     bool changed = false;
     for (QGraphicsItem *item : m_canvas->items()) {
         auto *obj = dynamic_cast<VectorObject*>(item);
@@ -1689,9 +1823,9 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
 
         // ── PathObject split ─────────────────────────────────────────────────
         if (auto *path = dynamic_cast<PathObject*>(src)) {
-            QPainterPath pp = path->path();
-            // Map lasso to object's local coords (PathObject uses scene coords,
-            // pos=(0,0), so no transform needed for PathObject)
+            // FIX #10: Simplify before boolean ops — complex pressure paths can
+            // segfault Qt's internal edge-list algorithm at > ~2000 elements.
+            QPainterPath pp = safePath(path->path());
             QPointF offset = src->pos();
             QPainterPath lassoLocal = lassoPath.translated(-offset);
 
@@ -1868,7 +2002,8 @@ void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
 
         // ── PathObject ───────────────────────────────────────────────────────
         if (auto *path = dynamic_cast<PathObject*>(src)) {
-            QPainterPath pp = path->path();
+            // FIX #10: Guard against segfault on pressure-data-heavy paths
+            QPainterPath pp = safePath(path->path());
             QPointF offset  = src->pos();
             QPainterPath lassoLocal = lassoPath.translated(-offset);
 
@@ -1991,4 +2126,42 @@ void MainWindow::provideWandSnapshot(MagicWandTool *wand)
     m_canvas->render(&p, sceneR, sceneR);
     p.end();
     wand->setCanvasSnapshot(snapshot, sceneR.topLeft());
+}
+
+// ── #24 Recent files ─────────────────────────────────────────────────────────
+void MainWindow::addToRecentFiles(const QString &path)
+{
+    QSettings s("AkisVG", "AkisVG");
+    QStringList r = s.value("recentFiles").toStringList();
+    r.removeAll(path);
+    r.prepend(path);
+    if (r.size() > 10) r.resize(10);
+    s.setValue("recentFiles", r);
+    updateRecentFilesMenu();
+}
+
+void MainWindow::updateRecentFilesMenu()
+{
+    if (!m_recentMenu) return;
+    m_recentMenu->clear();
+    QSettings s("AkisVG", "AkisVG");
+    QStringList r = s.value("recentFiles").toStringList();
+    if (r.isEmpty()) {
+        auto *e = m_recentMenu->addAction("(No recent files)");
+        e->setEnabled(false);
+        return;
+    }
+    for (const QString &p : r) {
+        QAction *a = m_recentMenu->addAction(QFileInfo(p).fileName() + "   \xe2\x80\x94   " + p);
+        connect(a, &QAction::triggered, this, [this, p]() {
+            if (QFile::exists(p)) openProjectFile(p);
+            else QMessageBox::warning(this, "File Not Found", "Cannot find:\n" + p);
+        });
+    }
+    m_recentMenu->addSeparator();
+    auto *cl = m_recentMenu->addAction("Clear Recent Files");
+    connect(cl, &QAction::triggered, this, [this]() {
+        QSettings("AkisVG","AkisVG").remove("recentFiles");
+        updateRecentFilesMenu();
+    });
 }

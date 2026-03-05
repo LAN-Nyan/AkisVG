@@ -41,6 +41,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void newProject();
@@ -68,6 +69,8 @@ private slots:
     void onLassoCopy(const QPolygonF &poly);
     void onLassoPull(const QPolygonF &poly, QPointF dragStart);
     void provideWandSnapshot(MagicWandTool *wand);
+    void addToRecentFiles(const QString &path);
+    void updateRecentFilesMenu();
 
 private:
     void createActions();
@@ -104,6 +107,7 @@ private:
     QList<int> m_interpKeyframeTimes;
 
     QMenu *m_fileMenu;
+    QMenu *m_recentMenu = nullptr;
     QMenu *m_editMenu;
     QMenu *m_viewMenu;
     QMenu *m_helpMenu;
