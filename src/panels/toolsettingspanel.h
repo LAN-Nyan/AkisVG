@@ -2,6 +2,7 @@
 #define TOOLSETTINGSPANEL_H
 
 #include "tools/tool.h"
+#include "tools/lassotool.h"
 #include "core/layer.h"
 
 #include <QFrame>
@@ -51,6 +52,7 @@ private:
 
     void buildInterpolationControls(int totalFrames);
     void buildInterpolationAdvancedControls(int nodeCount);
+    void buildLassoControls(Tool *tool);
 
     QScrollArea  *m_scrollArea    = nullptr;
     QWidget      *m_contentWidget = nullptr;

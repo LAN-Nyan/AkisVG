@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QColorDialog>
 #include <QButtonGroup>
+#include <QPointer>   // FIX #15: safe captured-pointer access in lambdas
 
 // helpers
 
@@ -165,6 +166,9 @@ void ToolSettingsPanel::updateForTool(ToolType type, Tool *tool)
     case ToolType::Select:
         buildSelectControls();
         break;
+    case ToolType::Lasso:
+        buildLassoControls(tool);
+        break;
     case ToolType::Rectangle:
     case ToolType::Ellipse:
         buildShapeControls(tool);
@@ -292,7 +296,7 @@ void ToolSettingsPanel::buildPencilBrushControls(Tool *tool)
     smg->addWidget(smSlider);
 
     QCheckBox *pressureCheck = new QCheckBox("Pressure Sensitivity");
-    pressureCheck->setChecked(tool ? tool->pressureSensitive() : true);
+    pressureCheck->setChecked(tool ? tool->pressureSensitive() : false);
     pressureCheck->setStyleSheet(checkStyle());
     connect(pressureCheck, &QCheckBox::toggled, this, [tool](bool on) {
         if (tool) tool->setPressureSensitivity(on);
@@ -597,6 +601,49 @@ void ToolSettingsPanel::buildGradientControls(Tool *genericTool)
 }
 
 // Select
+// ── FIX #22: Lasso Tool Settings ─────────────────────────────────────────────
+void ToolSettingsPanel::buildLassoControls(Tool *tool)
+{
+    clearContent();
+    m_contentWidget = new QWidget();
+    m_contentWidget->setStyleSheet(QString("background-color:%1;").arg(theme().bg1));
+    m_contentLayout = new QVBoxLayout(m_contentWidget);
+    m_contentLayout->setContentsMargins(10, 12, 10, 12);
+    m_contentLayout->setSpacing(12);
+
+    QGroupBox *modeGroup = new QGroupBox("Lasso Mode");
+    modeGroup->setStyleSheet(sectionStyle());
+    QVBoxLayout *mg = new QVBoxLayout(modeGroup);
+
+    QCheckBox *fillModeCheck = new QCheckBox("Work as Fill Tool");
+    fillModeCheck->setToolTip(
+        "Click to place points, Del to remove last point,\n"
+        "click near start (or double-click start) to fill the polygon.");
+    fillModeCheck->setStyleSheet(checkStyle());
+
+    auto *lassoTool = qobject_cast<LassoTool*>(tool);
+    if (lassoTool)
+        fillModeCheck->setChecked(lassoTool->fillMode());
+
+    connect(fillModeCheck, &QCheckBox::toggled, this, [lassoTool](bool on) {
+        if (lassoTool) lassoTool->setFillMode(on);
+    });
+    mg->addWidget(fillModeCheck);
+
+    QLabel *hint = new QLabel(
+        "Freehand mode: click & drag to draw.\n\n"
+        "Fill tool mode: click to place points,\n"
+        "Del removes last point, click near\n"
+        "start to close & fill the polygon.");
+    hint->setStyleSheet(QString("color:%1; font-size:10px;").arg(theme().bg3));
+    hint->setWordWrap(true);
+    mg->addWidget(hint);
+
+    m_contentLayout->addWidget(modeGroup);
+    m_contentLayout->addStretch();
+    m_scrollArea->setWidget(m_contentWidget);
+}
+
 void ToolSettingsPanel::buildSelectControls()
 {
     clearContent();
@@ -836,25 +883,25 @@ void ToolSettingsPanel::hideInterpolationControls()
 
 void ToolSettingsPanel::updateInterpolationNodes(int nodeCount)
 {
-    if (!m_interpolating || nodeCount == m_interpNodeCount) return;
+    if (!m_interpolating) return;
+    // FIX #15: Always rebuild if count changed; rebuild if switching to advanced mode
+    if (nodeCount == m_interpNodeCount && m_interpModeCombo && m_interpModeCombo->currentIndex() != 1) return;
     m_interpNodeCount = nodeCount;
 
     if (!m_interpAdvGroup || !m_interpModeCombo || m_interpModeCombo->currentIndex() != 1) return;
 
-    // Clear the advanced group layout
+    // FIX #15: Clear the spin pointer list FIRST before deleting widgets to
+    // prevent dangling-pointer reads if any signal fires during deleteLater.
     m_interpNodeSpins.clear();
+
+    // Remove all items from the group's VBoxLayout and delete them.
+    // Since we now use a QWidget container (not a bare QFormLayout), every
+    // item in `av` will be a widget item — the nested-layout deletion path
+    // is no longer needed and was the source of crashes.
     QLayout *av = m_interpAdvGroup->layout();
     if (!av) return;
-    QLayoutItem *item;
-    while ((item = av->takeAt(0)) != nullptr) {
-        if (item->widget()) item->widget()->deleteLater();
-        if (item->layout()) {
-            QLayoutItem *sub;
-            while ((sub = item->layout()->takeAt(0)) != nullptr) {
-                if (sub->widget()) sub->widget()->deleteLater();
-                delete sub;
-            }
-        }
+    while (QLayoutItem *item = av->takeAt(0)) {
+        if (QWidget *w = item->widget()) w->deleteLater();
         delete item;
     }
 
@@ -866,25 +913,36 @@ void ToolSettingsPanel::updateInterpolationNodes(int nodeCount)
         return;
     }
 
-    QFormLayout *form = new QFormLayout();
+    // FIX #15: Wrap spinboxes in a QWidget so they get a proper parent widget.
+    // A bare QFormLayout added via addLayout() leaves the spinboxes parentless —
+    // Qt then tries to find a parent widget for geometry, fails, and crashes when
+    // the canvas is clicked (which triggers a repaint that walks the widget tree).
+    QWidget *formContainer = new QWidget();
+    QFormLayout *form = new QFormLayout(formContainer);
     form->setSpacing(4);
-    int frameStep = qMax(1, m_interpTotalFrames / (nodeCount - 1));
+    form->setContentsMargins(0, 0, 0, 0);
+    int frameStep = (nodeCount > 1) ? qMax(1, m_interpTotalFrames / (nodeCount - 1)) : m_interpTotalFrames;
     for (int i = 0; i < nodeCount; ++i) {
-        QSpinBox *sp = new QSpinBox();
-        sp->setRange(0, 9999);
+        QSpinBox *sp = new QSpinBox(formContainer);
+        sp->setRange(0, 99999);
         sp->setValue(i * frameStep);
         sp->setSuffix(" f");
-        sp->setStyleSheet(
-            inputStyle());
+        sp->setStyleSheet(inputStyle());
         m_interpNodeSpins.append(sp);
         form->addRow(makeLabel(QString("K%1:").arg(i + 1)), sp);
-        connect(sp, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) {
+        QPointer<QSpinBox> safeFramesSpin = m_interpFramesSpin;
+        connect(sp, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, safeFramesSpin](int) {
+            if (!safeFramesSpin) return;
             QList<int> times;
             for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
             emit interpolationSettingsChanged(m_interpTotalFrames, true, times);
         });
     }
-    av->addItem(form);
+    // Add the container widget (NOT a raw QFormLayout) to the group's VBoxLayout
+    if (QVBoxLayout *vbl = qobject_cast<QVBoxLayout*>(av))
+        vbl->addWidget(formContainer);
+    else
+        av->addWidget(formContainer);
 
     QList<int> times;
     for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
@@ -956,10 +1014,22 @@ void ToolSettingsPanel::buildInterpolationControls(int totalFrames)
     m_contentLayout->addStretch();
     m_scrollArea->setWidget(m_contentWidget);
 
+    // FIX #15: Use QPointer for every local widget captured in lambdas.
+    // clearContent() deletes m_contentWidget and all its children synchronously.
+    // If a spinbox valueChanged fires during that teardown (e.g. Qt resetting
+    // the value on reparent), the lambda would dereference freed memory.
+    // QPointer auto-nulls when the object is destroyed, so the guard below is safe.
+    QPointer<QGroupBox>  safeBasicGroup  = basicGroup;
+    QPointer<QComboBox>  safeModeCombo   = m_interpModeCombo;
+    QPointer<QSpinBox>   safeFramesSpin  = m_interpFramesSpin;
+    QPointer<QGroupBox>  safeAdvGroup    = m_interpAdvGroup;
+
     connect(m_interpModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [=](int idx) {
-        basicGroup->setVisible(idx == 0);
-        m_interpAdvGroup->setVisible(idx == 1);
+            this, [this, safeBasicGroup, safeModeCombo, safeFramesSpin, safeAdvGroup](int idx) {
+        // Guard: widgets may have been deleted by a clearContent() call
+        if (!safeBasicGroup || !safeModeCombo || !safeFramesSpin || !safeAdvGroup) return;
+        safeBasicGroup->setVisible(idx == 0);
+        safeAdvGroup->setVisible(idx == 1);
         if (idx == 1 && m_interpNodeCount >= 2) {
             int saved = m_interpNodeCount;
             m_interpNodeCount = 0;
@@ -967,16 +1037,17 @@ void ToolSettingsPanel::buildInterpolationControls(int totalFrames)
         }
         QList<int> times;
         for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
-        emit interpolationSettingsChanged(m_interpFramesSpin->value(),
-                                          idx == 1, times);
+        emit interpolationSettingsChanged(safeFramesSpin->value(), idx == 1, times);
     });
 
     connect(m_interpFramesSpin, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [=](int val) {
+            this, [this, safeModeCombo, safeFramesSpin](int val) {
+        // Guard: widgets may have been deleted
+        if (!safeModeCombo || !safeFramesSpin) return;
         m_interpTotalFrames = val;
         QList<int> times;
         for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
-        emit interpolationSettingsChanged(val, m_interpModeCombo->currentIndex() == 1, times);
+        emit interpolationSettingsChanged(val, safeModeCombo->currentIndex() == 1, times);
     });
 
     emit interpolationSettingsChanged(totalFrames, false, {});

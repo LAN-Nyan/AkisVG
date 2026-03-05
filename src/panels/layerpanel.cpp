@@ -5,6 +5,7 @@
 #include "utils/thememanager.h"
 
 #include <QVBoxLayout>
+#include <QSvgRenderer>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -15,6 +16,7 @@
 #include <QDragEnterEvent>
 #include <QMimeData>
 #include <QUrl>
+#include <QPainter>
 
 LayerPanel::LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent)
     : QWidget(parent)
@@ -261,10 +263,33 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
     textLayout->addWidget(typeLabel);
     layout->addWidget(textContainer, 1);
 
-    // 3. Visibility Button (Keep your existing logic)
-    QPushButton *visBtn = new QPushButton(layer->isVisible() ? "👁" : "◯");
-    visBtn->setFixedSize(24, 24);
-    visBtn->setStyleSheet("QPushButton { background: transparent; color: #aaa; border: none; font-size: 14px; } "
+    // Helper: render an SVG resource as a white/grey icon pixmap
+    auto makeSvgIcon = [](const QString &res, QColor tint, int sz) -> QIcon {
+        QSvgRenderer r(res);
+        QPixmap px(sz, sz);
+        px.fill(Qt::transparent);
+        if (r.isValid()) {
+            QPainter p(&px);
+            r.render(&p);
+            p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            p.fillRect(px.rect(), tint);
+        }
+        return QIcon(px);
+    };
+
+    int btnSz = sc(24);
+    int iconSz = sc(16);
+
+    // 3. Visibility Button — uses hide.svg / unhide.svg
+    QPushButton *visBtn = new QPushButton();
+    visBtn->setFixedSize(btnSz, btnSz);
+    {
+        QColor col = layer->isVisible() ? QColor(180,180,180) : QColor(70,70,70);
+        QString res = layer->isVisible() ? ":/icons/unhide.svg" : ":/icons/hide.svg";
+        visBtn->setIcon(makeSvgIcon(res, col, iconSz));
+        visBtn->setIconSize(QSize(iconSz, iconSz));
+    }
+    visBtn->setStyleSheet("QPushButton { background: transparent; border: none; } "
                           "QPushButton:hover { background: #444; border-radius: 4px; }");
     connect(visBtn, &QPushButton::clicked, this, [this, layer]() {
         layer->setVisible(!layer->isVisible());
@@ -272,11 +297,17 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
     });
     layout->addWidget(visBtn);
 
-    // 4. Lock Button (Keep your existing logic)
-    QPushButton *lockBtn = new QPushButton(layer->isLocked() ? "🔒" : "🔓");
-    lockBtn->setFixedSize(24, 24);
-    visBtn->setStyleSheet("QPushButton { background: transparent; color: #aaa; border: none; font-size: 12px; } "
-                          "QPushButton:hover { background: #444; border-radius: 4px; }");
+    // 4. Lock Button — uses lock.svg / unlock.svg
+    QPushButton *lockBtn = new QPushButton();
+    lockBtn->setFixedSize(btnSz, btnSz);
+    {
+        QColor col = layer->isLocked() ? QColor(220,160,60) : QColor(70,70,70);
+        QString res = layer->isLocked() ? ":/icons/lock.svg" : ":/icons/unlock.svg";
+        lockBtn->setIcon(makeSvgIcon(res, col, iconSz));
+        lockBtn->setIconSize(QSize(iconSz, iconSz));
+    }
+    lockBtn->setStyleSheet("QPushButton { background: transparent; border: none; } "
+                           "QPushButton:hover { background: #444; border-radius: 4px; }");
     connect(lockBtn, &QPushButton::clicked, this, [this, layer]() {
         layer->setLocked(!layer->isLocked());
         rebuildLayerList();
@@ -301,7 +332,7 @@ void LayerPanel::rebuildLayerList()
         Layer *layer = layers[i];
 
         QListWidgetItem *item = new QListWidgetItem(m_layerList);
-        item->setSizeHint(QSize(0, 48));
+        item->setSizeHint(QSize(0, sc(48)));
         item->setData(Qt::UserRole, i);
 
         QWidget *itemWidget = createLayerItem(layer, i);

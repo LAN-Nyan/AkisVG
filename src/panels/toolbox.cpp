@@ -89,8 +89,8 @@ void ToolBox::setupUI()
     m_contentWidget->setStyleSheet(QString("background-color: %1;").arg(t.bg0));
 
     QVBoxLayout *buttonLayout = new QVBoxLayout(m_contentWidget);
-    buttonLayout->setContentsMargins(8, 12, 8, 12);
-    buttonLayout->setSpacing(4);
+    buttonLayout->setContentsMargins(sc(8), sc(12), sc(8), sc(12));
+    buttonLayout->setSpacing(sc(4));
     buttonLayout->setAlignment(Qt::AlignTop);
 
     m_toolButtons->setExclusive(true);
@@ -98,10 +98,14 @@ void ToolBox::setupUI()
     auto addSectionLabel = [&](const QString &text, bool isAccent) {
         QLabel *label = new QLabel(text);
         QString color = isAccent ? t.accent : "#444444";
+        // Font size and padding scale with UI scale
+        int fs  = qRound(9  * uiScale());
+        int pt  = qRound(12 * uiScale());
+        int pb  = qRound(4  * uiScale());
         label->setStyleSheet(QString(
-            "font-size: 9px; font-weight: bold; color: %1; "
-            "letter-spacing: 1.5px; padding: 12px 0 4px 2px;"
-        ).arg(color));
+            "font-size: %2px; font-weight: bold; color: %1; "
+            "letter-spacing: 1.5px; padding: %3px 0 %4px 2px;"
+        ).arg(color).arg(fs).arg(pt).arg(pb));
         buttonLayout->addWidget(label);
         if (isAccent)
             m_accentLabels.append(label);
@@ -203,10 +207,13 @@ void ToolBox::applyTheme()
         QString("background-color: %1;").arg(t.bg0));
 
     for (QLabel *label : m_accentLabels) {
+        int fs = qRound(9  * uiScale());
+        int pt = qRound(12 * uiScale());
+        int pb = qRound(4  * uiScale());
         label->setStyleSheet(
-            QString("font-size: 9px; font-weight: bold; color: %1; "
-                    "letter-spacing: 1.5px; padding: 12px 0 4px 2px;")
-            .arg(t.accent));
+            QString("font-size: %2px; font-weight: bold; color: %1; "
+                    "letter-spacing: 1.5px; padding: %3px 0 %4px 2px;")
+            .arg(t.accent).arg(fs).arg(pt).arg(pb));
     }
 
     for (QAbstractButton *btn : m_toolButtons->buttons()) {

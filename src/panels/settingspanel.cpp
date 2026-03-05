@@ -6,6 +6,8 @@
 #include "core/project.h"
 #include "utils/thememanager.h"
 
+#include <QApplication>
+#include <QSlider>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -457,6 +459,85 @@ void ProjectSettings::setupUI()
 
     appearanceLayout->addRow(themeLabel, m_themeCombo);
     appearanceLayout->addRow(QString(), themeHint);
+
+    // ── UI Scale ─────────────────────────────────────────────────────────────
+    QLabel *scaleLabel2 = new QLabel("UI Scale:");
+    scaleLabel2->setStyleSheet("color: #ccc; font-weight: normal;");
+
+    QWidget *scaleWidget = new QWidget();
+    QHBoxLayout *scaleLayout = new QHBoxLayout(scaleWidget);
+    scaleLayout->setContentsMargins(0, 0, 0, 0);
+    scaleLayout->setSpacing(8);
+
+    QSlider *uiScaleSlider = new QSlider(Qt::Horizontal);
+    uiScaleSlider->setRange(50, 200);
+    uiScaleSlider->setTickInterval(25);
+    {
+        QSettings s("AkisVG", "AkisVG");
+        uiScaleSlider->setValue(s.value("ui/scale", 100).toInt());
+    }
+    uiScaleSlider->setStyleSheet(
+        "QSlider::groove:horizontal { background: #1e1e1e; height: 6px; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #c0392b; width: 14px; margin: -4px 0; border-radius: 7px; }"
+        "QSlider::handle:horizontal:hover { background: #e05241; }"
+        "QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }");
+
+    QLabel *scaleValueLbl = new QLabel(QString("%1%").arg(uiScaleSlider->value()));
+    scaleValueLbl->setStyleSheet("color: white; font-size: 11px; min-width: 36px;");
+    scaleValueLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    connect(uiScaleSlider, &QSlider::valueChanged, this, [scaleValueLbl](int v) {
+        scaleValueLbl->setText(QString("%1%").arg(v));
+        QSettings s("AkisVG", "AkisVG");
+        s.setValue("ui/scale", v);
+        invalidateUiScaleCache(); // force re-read on next sc() call
+        double factor = v / 100.0;
+        // Scale font
+        QFont f = QApplication::font();
+        f.setPointSizeF(9.0 * factor);
+        QApplication::setFont(f);
+        // Scale all panels, inputs, buttons, scrollbars
+        int btnH    = qRound(28  * factor);
+        int inputH  = qRound(24  * factor);
+        int scrollW = qRound(8   * factor);
+        int menuPad = qRound(4   * factor);
+        int pad     = qRound(4   * factor);
+        int radius  = qRound(4   * factor);
+        if (v != 100) {
+            qApp->setStyleSheet(QString(
+                "QPushButton  { min-height: %1px; padding: 0 %2px; border-radius: %8px; }"
+                "QToolButton  { min-height: %1px; min-width:  %1px; }"
+                "QLineEdit    { min-height: %3px; padding: %2px; border-radius: %8px; }"
+                "QSpinBox     { min-height: %3px; padding: %2px; }"
+                "QDoubleSpinBox { min-height: %3px; padding: %2px; }"
+                "QComboBox    { min-height: %3px; padding: 0 %2px; }"
+                "QTextEdit    { padding: %2px; }"
+                "QScrollBar:vertical   { width:  %4px; }"
+                "QScrollBar:horizontal { height: %4px; }"
+                "QMenu::item  { padding: %5px %6px; }"
+                "QMenuBar::item{ padding: %5px %6px; }"
+                "QGroupBox    { padding-top: %7px; margin-top: %7px; font-size: %9pt; }"
+                "QLabel       { padding: 0; }"
+                "QDockWidget::title { padding: %5px; }"
+                "QTabBar::tab { min-height: %3px; padding: %5px %6px; }"
+            )
+            .arg(btnH).arg(pad).arg(inputH).arg(scrollW)
+            .arg(menuPad).arg(menuPad*4).arg(menuPad*2)
+            .arg(radius).arg(qRound(9 * factor)));
+        } else {
+            qApp->setStyleSheet(QString()); // reset to Qt defaults at 100%
+        }
+    });
+
+    scaleLayout->addWidget(uiScaleSlider, 1);
+    scaleLayout->addWidget(scaleValueLbl);
+
+    QLabel *scaleHint = new QLabel("Changes apply immediately. Restart recommended for full effect.");
+    scaleHint->setStyleSheet("color: #666; font-size: 10px; font-weight: normal;");
+    scaleHint->setWordWrap(true);
+
+    appearanceLayout->addRow(scaleLabel2, scaleWidget);
+    appearanceLayout->addRow(QString(), scaleHint);
 
     // Keep unused member initialised to avoid warnings
     m_blueThemeCheck = nullptr;

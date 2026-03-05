@@ -12,16 +12,19 @@ ToolButton::ToolButton(const QString &iconPath, const QString &toolName, const Q
     , m_hovered(false)
 {
     setCheckable(true);
-    setFixedHeight(36);
+
+    // Scale the button height with UI scale — MUST use setFixedHeight not CSS
+    // because QSS min-height cannot override setFixedHeight.
+    setFixedHeight(sc(36));
+    setMinimumWidth(sc(48));
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setCursor(Qt::PointingHandCursor);
     setToolTip(QString("%1 (%2)").arg(toolName, shortcut));
 
-    if (QFile::exists(iconPath)) {
+    if (!iconPath.isEmpty() && QFile::exists(iconPath)) {
         m_svgRenderer = new QSvgRenderer(iconPath, this);
     }
 
-    // Apply theme-aware stylesheet from the start
     applyTheme();
 }
 
@@ -33,31 +36,20 @@ void ToolButton::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
-    // Determine icon color based on state
     QColor iconColor;
-    if (isChecked()) {
-        iconColor = Qt::white;
-    } else if (m_hovered) {
-        iconColor = QColor(220, 220, 220);
-    } else {
-        iconColor = QColor(180, 180, 180);
-    }
+    if (isChecked())        iconColor = Qt::white;
+    else if (m_hovered)     iconColor = QColor(220, 220, 220);
+    else                    iconColor = QColor(180, 180, 180);
 
-    // Calculate icon position (centered if not hovered, left-aligned if hovered)
-    int iconSize = 24;
+    // Icon size scales with UI scale
+    int iconSize = sc(20);
     QRect iconRect;
-
-    if (m_hovered) {
-        // Left-aligned when showing text
-        iconRect = QRect(12, (height() - iconSize) / 2, iconSize, iconSize);
-    } else {
-        // Centered when icon only
+    if (m_hovered)
+        iconRect = QRect(sc(10), (height() - iconSize) / 2, iconSize, iconSize);
+    else
         iconRect = QRect((width() - iconSize) / 2, (height() - iconSize) / 2, iconSize, iconSize);
-    }
 
-    // Render SVG icon
     if (m_svgRenderer && m_svgRenderer->isValid()) {
-        // Create a temporary pixmap to render the SVG with color
         QPixmap pixmap(iconSize, iconSize);
         pixmap.fill(Qt::transparent);
 
@@ -66,7 +58,6 @@ void ToolButton::paintEvent(QPaintEvent *event)
         m_svgRenderer->render(&svgPainter);
         svgPainter.end();
 
-        // Apply color tint
         QPainter colorPainter(&pixmap);
         colorPainter.setCompositionMode(QPainter::CompositionMode_SourceIn);
         colorPainter.fillRect(pixmap.rect(), iconColor);
@@ -75,15 +66,14 @@ void ToolButton::paintEvent(QPaintEvent *event)
         painter.drawPixmap(iconRect, pixmap);
     }
 
-    // Draw tool name on hover
     if (m_hovered) {
         painter.setPen(iconColor);
         QFont font = painter.font();
-        font.setPointSize(10);
+        font.setPointSizeF(9.0 * uiScale());
         font.setWeight(isChecked() ? QFont::Bold : QFont::Normal);
         painter.setFont(font);
 
-        QRect textRect(iconRect.right() + 8, 0, width() - iconRect.right() - 16, height());
+        QRect textRect(iconRect.right() + sc(8), 0, width() - iconRect.right() - sc(16), height());
         painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, m_toolName);
     }
 }
@@ -91,7 +81,7 @@ void ToolButton::paintEvent(QPaintEvent *event)
 void ToolButton::enterEvent(QEnterEvent *event)
 {
     m_hovered = true;
-    setMinimumWidth(140);  // Expand to show text
+    setMinimumWidth(sc(140));
     update();
     QPushButton::enterEvent(event);
 }
@@ -99,7 +89,7 @@ void ToolButton::enterEvent(QEnterEvent *event)
 void ToolButton::leaveEvent(QEvent *event)
 {
     m_hovered = false;
-    setMinimumWidth(48);   // Collapse to icon only
+    setMinimumWidth(sc(48));
     update();
     QPushButton::leaveEvent(event);
 }

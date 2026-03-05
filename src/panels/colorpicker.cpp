@@ -18,6 +18,18 @@
 #include <QtMath>
 #include <QBitmap>
 #include <QScrollArea>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QTextStream>
+#include <QScreen>
+#include <QGuiApplication>
+#include <QStandardPaths>
+#include <QDir>
+#include <QSettings>
+#include <QColorDialog>
+#include <QRegularExpression>
+#include <QFileInfo>
 
 // ============= ColorWheel Implementation =============
 
@@ -52,10 +64,14 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     m_outerRadius = qMin(width(), height()) / 2.0 - 10;
     m_innerRadius = m_outerRadius * 0.7;
 
-    // Draw hue wheel with conical gradient
-    QConicalGradient hueGradient(m_center, -90);
-    for (int i = 0; i < 360; ++i) {
-        hueGradient.setColorAt(i / 360.0, QColor::fromHsvF(i / 360.0, 1.0, 1.0));
+    // Draw hue wheel with conical gradient.
+    // QConicalGradient sweeps COUNTER-clockwise in Qt screen space (Y down).
+    // We start at 90 degrees (top) so hue=0 red is at top, matching hueToPoint().
+    // Stops run 0→1 CCW but we negate the hue so the visual colour order
+    // matches the CW angle convention used in hueToPoint() and updateColor().
+    QConicalGradient hueGradient(m_center, 90.0);
+    for (int i = 0; i <= 360; ++i) {
+        hueGradient.setColorAt(i / 360.0, QColor::fromHsvF(1.0 - i / 360.0, 1.0, 1.0));
     }
 
     QPainterPath ring;
@@ -70,28 +86,25 @@ void ColorWheel::paintEvent(QPaintEvent *event)
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    // Angle formula: hue * 2*PI + PI/2
-    // This maps the hue correctly onto the QConicalGradient(center, -90) ring:
-    //   hue=0.0 (red)   → bottom,  hue=0.25 (green) → left
-    //   hue=0.5 (cyan)  → top,     hue=0.75 (blue)  → right
-    // pPure is placed at the hue indicator position so triangle and ring agree.
-    qreal angle = hue * 2 * M_PI + M_PI / 2;
-    QPointF pPure  = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
-    angle += 2 * M_PI / 3;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
     QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
     angle += 2 * M_PI / 3;
     QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
+    angle += 2 * M_PI / 3;
+    QPointF pPure = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
+
+    // pureHue = QColor::fromHsvF(hue, 1.0, 1.0) — removed, hue used directly below
 
     QPainterPath triangle;
-    triangle.moveTo(pPure);
-    triangle.lineTo(pWhite);
+    triangle.moveTo(pWhite);
+    triangle.lineTo(pPure);
     triangle.lineTo(pBlack);
     triangle.closeSubpath();
 
-    // HSV triangle layout:
-    // - pPure  = Pure hue (S=1, V=1) — aligned with hue ring indicator
-    // - pWhite = White    (S=0, V=1)
-    // - pBlack = Black    (S=0, V=0)
+    // Create a proper HSV triangle:
+    // - Top vertex (pWhite) = White (S=0, V=1)
+    // - Bottom right (pPure) = Pure hue (S=1, V=1)
+    // - Bottom left (pBlack) = Black (S=0, V=0)
 
     // Draw using a raster approach for accurate gradient
     QImage triangleImage(width(), height(), QImage::Format_ARGB32);
@@ -206,9 +219,7 @@ void ColorWheel::updateColor(const QPoint &pos)
     QPointF delta = pos - m_center;
 
     if (m_isSelectingHue) {
-        // Inverse of placement formula: angle_placed = hue*2pi + pi/2
-        // → hue = (atan2(dy,dx) - pi/2) / (2pi)
-        qreal angle = qAtan2(delta.y(), delta.x()) - M_PI / 2;
+        qreal angle = qAtan2(delta.y(), delta.x()) + M_PI / 2;
         if (angle < 0) angle += 2 * M_PI;
         qreal hue = angle / (2 * M_PI);
 
@@ -219,13 +230,12 @@ void ColorWheel::updateColor(const QPoint &pos)
         qreal hue = m_currentColor.hueF();
         if (hue < 0) hue = 0;
 
-        // FIX: Use correct angle formula — hue*2pi + pi/2
-        qreal angle = hue * 2 * M_PI + M_PI / 2;
-        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;  // pPure
-        angle += 2 * M_PI / 3;
+        qreal angle = hue * 2 * M_PI - M_PI / 2;
         QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
         angle += 2 * M_PI / 3;
         QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
+        angle += 2 * M_PI / 3;
+        QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
 
         QPointF v0 = pColor - pWhite;
         QPointF v1 = pBlack - pWhite;
@@ -260,8 +270,7 @@ void ColorWheel::updateColor(const QPoint &pos)
 
 QPointF ColorWheel::hueToPoint(qreal hue) const
 {
-    // FIX: hue*2pi + pi/2 matches the QConicalGradient(-90) ring layout
-    qreal angle = hue * 2 * M_PI + M_PI / 2;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
     qreal radius = (m_outerRadius + m_innerRadius) / 2;
     return m_center + QPointF(qCos(angle), qSin(angle)) * radius;
 }
@@ -271,13 +280,12 @@ QPointF ColorWheel::svToPoint(qreal saturation, qreal value) const
     qreal hue = m_currentColor.hueF();
     if (hue < 0) hue = 0;
 
-    // FIX: Use correct angle formula — hue*2pi + pi/2
-    qreal angle = hue * 2 * M_PI + M_PI / 2;
-    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;  // pPure
-    angle += 2 * M_PI / 3;
+    qreal angle = hue * 2 * M_PI - M_PI / 2;
     QPointF pWhite = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
     angle += 2 * M_PI / 3;
     QPointF pBlack = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
+    angle += 2 * M_PI / 3;
+    QPointF pColor = m_center + QPointF(qCos(angle), qSin(angle)) * m_innerRadius * 0.97;
 
     QPointF satPoint = pWhite + (pColor - pWhite) * saturation;
     QPointF finalPoint = satPoint + (pBlack - satPoint) * (1.0 - value);
@@ -418,6 +426,7 @@ void ColorPicker::setupUI()
     m_paletteCombo->setStyleSheet(comboStyle);
 
     loadPalettes();
+    loadPalettesFromDisk();
 
     for (const QString &paletteName : m_palettes.keys()) {
         m_paletteCombo->addItem(paletteName);
@@ -427,6 +436,36 @@ void ColorPicker::setupUI()
             this, &ColorPicker::onPaletteChanged);
 
     mainLayout->addWidget(m_paletteCombo);
+
+    // ── Palette action row ────────────────────────────────────────────────
+    {
+        QHBoxLayout *palAct = new QHBoxLayout();
+        palAct->setSpacing(4);
+        auto mkBtn = [&](const QString &label, const QString &tip) -> QPushButton* {
+            QPushButton *b = new QPushButton(label);
+            b->setToolTip(tip);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setStyleSheet(QString(
+                "QPushButton{background:%1;color:#ccc;border:1px solid %2;"
+                "border-radius:3px;padding:3px 8px;font-size:10px;}"
+                "QPushButton:hover{border-color:%3;color:#fff;}")
+                .arg(t.bg4, t.bg1, t.accent));
+            return b;
+        };
+        QPushButton *bImport  = mkBtn("Import",  "Load .gpl / hex palette file");
+        QPushButton *bExport  = mkBtn("Export",  "Save palette as .gpl");
+        QPushButton *bSave    = mkBtn("+ Save",  "Save recent colours as new palette");
+        QPushButton *bPick    = mkBtn("Pick",    "Pick colour from screen");
+        connect(bImport, &QPushButton::clicked, this, &ColorPicker::onImportPalette);
+        connect(bExport, &QPushButton::clicked, this, &ColorPicker::onExportPalette);
+        connect(bSave,   &QPushButton::clicked, this, &ColorPicker::onSavePaletteAs);
+        connect(bPick,   &QPushButton::clicked, this, &ColorPicker::onPickFromScreen);
+        palAct->addWidget(bImport);
+        palAct->addWidget(bExport);
+        palAct->addWidget(bSave);
+        palAct->addWidget(bPick);
+        mainLayout->addLayout(palAct);
+    }
 
     m_paletteWidget = new QWidget();
     QGridLayout *paletteGrid = new QGridLayout(m_paletteWidget);
@@ -808,4 +847,150 @@ void ColorPicker::applyTheme()
 
     m_paletteCombo->setStyleSheet(comboStyle(t.accent));
     m_textureCombo->setStyleSheet(comboStyle(t.accent));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Palette persistence & import/export slots
+// ══════════════════════════════════════════════════════════════════════════════
+
+void ColorPicker::loadPalettesFromDisk()
+{
+    QSettings s("AkisVG", "AkisVG");
+    s.beginGroup("CustomPalettes");
+    for (const QString &key : s.childKeys()) {
+        QStringList hexList = s.value(key).toStringList();
+        QVector<QColor> colors;
+        for (const QString &h : hexList) {
+            QColor c(h);
+            if (c.isValid()) colors << c;
+        }
+        if (!colors.isEmpty()) m_palettes[key] = colors;
+    }
+    s.endGroup();
+}
+
+void ColorPicker::savePalettesToDisk()
+{
+    static const QStringList builtIn = {
+        "Default","Skin Tones","Pastel","Vibrant","Earth Tones","Grayscale","Ocean Blues"
+    };
+    QSettings s("AkisVG", "AkisVG");
+    s.beginGroup("CustomPalettes");
+    s.remove("");
+    for (auto it = m_palettes.cbegin(); it != m_palettes.cend(); ++it) {
+        if (builtIn.contains(it.key())) continue;
+        QStringList hexList;
+        for (const QColor &c : it.value()) hexList << c.name();
+        s.setValue(it.key(), hexList);
+    }
+    s.endGroup();
+}
+
+void ColorPicker::onImportPalette()
+{
+    QString path = QFileDialog::getOpenFileName(
+        this, "Import Palette", QDir::homePath(),
+        "Palette files (*.gpl *.txt *.hex);;All files (*)");
+    if (path.isEmpty()) return;
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Import Failed", "Could not open:\n" + path);
+        return;
+    }
+
+    QVector<QColor> colors;
+    QTextStream ts(&f);
+    QString paletteName;
+    bool isGpl = false;
+
+    while (!ts.atEnd()) {
+        QString line = ts.readLine().trimmed();
+        if (line.startsWith("GIMP Palette"))  { isGpl = true; continue; }
+        if (isGpl && line.startsWith("Name:")) { paletteName = line.mid(5).trimmed(); continue; }
+        if (line.isEmpty() || line.startsWith('#')) {
+            if (line.startsWith('#') && line.length() == 7) {
+                QColor c(line);
+                if (c.isValid()) colors << c;
+            }
+            continue;
+        }
+        QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+        if (parts.size() >= 3) {
+            bool ok1, ok2, ok3;
+            int r = parts[0].toInt(&ok1), g = parts[1].toInt(&ok2), b = parts[2].toInt(&ok3);
+            if (ok1 && ok2 && ok3) { colors << QColor(r,g,b); continue; }
+        }
+        if (parts.size() == 1 && parts[0].length() == 6) {
+            QColor c("#" + parts[0]);
+            if (c.isValid()) { colors << c; continue; }
+        }
+    }
+
+    if (colors.isEmpty()) {
+        QMessageBox::information(this, "Import", "No valid colours found.");
+        return;
+    }
+    if (paletteName.isEmpty()) paletteName = QFileInfo(path).baseName();
+    QString base = paletteName; int n = 2;
+    while (m_palettes.contains(paletteName)) paletteName = QString("%1 (%2)").arg(base).arg(n++);
+
+    m_palettes[paletteName] = colors;
+    m_paletteCombo->addItem(paletteName);
+    m_paletteCombo->setCurrentText(paletteName);
+    savePalettesToDisk();
+    QMessageBox::information(this, "Imported",
+        QString("Loaded %1 colour(s) as \"%2\".").arg(colors.size()).arg(paletteName));
+}
+
+void ColorPicker::onExportPalette()
+{
+    QString name = m_paletteCombo->currentText();
+    if (name.isEmpty() || !m_palettes.contains(name)) return;
+    QString path = QFileDialog::getSaveFileName(
+        this, "Export Palette", QDir::homePath() + "/" + name + ".gpl",
+        "GIMP Palette (*.gpl);;Hex list (*.txt)");
+    if (path.isEmpty()) return;
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Export Failed", "Could not write:\n" + path);
+        return;
+    }
+    QTextStream ts(&f);
+    ts << "GIMP Palette\nName: " << name << "\nColumns: 8\n#\n";
+    for (const QColor &c : m_palettes[name])
+        ts << QString("%1 %2 %3\t%4\n").arg(c.red(),3).arg(c.green(),3).arg(c.blue(),3).arg(c.name().toUpper());
+}
+
+void ColorPicker::onSavePaletteAs()
+{
+    bool ok;
+    QString name = QInputDialog::getText(
+        this, "Save Palette", "Palette name:", QLineEdit::Normal, "My Palette", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+    if (m_palettes.contains(name)) {
+        auto ans = QMessageBox::question(this, "Overwrite?",
+            QString("\"%1\" already exists. Overwrite?").arg(name));
+        if (ans != QMessageBox::Yes) return;
+    }
+    m_palettes[name] = QVector<QColor>(m_recentColors.begin(), m_recentColors.end());
+    if (m_paletteCombo->findText(name) == -1) m_paletteCombo->addItem(name);
+    m_paletteCombo->setCurrentText(name);
+    savePalettesToDisk();
+}
+
+void ColorPicker::onPickFromScreen()
+{
+    // FIX #16: Use QColorDialog with non-native dialog to get Qt's built-in
+    // "Pick Screen Color" button which can sample from anywhere including images.
+    // DontUseNativeDialog forces Qt's own dialog which has the screen picker.
+    QColor picked = QColorDialog::getColor(
+        m_currentColor, this, "Pick colour from screen",
+        QColorDialog::ShowAlphaChannel | QColorDialog::DontUseNativeDialog);
+    if (picked.isValid()) {
+        setColor(picked);
+        addToRecentColors(picked);
+        emit colorChanged(m_currentColor);
+    }
 }

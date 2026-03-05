@@ -10,6 +10,7 @@
 #include <QBitmap>
 #include <QMap>
 #include <QLabel>
+#include <QPushButton>
 
 class ColorWheel : public QWidget
 {
@@ -68,6 +69,10 @@ private slots:
     void onRecentColorClicked();
     void onPaletteChanged(int index);
     void onPaletteColorClicked();
+    void onImportPalette();
+    void onExportPalette();
+    void onSavePaletteAs();
+    void onPickFromScreen();
 
 private:
     void setupUI();
@@ -75,6 +80,8 @@ private:
     void addToRecentColors(const QColor &color);
     QPixmap generateTextureIcon(int textureType);
     void loadPalettes();
+    void loadPalettesFromDisk();
+    void savePalettesToDisk();
     void updatePaletteDisplay();
 
     ColorWheel *m_colorWheel;
