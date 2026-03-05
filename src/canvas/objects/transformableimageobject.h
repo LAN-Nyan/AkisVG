@@ -39,6 +39,9 @@ public:
                  const QStyleOptionGraphicsItem *option,
                  QWidget *widget = nullptr) override;
 
+    // ── Serialization helper ─────────────────────────────────────────────────
+    QImage getImage() const { return m_image; }
+
     // ── Geometry ─────────────────────────────────────────────────────────────
     QPointF position()  const { return m_pos;   }
     qreal   imgWidth()  const { return m_w;     }

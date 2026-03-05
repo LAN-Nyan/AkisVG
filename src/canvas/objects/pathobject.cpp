@@ -140,28 +140,38 @@ static QVector<PressurePoint> buildSmoothedPressure(const QVector<PressurePoint>
     if (n < 2) return pts;
 
     QVector<PressurePoint> out;
-    out.reserve(n * 10);
-    const int STEPS = 10;
+    out.reserve(n * 20); // Reserve more for high-speed strokes
 
     for (int i = 0; i < n - 1; ++i) {
-        const QPointF p0  = pts[qMax(0,   i-1)].pos;
-        const QPointF p1  = pts[i].pos;
-        const QPointF p2  = pts[i+1].pos;
-        const QPointF p3  = pts[qMin(n-1, i+2)].pos;
-        const qreal   pr1 = pts[i].pressure;
-        const qreal   pr2 = pts[i+1].pressure;
+        const QPointF p0 = pts[qMax(0, i-1)].pos;
+        const QPointF p1 = pts[i].pos;
+        const QPointF p2 = pts[i+1].pos;
+        const QPointF p3 = pts[qMin(n-1, i+2)].pos;
 
-        for (int s = 0; s < STEPS; ++s) {
-            const qreal t  = (qreal)s / STEPS;
+        // --- THE DYNAMIC SAMPLING LOGIC ---
+        // Calculate physical distance between these two raw points
+        qreal segmentLength = QLineF(p1, p2).length();
+
+        // We want 1 point roughly every 1.5 pixels.
+        // Fast move (e.g. 300px) -> ~200 steps (t increment ~0.005)
+        // Slow move (e.g. 5px)   -> ~3 steps   (t increment ~0.33)
+        int steps = qMax(2, qCeil(segmentLength / 1.5));
+
+        // Safety cap to prevent memory crashes on massive jumps
+        steps = qMin(steps, 500);
+
+        for (int s = 0; s < steps; ++s) {
+            const qreal t  = (qreal)s / steps;
             const qreal t2 = t*t, t3 = t2*t;
             const qreal b0 = -0.5*t3 + 1.0*t2 - 0.5*t;
             const qreal b1 =  1.5*t3 - 2.5*t2 + 1.0;
             const qreal b2 = -1.5*t3 + 2.0*t2 + 0.5*t;
             const qreal b3 =  0.5*t3 - 0.5*t2;
+
             out.append({
                 QPointF(b0*p0.x()+b1*p1.x()+b2*p2.x()+b3*p3.x(),
                         b0*p0.y()+b1*p1.y()+b2*p2.y()+b3*p3.y()),
-                qBound(0.05, pr1 + (pr2-pr1)*t, 1.0)
+                qBound(0.05, pts[i].pressure + (pts[i+1].pressure - pts[i].pressure)*t, 1.0)
             });
         }
     }
@@ -252,56 +262,33 @@ static inline qreal jit(quint32 seed, qreal scale)
 // closely enough that they fully overlap into a solid shape.
 // Spacing threshold = 0.3 * radius ensures ~70% overlap = completely solid.
 // No tangent math, no polygon winding, no artifacts on any curve shape.
+// Correction: i spent forever using Unicode to clean up the coments and section off my code!
+// But i couldn't fix damn pressure sensitivity
+// So, if anyone forks and reads this, DONT FUCK WITH THIS PIECE!!!!!!
 
 void PathObject::paintPressureStroke(QPainter *painter, qreal baseWidth,
-                                      qreal minFraction, qreal opacityMul) const
+                                     qreal minFraction, qreal opacityMul) const
 {
     if (m_smoothedDirty) rebuildSmoothedPressure();
     const QVector<PressurePoint> &pts = m_smoothedPressure;
-    const int n = pts.size();
+    if (pts.size() < 2) return;
 
-    if (n < 1) return;
-
+    painter->save();
     painter->setOpacity(m_objectOpacity * opacityMul);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(m_strokeColor);
+    painter->setRenderHint(QPainter::Antialiasing, true);
 
-    // Always draw first point
-    qreal firstR = baseWidth * 0.5 * qMax(minFraction, pts[0].pressure);
-    painter->drawEllipse(pts[0].pos, firstR, firstR);
+    for (int i = 0; i < pts.size() - 1; ++i) {
+        qreal p1 = qMax(minFraction, pts[i].pressure);
+        qreal p2 = qMax(minFraction, pts[i+1].pressure);
+        qreal width = baseWidth * ((p1 + p2) * 0.5);
 
-    if (n == 1) return;
-
-    // Walk smoothed points, stamping a circle whenever we've moved
-    // at least (spacing * radius) from the last stamp.
-    // 0.3 spacing = 70% overlap = guaranteed solid fill at any brush size.
-    const qreal spacing = 0.3;
-    QPointF lastStampPos = pts[0].pos;
-    qreal   lastR        = firstR;
-
-    for (int i = 1; i < n; ++i) {
-        const qreal r    = baseWidth * 0.5 * qMax(minFraction, pts[i].pressure);
-        const QPointF dp = pts[i].pos - lastStampPos;
-        const qreal dist = qSqrt(dp.x()*dp.x() + dp.y()*dp.y());
-
-        // Threshold based on the SMALLER of the two radii — ensures overlap
-        // even when pressure drops quickly (taper-out)
-        const qreal threshold = spacing * qMin(lastR, r);
-
-        if (dist >= threshold) {
-            painter->drawEllipse(pts[i].pos, r, r);
-            lastStampPos = pts[i].pos;
-            lastR        = r;
-        }
+        // RoundCap & RoundJoin create a seamless connection between segments
+        painter->setPen(QPen(m_strokeColor, width,
+                             Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->drawLine(pts[i].pos, pts[i+1].pos);
     }
-
-    // Always stamp the final point so the stroke tip is never cut short
-    {
-        const qreal r = baseWidth * 0.5 * qMax(minFraction, pts[n-1].pressure);
-        painter->drawEllipse(pts[n-1].pos, r, r);
-    }
+    painter->restore();
 }
-
 // ─── Build pen (non-pressure paths) ───────────────────────────────────────────
 
 QPen PathObject::buildStrokePen(qreal width, QColor color) const

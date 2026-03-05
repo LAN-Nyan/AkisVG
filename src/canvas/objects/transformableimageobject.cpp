@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QStyleOptionGraphicsItem>
+#include <QApplication>
 #include <cmath>
 #include <optional>
 
@@ -201,45 +202,57 @@ void TransformableImageObject::continueTransform(QPointF currentScene)
     qreal dx   =  delta.x() * cosA + delta.y() * sinA;
     qreal dy   = -delta.x() * sinA + delta.y() * cosA;
 
+    // FIX #18: Shift held → constrain to original aspect ratio
+    bool keepAspect = (QApplication::keyboardModifiers() & Qt::ShiftModifier) != 0;
+    qreal aspect = (m_origH > 0) ? (m_origW / m_origH) : 1.0;
+
     switch (m_activeHandle) {
     case HandleRole::TopLeft:
         m_w = qMax(10.0, m_origW - dx);
         m_h = qMax(10.0, m_origH - dy);
+        if (keepAspect) { qreal d = qMax(m_w - m_origW, -(m_h - m_origH) * aspect); m_w = m_origW + d; m_h = m_origH + d / aspect; }
         m_pos = m_origPos + QPointF(-(m_w-m_origW)/2*cosA + (m_h-m_origH)/2*sinA,
                                      -(m_w-m_origW)/2*sinA - (m_h-m_origH)/2*cosA);
         break;
     case HandleRole::TopRight:
         m_w = qMax(10.0, m_origW + dx);
         m_h = qMax(10.0, m_origH - dy);
+        if (keepAspect) { qreal d = qMax(m_w - m_origW, -(m_h - m_origH) * aspect); m_w = m_origW + d; m_h = m_origH + d / aspect; }
         m_pos = m_origPos + QPointF((m_w-m_origW)/2*cosA + (m_h-m_origH)/2*sinA,
                                      (m_w-m_origW)/2*sinA - (m_h-m_origH)/2*cosA);
         break;
     case HandleRole::BottomLeft:
         m_w = qMax(10.0, m_origW - dx);
         m_h = qMax(10.0, m_origH + dy);
+        if (keepAspect) { qreal d = qMax(m_origW - m_w, (m_h - m_origH) * aspect); m_w = m_origW - d; m_h = m_origH + d / aspect; }
         m_pos = m_origPos + QPointF(-(m_w-m_origW)/2*cosA - (m_h-m_origH)/2*sinA,
                                       -(m_w-m_origW)/2*sinA + (m_h-m_origH)/2*cosA);
         break;
     case HandleRole::BottomRight:
         m_w = qMax(10.0, m_origW + dx);
         m_h = qMax(10.0, m_origH + dy);
+        if (keepAspect) { qreal d = qMax(m_w - m_origW, (m_h - m_origH) * aspect); m_w = m_origW + d; m_h = m_origH + d / aspect; }
         m_pos = m_origPos + QPointF((m_w-m_origW)/2*cosA - (m_h-m_origH)/2*sinA,
                                      (m_w-m_origW)/2*sinA + (m_h-m_origH)/2*cosA);
         break;
     case HandleRole::TopCenter:
         m_h = qMax(10.0, m_origH - dy);
+        if (keepAspect) m_w = m_h * aspect;
         m_pos = m_origPos + QPointF( (m_h-m_origH)/2*sinA, -(m_h-m_origH)/2*cosA);
         break;
     case HandleRole::BottomCenter:
         m_h = qMax(10.0, m_origH + dy);
+        if (keepAspect) m_w = m_h * aspect;
         m_pos = m_origPos + QPointF(-(m_h-m_origH)/2*sinA, (m_h-m_origH)/2*cosA);
         break;
     case HandleRole::MiddleLeft:
         m_w = qMax(10.0, m_origW - dx);
+        if (keepAspect) m_h = m_w / aspect;
         m_pos = m_origPos + QPointF(-(m_w-m_origW)/2*cosA, -(m_w-m_origW)/2*sinA);
         break;
     case HandleRole::MiddleRight:
         m_w = qMax(10.0, m_origW + dx);
+        if (keepAspect) m_h = m_w / aspect;
         m_pos = m_origPos + QPointF((m_w-m_origW)/2*cosA, (m_w-m_origW)/2*sinA);
         break;
     default:

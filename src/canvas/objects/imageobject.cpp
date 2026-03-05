@@ -1,5 +1,7 @@
 #include "imageobject.h"
 #include <QPainter>
+#include <QGraphicsSceneMouseEvent>
+#include <QLineF>
 
 ImageObject::ImageObject(QGraphicsItem *parent)
     : VectorObject(parent)
@@ -109,4 +111,60 @@ void ImageObject::paint(QPainter *painter, const QStyleOptionGraphicsItem *optio
                           bounds.bottomRight().y() - handleSize/2,
                           handleSize, handleSize);
     }
+}
+
+// ── Resize handle interaction (#18) ──────────────────────────────────────────
+// Hit-test a corner handle in scene coordinates.
+static int cornerHit(const QPointF &scenePos, const QRectF &sb)
+{
+    const qreal R = 12.0;
+    if (QLineF(scenePos, sb.topLeft()).length()     < R) return 0;
+    if (QLineF(scenePos, sb.topRight()).length()    < R) return 1;
+    if (QLineF(scenePos, sb.bottomLeft()).length()  < R) return 2;
+    if (QLineF(scenePos, sb.bottomRight()).length() < R) return 3;
+    return -1;
+}
+
+void ImageObject::mousePressEvent(QGraphicsSceneMouseEvent *event)
+{
+    m_pressScenePos = event->scenePos();
+    m_pressSize     = m_size;
+    m_resizing      = false;
+
+    if (isSelected()) {
+        QRectF sb = mapToScene(boundingRect()).boundingRect();
+        int c = cornerHit(event->scenePos(), sb);
+        if (c >= 0) { m_resizing = true; m_resizeCorner = c; event->accept(); return; }
+    }
+    QGraphicsItem::mousePressEvent(event);
+}
+
+void ImageObject::mouseMoveEvent(QGraphicsSceneMouseEvent *event)
+{
+    if (!m_resizing) { QGraphicsItem::mouseMoveEvent(event); return; }
+
+    QPointF d = event->scenePos() - m_pressScenePos;
+    qreal nw = m_pressSize.width(), nh = m_pressSize.height();
+    switch (m_resizeCorner) {
+    case 0: nw = qMax(20.0, m_pressSize.width()-d.x()); nh = qMax(20.0, m_pressSize.height()-d.y()); break;
+    case 1: nw = qMax(20.0, m_pressSize.width()+d.x()); nh = qMax(20.0, m_pressSize.height()-d.y()); break;
+    case 2: nw = qMax(20.0, m_pressSize.width()-d.x()); nh = qMax(20.0, m_pressSize.height()+d.y()); break;
+    case 3: nw = qMax(20.0, m_pressSize.width()+d.x()); nh = qMax(20.0, m_pressSize.height()+d.y()); break;
+    }
+    // Shift = lock aspect ratio
+    if ((event->modifiers() & Qt::ShiftModifier) && m_pressSize.height() > 0) {
+        qreal asp = m_pressSize.width() / m_pressSize.height();
+        if (qAbs(nw-m_pressSize.width()) >= qAbs(nh-m_pressSize.height())) nh = nw/asp;
+        else                                                                  nw = nh*asp;
+    }
+    prepareGeometryChange();
+    m_size = QSizeF(nw, nh);
+    update();
+    event->accept();
+}
+
+void ImageObject::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
+{
+    m_resizing = false;
+    QGraphicsItem::mouseReleaseEvent(event);
 }

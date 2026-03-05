@@ -4,6 +4,7 @@
 #include "vectorobject.h"
 #include <QPixmap>
 #include <QString>
+#include <QGraphicsSceneMouseEvent>
 
 class ImageObject : public VectorObject
 {
@@ -25,10 +26,19 @@ public:
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
                QWidget *widget = nullptr) override;
 
+protected:
+    void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
+    void mouseMoveEvent(QGraphicsSceneMouseEvent *event) override;
+    void mouseReleaseEvent(QGraphicsSceneMouseEvent *event) override;
+
 private:
     QPixmap m_pixmap;
     QString m_imagePath;
-    QSizeF m_size;
+    QSizeF  m_size;
+    bool    m_resizing     = false;
+    int     m_resizeCorner = 0;   // 0=TL 1=TR 2=BL 3=BR
+    QPointF m_pressScenePos;
+    QSizeF  m_pressSize;
 };
 
 #endif // IMAGEOBJECT_H
