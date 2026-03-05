@@ -84,6 +84,7 @@ set(HEADERS
     src/io/gifexporter.h
     src/ui/startupscreen.h
     src/utils/thememanager.h
+    src/utils/thememanager.cpp
     # ── NEW TOOLS ──────────────────────────────────────────────────────────────
     src/tools/lassotool.h
     src/tools/gradienttool.h
