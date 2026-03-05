@@ -7,7 +7,7 @@
 #include "core/layer.h"
 #include "utils/thememanager.h"
 
-#include <QEventLoop>
+#include <QEventLoop> // Added because github hates me
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QPushButton>
@@ -36,6 +36,10 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QFile>
+#include <QSvgRenderer>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 // --- Internal Helper: LayerListWidget ---
 class LayerListWidget : public QWidget {
@@ -44,12 +48,20 @@ public:
         : QWidget(parent), m_project(project) {
         setMinimumWidth(200);
         setMaximumWidth(300);
-        setMinimumHeight(32 + m_project->layerCount() * 36);
+        // Use sizeHint() for preferred size — do NOT call setMinimumHeight()
+        // since that forces the parent dock widget to expand unboundedly.
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
 
         connect(project, &Project::layersChanged, this, [this]() {
-            setMinimumHeight(32 + m_project->layerCount() * 36);
+            updateGeometry();
             update();
         });
+    }
+
+    QSize sizeHint() const override {
+        const int rowHeight = 36;
+        const int headerHeight = 32;
+        return QSize(220, headerHeight + m_project->layerCount() * rowHeight);
     }
 
 protected:
@@ -95,12 +107,38 @@ protected:
             painter.drawText(QRect(20, y, width() - 80, rowHeight),
                              Qt::AlignLeft | Qt::AlignVCenter, layerText);
 
-            QString visIcon = layer->isVisible() ? "👁" : "○";
-            painter.setFont(QFont("Arial", 12));
-            painter.drawText(QRect(width() - 65, y, 25, rowHeight), Qt::AlignCenter, visIcon);
+            // Render visibility icon using SVG assets (white-tinted)
+            {
+                QString visRes = layer->isVisible() ? ":/icons/unhide.svg" : ":/icons/hide.svg";
+                QSvgRenderer visRenderer(visRes);
+                if (visRenderer.isValid()) {
+                    QPixmap visPx(16, 16);
+                    visPx.fill(Qt::transparent);
+                    QPainter svgP(&visPx);
+                    visRenderer.render(&svgP);
+                    svgP.setCompositionMode(QPainter::CompositionMode_SourceIn);
+                    QColor iconCol = layer->isVisible() ? QColor(200,200,200) : QColor(80,80,80);
+                    svgP.fillRect(visPx.rect(), iconCol);
+                    svgP.end();
+                    painter.drawPixmap(width() - 62, y + (rowHeight - 16) / 2, visPx);
+                }
+            }
 
-            if (layer->isLocked()) {
-                painter.drawText(QRect(width() - 35, y, 25, rowHeight), Qt::AlignCenter, "🔒");
+            // Render lock icon using SVG assets
+            {
+                QString lockRes = layer->isLocked() ? ":/icons/lock.svg" : ":/icons/unlock.svg";
+                QSvgRenderer lockRenderer(lockRes);
+                if (lockRenderer.isValid()) {
+                    QPixmap lockPx(14, 14);
+                    lockPx.fill(Qt::transparent);
+                    QPainter svgP(&lockPx);
+                    lockRenderer.render(&svgP);
+                    svgP.setCompositionMode(QPainter::CompositionMode_SourceIn);
+                    QColor lockCol = layer->isLocked() ? QColor(220, 160, 60) : QColor(60,60,60);
+                    svgP.fillRect(lockPx.rect(), lockCol);
+                    svgP.end();
+                    painter.drawPixmap(width() - 34, y + (rowHeight - 14) / 2, lockPx);
+                }
             }
 
             painter.setPen(theme().bg0Color());
@@ -167,7 +205,12 @@ FrameGridWidget::FrameGridWidget(Project *project, QWidget *parent)
 }
 
 QSize FrameGridWidget::sizeHint() const {
-    return QSize(m_project->totalFrames() * 16, 200);
+    const int cellWidth    = 16;
+    const int rowHeight    = 36;
+    const int headerHeight = 32;
+    int h = headerHeight + m_project->layerCount() * rowHeight;
+    int w = m_project->totalFrames() * cellWidth;
+    return QSize(qMax(w, 400), qMax(h, headerHeight + rowHeight));
 }
 
 void FrameGridWidget::setOnionSkin(bool enabled, int frames) {
@@ -611,6 +654,9 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
         QAction *makeKeyAction = menu.addAction("Make Keyframe");
         makeKeyAction->setEnabled(!isKeyFrame); // Only enable if NOT a keyframe
 
+        QAction *dupFrameAction = menu.addAction("Duplicate Frame");
+        dupFrameAction->setEnabled(isKeyFrame);
+
         menu.addSeparator();
         QAction *extendAction = menu.addAction("Extend Frame (Hold)");
         extendAction->setEnabled(isKeyFrame);
@@ -629,6 +675,16 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
         if (selected == makeKeyAction) {
             layer->makeKeyFrame(clickedFrame);
             update();
+        } else if (selected == dupFrameAction) {
+            int dest = clickedFrame + 1;
+            if (dest > m_project->totalFrames())
+                m_project->setTotalFrames(dest);
+            for (Layer *lyr : m_project->layers()) {
+                if (lyr->layerType() != LayerType::Audio &&
+                    lyr->layerType() != LayerType::Reference)
+                    lyr->duplicateFrame(clickedFrame, dest);
+            }
+            m_project->setCurrentFrame(dest);
         } else if (selected == extendAction) {
             bool ok;
             int toFrame = QInputDialog::getInt(
@@ -830,6 +886,21 @@ static QString renderMidiToWav(const QString &midiPath)
 {
     // Find fluidsynth executable
     QString fluidsynth = QStandardPaths::findExecutable("fluidsynth");
+
+#ifdef Q_OS_WIN
+    // On Windows, also check common install locations
+    if (fluidsynth.isEmpty()) {
+        const QStringList winPaths = {
+            "C:/Program Files/FluidSynth/bin/fluidsynth.exe",
+            "C:/Program Files (x86)/FluidSynth/bin/fluidsynth.exe",
+            QDir::homePath() + "/fluidsynth/bin/fluidsynth.exe",
+        };
+        for (const QString &p : winPaths) {
+            if (QFile::exists(p)) { fluidsynth = p; break; }
+        }
+    }
+#endif
+
     if (fluidsynth.isEmpty()) {
         qWarning() << "MIDI render: fluidsynth not found in PATH";
         return QString();
@@ -845,9 +916,9 @@ static QString renderMidiToWav(const QString &midiPath)
             sf2 = userSf2;
     }
 
-    // 2. Common system locations (Arch, Debian/Ubuntu, Fedora)
+    // 2. Common system locations (Arch, Debian/Ubuntu, Fedora, Windows)
     if (sf2.isEmpty()) {
-        const QStringList sfPaths = {
+        QStringList sfPaths = {
             "/usr/share/soundfonts/default.sf2",
             "/usr/share/soundfonts/FluidR3_GM.sf2",
             "/usr/share/soundfonts/GeneralUser-GS.sf2",
@@ -858,6 +929,19 @@ static QString renderMidiToWav(const QString &midiPath)
             // Arch: fluidsynth usually ships FluidR3_GM via extra/soundfont-fluid
             "/usr/share/soundfonts/fluid-soundfont-gm.sf2",
         };
+#ifdef Q_OS_WIN
+        // Windows: check next to fluidsynth binary, common install locations
+        QDir fluidsynthDir = QFileInfo(fluidsynth).absoluteDir();
+        sfPaths.prepend(fluidsynthDir.filePath("../share/soundfonts/default.sf2"));
+        sfPaths.prepend(fluidsynthDir.filePath("../share/soundfonts/FluidR3_GM.sf2"));
+        sfPaths.prepend("C:/Program Files/FluidSynth/share/soundfonts/FluidR3_GM.sf2");
+        sfPaths.prepend("C:/soundfonts/FluidR3_GM.sf2");
+        sfPaths.prepend("C:/soundfonts/default.sf2");
+        // Also check user's Documents folder
+        QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        sfPaths.prepend(docs + "/soundfonts/FluidR3_GM.sf2");
+        sfPaths.prepend(docs + "/FluidR3_GM.sf2");
+#endif
         for (const QString &p : sfPaths) {
             if (QFile::exists(p)) { sf2 = p; break; }
         }
@@ -876,6 +960,12 @@ static QString renderMidiToWav(const QString &midiPath)
     // fluidsynth -ni -g 1.0 -F output.wav soundfont.sf2 input.mid
     QStringList args = { "-ni", "-g", "1.0", "-F", outWav, sf2, midiPath };
     QProcess proc;
+#ifdef Q_OS_WIN
+    // On Windows, hide the console window that fluidsynth spawns
+    proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        args->flags |= CREATE_NO_WINDOW;
+    });
+#endif
     proc.start(fluidsynth, args);
     if (!proc.waitForFinished(30000)) {
         proc.kill();
@@ -1076,11 +1166,42 @@ void TimelineWidget::setupUI()
         controlLayout->setContentsMargins(12, 10, 12, 8);
         controlLayout->setSpacing(10);
 
-    auto createPlayButton = [this](const QString &text, const QString &tooltip) {
-        QPushButton *btn = new QPushButton(text);
+    // Helper: load a Qt resource SVG and return a white-tinted QIcon.
+    // All SVG assets are drawn in black; we invert to white so they're visible
+    // on the dark button background.
+    auto loadWhiteIcon = [](const QString &resourcePath) -> QIcon {
+        QPixmap px(24, 24);
+        px.fill(Qt::transparent);
+        QPainter p(&px);
+        p.setRenderHint(QPainter::Antialiasing);
+        QSvgRenderer renderer(resourcePath);
+        if (renderer.isValid()) {
+            renderer.render(&p);
+            // Invert: make black pixels white, keep transparency
+            p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            p.fillRect(px.rect(), Qt::white);
+        }
+        p.end();
+        return QIcon(px);
+    };
+
+    auto createPlayButton = [this, &loadWhiteIcon](const QString &fallbackText, const QString &tooltip, const QString &resourcePath = QString()) {
+        QPushButton *btn = new QPushButton();
         btn->setFixedSize(34, 34);
         btn->setToolTip(tooltip);
         btn->setCursor(Qt::PointingHandCursor);
+        if (!resourcePath.isEmpty()) {
+            QIcon ico = loadWhiteIcon(resourcePath);
+            if (!ico.isNull()) {
+                btn->setIcon(ico);
+                btn->setIconSize(QSize(20, 20));
+                // Do NOT set text — icon covers it; no unicode doppelganger
+            } else {
+                btn->setText(fallbackText);
+            }
+        } else {
+            btn->setText(fallbackText);
+        }
         { const auto &t = theme();
         btn->setStyleSheet(QString("QPushButton { background-color: %1; border: none; border-radius: 4px; color: white; font-size: 14px; }"
             "QPushButton:hover { background-color: %2; } QPushButton:pressed { background-color: %3; }")
@@ -1089,24 +1210,88 @@ void TimelineWidget::setupUI()
         return btn;
     };
 
-    QPushButton *firstBtn = createPlayButton("⏮", "First Frame");
+    // firstBtn: gotofirstlast flipped 180° to point left (go-to-first)
+    QPushButton *firstBtn = [&]() {
+        QPushButton *btn = new QPushButton();
+        btn->setFixedSize(34, 34);
+        btn->setToolTip("First Frame");
+        btn->setCursor(Qt::PointingHandCursor);
+        QSvgRenderer renderer(QString(":/icons/gotofirstlast.svg"));
+        if (renderer.isValid()) {
+            QPixmap px(24, 24);
+            px.fill(Qt::transparent);
+            QPainter p(&px);
+            p.setRenderHint(QPainter::Antialiasing);
+            p.translate(12, 12); p.rotate(180); p.translate(-12, -12);
+            renderer.render(&p);
+            p.end();
+            QPainter tp(&px);
+            tp.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tp.fillRect(px.rect(), Qt::white);
+            tp.end();
+            btn->setIcon(QIcon(px));
+            btn->setIconSize(QSize(20, 20));
+        } else {
+            btn->setText("⏮");
+        }
+        { const auto &t = theme();
+        btn->setStyleSheet(QString("QPushButton { background-color: %1; border: none; border-radius: 4px; color: white; font-size: 14px; }"
+            "QPushButton:hover { background-color: %2; } QPushButton:pressed { background-color: %3; }")
+            .arg(t.bg4, t.accent, t.accentHover)); }
+        m_playButtons.append(btn);
+        return btn;
+    }();
     connect(firstBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(1); });
 
-    QPushButton *prevBtn = createPlayButton("◀", "Previous Frame");
+    // prevBtn: load nextframe.svg but flip 180° so it points left
+    QPushButton *prevBtn = [&]() {
+        QPushButton *btn = new QPushButton();
+        btn->setFixedSize(34, 34);
+        btn->setToolTip("Previous Frame");
+        btn->setCursor(Qt::PointingHandCursor);
+        QSvgRenderer renderer(QString(":/icons/nextframe.svg"));
+        if (renderer.isValid()) {
+            QPixmap px(24, 24);
+            px.fill(Qt::transparent);
+            QPainter p(&px);
+            p.setRenderHint(QPainter::Antialiasing);
+            // Rotate 180° around center
+            p.translate(12, 12);
+            p.rotate(180);
+            p.translate(-12, -12);
+            renderer.render(&p);
+            p.end();
+            // Tint white
+            QPainter tp(&px);
+            tp.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tp.fillRect(px.rect(), Qt::white);
+            tp.end();
+            btn->setIcon(QIcon(px));
+            btn->setIconSize(QSize(20, 20));
+        } else {
+            btn->setText("◀");
+        }
+        { const auto &t = theme();
+        btn->setStyleSheet(QString("QPushButton { background-color: %1; border: none; border-radius: 4px; color: white; font-size: 14px; }"
+            "QPushButton:hover { background-color: %2; } QPushButton:pressed { background-color: %3; }")
+            .arg(t.bg4, t.accent, t.accentHover)); }
+        m_playButtons.append(btn);
+        return btn;
+    }();
     connect(prevBtn, &QPushButton::clicked, [this]() {
         int prev = m_project->currentFrame() - 1;
         if (prev >= 1) m_project->setCurrentFrame(prev);
     });
 
-    m_playPauseBtn = createPlayButton("▶", "Play/Pause (Space)");
+    m_playPauseBtn = createPlayButton("▶", "Play/Pause (Space)", ":/icons/play.svg");
     connect(m_playPauseBtn, &QPushButton::clicked, this, &TimelineWidget::onPlayPauseClicked);
 
-    QPushButton *nextBtn = createPlayButton("▶", "Next Frame");
+    QPushButton *nextBtn = createPlayButton("▶", "Next Frame", ":/icons/nextframe.svg");
     connect(nextBtn, &QPushButton::clicked, [this]() {
         m_project->setCurrentFrame(m_project->currentFrame() + 1);
     });
 
-    QPushButton *lastBtn = createPlayButton("⏭", "Last Frame");
+    QPushButton *lastBtn = createPlayButton("⏭", "Last Frame", ":/icons/gotofirstlast.svg");
     connect(lastBtn, &QPushButton::clicked, [this]() { m_project->setCurrentFrame(m_project->highestUsedFrame()); });
 
     m_stopBtn = createPlayButton("⏹", "Stop");
@@ -1166,22 +1351,64 @@ void TimelineWidget::setupUI()
 
     mainLayout->addWidget(m_controlBar);
 
-    // Splitter Area
+    // ── Scrollable timeline body ──────────────────────────────────────────────
+    // Both the layer list and frame grid must scroll VERTICALLY together when
+    // there are many layers, and HORIZONTALLY independently for wide timelines.
+    // Layout:  outerScroll (vertical) -> splitterContainer -> splitter
+    //                                                   ├─ layerList
+    //                                                   └─ hScrollArea (horizontal) -> frameGrid
+
+    QScrollArea *outerScroll = new QScrollArea();
+    outerScroll->setWidgetResizable(true);
+    outerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    outerScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    { const auto &t = theme();
+    outerScroll->setStyleSheet(
+        QString("QScrollArea { background-color: %1; border: none; }"
+                "QScrollBar:vertical { background: %1; width: 8px; }"
+                "QScrollBar::handle:vertical { background: %2; border-radius: 4px; min-height: 20px; }"
+                "QScrollBar::handle:vertical:hover { background: %3; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }")
+        .arg(t.bg0, t.bg2, t.accent)); }
+
+    // SplitterContainer: override sizeHint so the outer scroll area knows
+    // the minimum height needed (based on layer count) and can scroll vertically.
+    // Width is freely expandable — hScrollArea inside handles horizontal overflow.
+    struct SplitterContainer : public QWidget {
+        Project *proj;
+        SplitterContainer(Project *p, QWidget *par=nullptr): QWidget(par), proj(p) {
+            setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        }
+        QSize sizeHint() const override {
+            const int rowHeight = 36, headerHeight = 32;
+            return QSize(400, headerHeight + proj->layerCount() * rowHeight);
+        }
+    };
+    SplitterContainer *splitterContainer = new SplitterContainer(m_project);
+    connect(m_project, &Project::layersChanged, splitterContainer,
+            [splitterContainer](){ splitterContainer->updateGeometry(); });
+    QHBoxLayout *scLayout = new QHBoxLayout(splitterContainer);
+    scLayout->setContentsMargins(0, 0, 0, 0);
+    scLayout->setSpacing(0);
+
     QSplitter *splitter = new QSplitter(Qt::Horizontal);
     splitter->setStyleSheet("QSplitter::handle { background-color: #000; width: 1px; }");
+    splitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     LayerListWidget *layerList = new LayerListWidget(m_project);
     splitter->addWidget(layerList);
 
-    QScrollArea *scrollArea = new QScrollArea();
-    scrollArea->setWidgetResizable(false);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    QScrollArea *hScrollArea = new QScrollArea();
+    hScrollArea->setWidgetResizable(false);
+    hScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    hScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     { const auto &t = theme();
-    scrollArea->setStyleSheet(
+    hScrollArea->setStyleSheet(
         QString("QScrollArea { background-color: %1; border: none; }"
                 "QScrollBar:horizontal { background: %1; height: 10px; }"
-                "QScrollBar::handle:horizontal { background: %2; border-radius: 5px; }")
-        .arg(t.bg0, t.bg2)); }
+                "QScrollBar::handle:horizontal { background: %2; border-radius: 5px; }"
+                "QScrollBar::handle:horizontal:hover { background: %3; }")
+        .arg(t.bg0, t.bg2, t.accent)); }
 
     FrameGridWidget *frameGrid = new FrameGridWidget(m_project);
 
@@ -1189,13 +1416,17 @@ void TimelineWidget::setupUI()
     connect(frameGrid, &FrameGridWidget::audioLoaded, this, &TimelineWidget::loadAudioTrack);
     connect(frameGrid, &FrameGridWidget::referenceImageImported, this, &TimelineWidget::handleReferenceImport);
 
-    scrollArea->setWidget(frameGrid);
-    frameGrid->adjustSize();   // set initial size from sizeHint() before scroll area is shown
+    hScrollArea->setWidget(frameGrid);
+    frameGrid->adjustSize();
 
-    splitter->addWidget(scrollArea);
+    splitter->addWidget(hScrollArea);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
-    mainLayout->addWidget(splitter);
+
+    scLayout->addWidget(splitter);
+    outerScroll->setWidget(splitterContainer);
+
+    mainLayout->addWidget(outerScroll, 1);
 
     updateFrameDisplay();
 
@@ -1368,7 +1599,22 @@ void TimelineWidget::updateFrameDisplay() {
 
 void TimelineWidget::startPlayback() {
     m_isPlaying = true;
-    m_playPauseBtn->setText("⏸");
+    // Switch to pause icon
+    {
+        QSvgRenderer r(QString(":/icons/pause.svg"));
+        if (r.isValid()) {
+            QPixmap px(24,24); px.fill(Qt::transparent);
+            QPainter p(&px); r.render(&p); p.end();
+            QPainter tp(&px);
+            tp.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tp.fillRect(px.rect(), Qt::white); tp.end();
+            m_playPauseBtn->setIcon(QIcon(px));
+            m_playPauseBtn->setText("");
+        } else {
+            m_playPauseBtn->setIcon(QIcon());
+            m_playPauseBtn->setText("⏸");
+        }
+    }
 
     // Record the wall-clock time and the frame we're starting from so
     // timerEvent can compute which frame *should* be showing right now
@@ -1388,7 +1634,22 @@ void TimelineWidget::startPlayback() {
 
 void TimelineWidget::stopPlayback() {
     m_isPlaying = false;
-    m_playPauseBtn->setText("▶");
+    // Switch back to play icon
+    {
+        QSvgRenderer r(QString(":/icons/play.svg"));
+        if (r.isValid()) {
+            QPixmap px(24,24); px.fill(Qt::transparent);
+            QPainter p(&px); r.render(&p); p.end();
+            QPainter tp(&px);
+            tp.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            tp.fillRect(px.rect(), Qt::white); tp.end();
+            m_playPauseBtn->setIcon(QIcon(px));
+            m_playPauseBtn->setText("");
+        } else {
+            m_playPauseBtn->setIcon(QIcon());
+            m_playPauseBtn->setText("▶");
+        }
+    }
     if (m_playbackTimerId != -1) {
         killTimer(m_playbackTimerId);
         m_playbackTimerId = -1;

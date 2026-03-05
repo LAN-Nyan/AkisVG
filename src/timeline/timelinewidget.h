@@ -60,9 +60,10 @@ protected:
 public slots:
     void setOnionSkinEnabled(bool enabled);
     void applyTheme();
-    // Re-render all MIDI clips with the currently-selected soundfont.
-    // Call this whenever the SF2 path changes in Settings.
     void rerenderMidiClips();
+    // Re-initialize all audio players; call after export to restore playback.
+    void loadAudioTracks();
+    void stopPlayback();
 
 private slots:
     void onPlayPauseClicked();
@@ -70,14 +71,12 @@ private slots:
     void onFrameChanged(int frame);
     void updateFrameDisplay();
     void loadAudioTrack(Layer *layer, const QString &audioPath);
-    void loadAudioTracks();
     void syncAudioToFrame();
     void handleReferenceImport(Layer *layer, const QString &imagePath, int frame);
 
 private:
     void setupUI();
     void startPlayback();
-    void stopPlayback();
 
     Project *m_project;
     QPushButton *m_playPauseBtn;
