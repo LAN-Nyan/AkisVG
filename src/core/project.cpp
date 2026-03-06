@@ -425,7 +425,9 @@ bool Project::saveToFile(const QString &filePath)
     }
     projectObj["layers"] = layersArray;
 
-    // Write to file
+    // Write to file — compressed binary format
+    // Magic header "AVG2" identifies compressed saves; legacy plain-JSON files lack it
+    // and are still loaded correctly in loadFromFile().
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
         qWarning() << "Failed to open file for writing:" << filePath;
@@ -433,7 +435,11 @@ bool Project::saveToFile(const QString &filePath)
     }
 
     QJsonDocument doc(projectObj);
-    file.write(doc.toJson(QJsonDocument::Indented));
+    // Compact (no whitespace) JSON cuts ~30% vs Indented before compression.
+    // qCompress level 7 gives near-maximum compression with reasonable CPU cost.
+    QByteArray compressed = qCompress(doc.toJson(QJsonDocument::Compact), 7);
+    file.write("AVG2");        // 4-byte magic — marks this as a compressed save
+    file.write(compressed);
     file.close();
 
     return true;
@@ -447,8 +453,20 @@ bool Project::loadFromFile(const QString &filePath)
         return false;
     }
 
-    QByteArray data = file.readAll();
+    QByteArray raw = file.readAll();
     file.close();
+
+    // Detect compressed format (magic "AVG2") vs legacy plain JSON
+    QByteArray data;
+    if (raw.startsWith("AVG2")) {
+        data = qUncompress(raw.mid(4));
+        if (data.isEmpty()) {
+            qWarning() << "Failed to decompress project file:" << filePath;
+            return false;
+        }
+    } else {
+        data = raw;   // legacy plain-JSON — load as-is
+    }
 
     QJsonDocument doc = QJsonDocument::fromJson(data);
     if (doc.isNull() || !doc.isObject()) {
@@ -647,8 +665,10 @@ static QJsonObject serializeVectorObject(VectorObject *obj)
             QPainterPath::Element elem = painterPath.elementAt(i);
             QJsonObject elemObj;
             elemObj["type"] = elem.type;
-            elemObj["x"] = elem.x;
-            elemObj["y"] = elem.y;
+            // Round to 2 decimal places — sub-pixel precision is invisible
+            // but full double (15+ digits) balloons file size enormously
+            elemObj["x"] = qRound(elem.x * 100.0) / 100.0;
+            elemObj["y"] = qRound(elem.y * 100.0) / 100.0;
             elementsArray.append(elemObj);
         }
         data["pathElements"] = elementsArray;
@@ -700,8 +720,16 @@ static QJsonObject serializeVectorObject(VectorObject *obj)
         QByteArray ba;
         QBuffer buffer(&ba);
         buffer.open(QIODevice::WriteOnly);
-        image.save(&buffer, "PNG");
+        // WebP at quality 85 is ~3-5x smaller than PNG for photos/complex images.
+        // Fall back to PNG if WebP is unavailable (older Qt builds).
+        bool savedOk = image.save(&buffer, "WEBP", 85);
+        if (!savedOk) {
+            ba.clear();
+            buffer.seek(0);
+            image.save(&buffer, "PNG");
+        }
         data["imageData"] = QString(ba.toBase64());
+        data["imageFmt"]  = savedOk ? QString("WEBP") : QString("PNG");
         data["imageWidth"] = image.width();
         data["imageHeight"] = image.height();
         if (isTransformable) {
@@ -796,10 +824,11 @@ static VectorObject* deserializeVectorObject(const QJsonObject &data)
     }
 
     case VectorObjectType::Image: {
-        // Decode base64 image data
+        // Decode base64 image data — use saved format tag if present, PNG for legacy files
         QByteArray ba = QByteArray::fromBase64(data["imageData"].toString().toLatin1());
+        QString fmt = data["imageFmt"].toString("PNG");
         QImage image;
-        image.loadFromData(ba, "PNG");
+        image.loadFromData(ba, fmt.toLatin1().constData());
 
         if (data["isTransformable"].toBool(false)) {
             // Reconstruct as TransformableImageObject
