@@ -1,15 +1,10 @@
-// TODO:
-//1. Fix ffmpeg intergration! Gid, Mkv, Mp4, nne of them work, even though ffmpeg is installed (via packman on arch)
-//2. Add MP$/Mkv import.
-//3. Speed up export (it sclaes Fuckig' awful!)
-
+//Headers
 #include "mainwindow.h"
 #include "core/project.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/pathobject.h"
 #include "canvas/objects/shapeobject.h"
 #include "canvas/canvasview.h"
-#include "canvas/objects/imageobject.h"
 #include "canvas/objects/objectgroup.h"
 #include "canvas/splineoverlay.h"
 #include "panels/toolbox.h"
@@ -27,7 +22,7 @@
 #include "panels/settingspanel.h"
 #include "tools/eyedroppertool.h"
 #include "utils/thememanager.h"
-
+// Includes
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
@@ -55,11 +50,11 @@
 #include <QSvgGenerator>
 #include <QApplication>
 #include <QMediaPlayer>
-#include <QAudioOutput> // ADDED
+#include <QAudioOutput>
 #include <QTimer>
 #include <QEventLoop>
 #include <QUrl>
-#include <QPushButton> // ADDED
+#include <QPushButton>
 #include <QMessageBox>
 #include <QKeyEvent>
 #include <QPolygonF>
@@ -68,7 +63,7 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QDoubleSpinBox>
-
+// Constructor
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_undoStack(new QUndoStack(this))
@@ -86,7 +81,7 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1800, 1000);
     setMinimumSize(1200, 700);
 
-    // FIX #2: Set application logo/icon using SVG asset to replace default Wayland icon
+    // Set Application Icon
     setWindowIcon(QIcon(":/icons/pencil.svg"));
 
     // Set dark stylesheet
@@ -193,7 +188,6 @@ MainWindow::MainWindow(QWidget *parent)
     // Force the menu bar to render inline (prevents KDE/GNOME global menu from stealing it)
     menuBar()->setNativeMenuBar(false);
 
-    createActions();
     createMenus();
     createToolBars();
     setupCanvas();
@@ -202,18 +196,11 @@ MainWindow::MainWindow(QWidget *parent)
     // Connect signals
     connect(m_toolBox, &ToolBox::toolChanged, m_canvas, &VectorCanvas::setCurrentTool);
 
-    // INSTANT COLOR SYNC: When the tool changes, update the color picker to
-    // reflect that tool's current stroke color immediately.
-    // We do NOT block signals — instead we let setColor run fully (wheel repaints,
-    // hex field updates, opacity syncs), but we guard against the resulting
-    // colorChanged from overwriting the *new* tool's color by checking whether
-    // the color actually changed.
     connect(m_toolBox, &ToolBox::toolChanged, this, [this](Tool *tool) {
         if (!tool) return;
         QColor toolColor = tool->strokeColor();
         if (m_colorPicker->currentColor() != toolColor) {
-            // Temporarily disconnect the colorChanged → tool update path
-            // so setting the picker color doesn't immediately write back into the tool
+            // Temporarily disconnect the colorChanged to tool update path
             disconnect(m_colorPicker, &ColorPicker::colorChanged, this, nullptr);
             m_colorPicker->setColor(toolColor);
             // Reconnect
@@ -231,27 +218,25 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     // Re-sync the selected image pointer after every refreshFrame.
-    // VectorCanvas deletes and recreates display clones on each refresh,
-    // so m_selectedImage in CanvasView would otherwise become a dangling pointer.
     connect(m_project, &Project::currentFrameChanged,
             m_canvasView, &CanvasView::syncSelectedImage);
     connect(m_project, &Project::modified,
             m_canvasView, &CanvasView::syncSelectedImage);
 
-    // Initial color picker → tool connection (also re-established in toolChanged handler above)
+    // Initial color picker to tool connection (also re-established in toolChanged handler above)
     connect(m_colorPicker, &ColorPicker::colorChanged, this, [this](const QColor &color) {
         if (m_toolBox->currentTool()) {
             m_toolBox->currentTool()->setStrokeColor(color);
             m_toolBox->currentTool()->setFillColor(color);
         }
     });
-    //NSTANT UNDO/REDO REFRESH
+    // Undo and Redo Stack
     connect(m_undoStack, &QUndoStack::indexChanged, this, [this]() {
         m_canvas->refreshFrame();
         if (m_layerPanel) {
             m_layerPanel->rebuildLayerList();
         }
-        // Also mark project as modified when an action is performed
+        // Mark project as modified when an action is performed
         if (!m_undoStack->isClean()) {
             m_isModified = true;
             updateWindowTitle();
@@ -270,10 +255,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     statusBar()->showMessage("Ready - Use Pencil tool to draw", 5000);
     updateWindowTitle();
-
-    // ── Lasso & Magic Wand: get toolbox instances (do NOT create new ones) ──
-    // The toolbox owns the tool instances that VectorCanvas activates via toolChanged.
-    // Creating separate instances here would mean our signal connections never fire.
+    // Connect Lasso, and Magic Wand
     m_lassoTool     = qobject_cast<LassoTool*>(m_toolBox->getTool(ToolType::Lasso));
     m_magicWandTool = qobject_cast<MagicWandTool*>(m_toolBox->getTool(ToolType::MagicWand));
 
@@ -313,14 +295,14 @@ MainWindow::MainWindow(QWidget *parent)
         m_canvasView->viewport()->update();
     });
 }
-
+// Mainwindow
 MainWindow::~MainWindow()
 {
 }
 
 void MainWindow::setupCanvas()
 {
-    // 1. UI Layout Setup
+    // I Layout Setup
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *layout = new QVBoxLayout(centralWidget);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -330,12 +312,12 @@ void MainWindow::setupCanvas()
     layout->addWidget(m_canvasView);
     setCentralWidget(centralWidget);
 
-    // 2. Initialize Spline Overlay ONCE and parent to Viewport
+    // Initialize Spline Overlay ONCE and parent to Viewport
     m_splineOverlay = new SplineOverlay(m_canvasView->viewport());
     m_splineOverlay->hide();
     m_canvasView->setSplineOverlay(m_splineOverlay);
 
-    // ─── CRITICAL: Re-link the Enter/Esc keys ───
+    // Re-link the Enter/Esc keys
     connect(m_splineOverlay, &SplineOverlay::committed, this, &MainWindow::onSplineCommitted);
     connect(m_splineOverlay, &SplineOverlay::exitRequested, this, [this]() {
         m_interpolationTargets.clear();
@@ -358,20 +340,20 @@ void MainWindow::setupCanvas()
         m_project->setCurrentFrame(next);
     });
 
-    // 3. Handle Interpolation Mode State
+    // Handle the Interpolation Mode State (We use m_spline overlay here found in src/canvas/splineoverlay.cpp)
     connect(m_canvas, &VectorCanvas::interpolationModeChanged, this, [this](bool active) {
         if (active) {
             m_splineOverlay->resize(m_canvasView->viewport()->size());
             m_splineOverlay->show();
 
-            // --- THE FOCUS TRAP ---
+            // THE FOCUS TRAP Don't fuck with this
             m_splineOverlay->setFocusPolicy(Qt::StrongFocus);
             m_splineOverlay->setFocus();
             m_splineOverlay->raise();
 
-            setWindowTitle("AkisVG — ✦ Interpolating…");
+            setWindowTitle("AkisVG - Interpolating…");
 
-            // Show interpolation controls in tool settings panel
+            // Show interpolation controls in tool settings panel (THIS SHIT TOOK FOREVER TO GET RIGHT)
             if (m_toolBox && m_toolBox->settingsPanel())
                 m_toolBox->settingsPanel()->showInterpolationControls(m_interpTotalFrames);
         } else {
@@ -379,7 +361,7 @@ void MainWindow::setupCanvas()
             m_canvasView->setFocus();
             updateWindowTitle();
 
-            // Restore normal select controls
+            // Restore normal select controls DO NOT TRY TO FIX
             if (m_toolBox && m_toolBox->settingsPanel())
                 m_toolBox->settingsPanel()->hideInterpolationControls();
         }
@@ -395,7 +377,7 @@ void MainWindow::setupCanvas()
         });
     }
 
-    // 4. Tool & Asset Connections
+    // Tool also = Asset Connections
     m_eyedropperTool = qobject_cast<EyedropperTool*>(m_toolBox->getTool(ToolType::eyedropper));
     if (m_eyedropperTool) {
         connect(m_eyedropperTool, &EyedropperTool::colorPicked, this, [this](const QColor &stroke, const QColor &fill){
@@ -415,24 +397,21 @@ void MainWindow::setupCanvas()
 
     connect(m_assetLibrary, &AssetLibrary::groupInstanceRequested, this, &MainWindow::onInstanceGroupRequested);
 
-    // 5. RESTORED: Full Context Menu
+    // Context Menu
     connect(m_canvas, &VectorCanvas::contextMenuRequestedAt, this, [this](const QPoint &globalPos, const QPointF &scenePos) {
 
-        // ── Build selection list ─────────────────────────────────────────────
-        // FIX #29: SelectTool tracks its own selection (rubber-band or click).
-        // Qt's native selectedItems() is always empty because we stripped
-        // ItemIsSelectable from display clones.  Always prefer SelectTool's list.
+    // Always prefer SelectTool's list.
 
         QList<VectorObject*> selected;
 
-        // 1. Try SelectTool's tracked selection first
+        // Try SelectTool's tracked selection first
         if (SelectTool *sel = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select))) {
             for (VectorObject *src : sel->selectedObjects()) {
                 if (src) selected.append(src);
             }
         }
 
-        // 2. If nothing selected via SelectTool, pick topmost object under cursor
+        //  If nothing selected via SelectTool, pick topmost object under cursor
         if (selected.isEmpty()) {
             for (QGraphicsItem *it : m_canvas->items(scenePos, Qt::IntersectsItemBoundingRect, Qt::DescendingOrder)) {
                 if (VectorObject *vo = dynamic_cast<VectorObject*>(it)) {
@@ -448,15 +427,15 @@ void MainWindow::setupCanvas()
         menu.setStyleSheet("QMenu { background:#2d2d2d; color:white; border:1px solid #1a1a1a; }");
 
         // Restore Actions
-        QAction *groupAct  = menu.addAction("⊞  Group Selected");
-        QAction *interpAct = menu.addAction("⟳  Interpolate");
+        QAction *groupAct  = menu.addAction("Group Selected");
+        QAction *interpAct = menu.addAction("Interpolate");
         menu.addSeparator();
-        QAction *cutAct    = menu.addAction("✂  Cut");
-        QAction *copyAct   = menu.addAction("⎘  Copy");
+        QAction *cutAct    = menu.addAction("Cut");
+        QAction *copyAct   = menu.addAction("Copy");
         menu.addSeparator();
-        QAction *deleteAct = menu.addAction("🗑  Delete");
+        QAction *deleteAct = menu.addAction("Delete");
         menu.addSeparator();
-        QAction *saveAct   = menu.addAction("💾  Save as Asset…");
+        QAction *saveAct   = menu.addAction("Save as Asset…");
 
         bool hasSel = !selected.isEmpty();
         groupAct->setEnabled(selected.size() >= 2);
@@ -473,14 +452,10 @@ void MainWindow::setupCanvas()
             bool ok;
             QString name = QInputDialog::getText(this, "Group", "Name:", QLineEdit::Normal, "Group", &ok);
             if (ok) {
-                // FIX: pass 'selected' explicitly — groupSelectedObjects() relied on Qt's
-                // native selectedItems() which is always empty because SelectTool tracks
-                // its own list and never calls item->setSelected(true).
                 ObjectGroup *grp = m_canvas->groupObjects(selected, name);
                 if (grp) m_assetLibrary->addObjectGroup(grp);
             }
         } else if (chosen == interpAct) {
-            // Snapshot now — use the 'selected' list built at menu open time,
             // resolve each display clone to its layer-owned source object.
             m_interpolationTargets.clear();
             for (VectorObject *obj : selected)
@@ -504,11 +479,6 @@ void MainWindow::setupCanvas()
     });
 }
 
-void MainWindow::createActions()
-{
-    // Actions are created in createMenus
-}
-
 void MainWindow::createMenus()
 {
     // File Menu
@@ -520,7 +490,7 @@ void MainWindow::createMenus()
 
     QAction *openAct = m_fileMenu->addAction("&Open...", this, &MainWindow::openProject);
     openAct->setShortcut(QKeySequence::Open);
-    // FIX #1: Use SVG icon for Open action instead of default system folder icon
+    // Use SVG icon for Open action instead of default system folder icon
     openAct->setIcon(QIcon(":/icons/newlayer.svg"));
 
     m_recentMenu = m_fileMenu->addMenu("Open &Recent");
@@ -590,8 +560,7 @@ void MainWindow::createMenus()
                                              "Name this group:", QLineEdit::Normal,
                                              "Group", &ok);
         if (!ok) name = "Group";
-        // FIX: use SelectTool's tracked list — canvas->groupSelectedObjects uses
-        // Qt's selectedItems() which is always empty since SelectTool tracks its own.
+
         QList<VectorObject*> sel;
         if (SelectTool *st = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select)))
             sel = st->selectedObjects();
@@ -675,26 +644,42 @@ void MainWindow::createToolBars()
 
     m_mainToolBar->addSeparator();
 
-    // Icon-only zoom controls — text shown only in tooltip, not on button
-    QAction *zoomInAct = m_mainToolBar->addAction("🔍+", m_canvasView, &CanvasView::zoomIn);
+    // Icon-only zoom controls
+    auto getInvertedIcon = [](const QString& path) -> QIcon {
+        QIcon original(path);
+        // Render the SVG to a pixmap at a standard icon size (24x24
+        QPixmap pix = original.pixmap(QSize(24, 24));
+        QImage img = pix.toImage().convertToFormat(QImage::Format_ARGB32);
+        img.invertPixels(QImage::InvertRgb);
+        return QIcon(QPixmap::fromImage(img));
+    };
+
+    // 2. Apply to your actions using the aliases from your .qrc
+    QAction *zoomInAct = m_mainToolBar->addAction(getInvertedIcon(":/icons/zoomin.svg"),
+                                                  "Zoom In", m_canvasView, &CanvasView::zoomIn);
     zoomInAct->setToolTip("Zoom In (Ctrl++)");
+    zoomInAct->setShortcut(QKeySequence::ZoomIn);
 
-    QAction *zoomOutAct = m_mainToolBar->addAction("🔍−", m_canvasView, &CanvasView::zoomOut);
+    QAction *zoomOutAct = m_mainToolBar->addAction(getInvertedIcon(":/icons/zoomout.svg"),
+                                                   "Zoom Out", m_canvasView, &CanvasView::zoomOut);
     zoomOutAct->setToolTip("Zoom Out (Ctrl+-)");
+    zoomOutAct->setShortcut(QKeySequence::ZoomOut);
 
-    QAction *resetZoomAct = m_mainToolBar->addAction("⊡", m_canvasView, &CanvasView::resetZoom);
+    QAction *resetZoomAct = m_mainToolBar->addAction(getInvertedIcon(":/icons/zoomreset.svg"),
+                                                     "Reset Zoom", m_canvasView, &CanvasView::resetZoom);
     resetZoomAct->setToolTip("Reset Zoom (Ctrl+0)");
+    resetZoomAct->setShortcut(tr("Ctrl+0"));
 
     m_mainToolBar->addSeparator();
 
-    // Toolbar style: icon-only, no text visible
+    // Toolbar style
     m_mainToolBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
     m_mainToolBar->addSeparator();
 
-    // ── Settings popup button ────────────────────────────────────────────────
-    QAction *settingsAct = m_mainToolBar->addAction("⚙");
-    settingsAct->setToolTip("Project Settings  (canvas size, FPS, onion skin)");
+    // Settings popup button
+    QAction *settingsAct = m_mainToolBar->addAction(getInvertedIcon(":/src/tools/assets/Tooling/Settings.svg"), "Settings");
+    settingsAct->setToolTip("Project Settings (canvas size, FPS, onion skin)");
     connect(settingsAct, &QAction::triggered, this, [this]() {
         // Guard: if m_projectSettings not yet created, skip
         if (!m_projectSettings) return;
@@ -745,7 +730,7 @@ void MainWindow::createToolBars()
 
 void MainWindow::createDockWindows()
 {
-    // --- LEFT SIDE: TOOLBOX ---
+    // Toolbox
     QDockWidget *toolDock = new QDockWidget("Tools", this);
     toolDock->setWidget(m_toolBox);
     toolDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -754,7 +739,7 @@ void MainWindow::createDockWindows()
     addDockWidget(Qt::LeftDockWidgetArea, toolDock);
     m_viewMenu->addAction(toolDock->toggleViewAction());
 
-    // --- RIGHT SIDE: UTILITY TABS ---
+    // Utility
     QTabWidget *rightTabs = new QTabWidget();
     rightTabs->setObjectName("rightPanelTabs");
 
@@ -765,13 +750,13 @@ void MainWindow::createDockWindows()
         "QTabBar::tab:hover { background-color: #4a4a4a; }"
     );
 
-    // 1. Layers Tab
+    // Layers Tab
     rightTabs->addTab(m_layerPanel, "Layers");
 
-    // 2. Colors Tab
+    // Colors Tab
     rightTabs->addTab(m_colorPicker, "Colors");
 
-    // 3. Tool Options Tab — grab the panel that ToolBox already owns
+    // Tool Options Tab — grab the panel that ToolBox already owns
     ToolSettingsPanel *toolSettingsPanel = m_toolBox->settingsPanel();
     rightTabs->addTab(toolSettingsPanel, "Tool");
 
@@ -803,12 +788,9 @@ void MainWindow::createDockWindows()
         }
     });
 
-    // 4. Assets Tab
+    // Assets Tab
     rightTabs->addTab(m_assetLibrary, "Assets");
 
-    // Settings are now a toolbar popup — create the widget but don't add as tab.
-    // Hide it immediately so it doesn't appear as a floating rectangle in the
-    // corner when the application first loads (fixes settingspanel.cpp TODO #1).
     m_projectSettings = new ProjectSettings(m_project, this);
     m_projectSettings->hide();
 
@@ -869,7 +851,7 @@ void MainWindow::createDockWindows()
     rightDock->setTitleBarWidget(new QWidget()); // Hides the bulky "Panel" title bar
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
-    // --- BOTTOM: TIMELINE ---
+    // timeline
     QDockWidget *timelineDock = new QDockWidget("Timeline", this);
     timelineDock->setWidget(m_timeline);
     timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
@@ -881,7 +863,7 @@ void MainWindow::createDockWindows()
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
     m_viewMenu->addAction(timelineDock->toggleViewAction());
 
-    // FIX #21: Load persisted preferences on startup
+    // Load persisted preferences on startup
     QSettings settings("AkisVG", "AkisVG");
     int savedTheme = settings.value("theme/index", 0).toInt();
     if (savedTheme != 0) {
@@ -930,7 +912,7 @@ void MainWindow::openProject()
       this,
       "Open Project",
       "",
-      "AkisVG Projects (*.avg *.akisvg);;All Files (*)",  // CHANGED: Support both .avg and .akisvg
+      "AkisVG Projects (*.avg *.akisvg);;All Files (*)",  // Support both .avg and .akisvg
       nullptr,
       QFileDialog::DontUseNativeDialog
   );
@@ -958,13 +940,13 @@ void MainWindow::saveProjectAs()
         this,
         "Save Project As",
         "",
-        "AkisVG Projects (*.avg);;Legacy Format (*.akisvg)");  // CHANGED: .avg is default
+        "AkisVG Projects (*.avg);;Legacy Format (*.akisvg)");  // set .avg is default
 
     if (!fileName.isEmpty()) {
         // Ensure correct extension
         if (!fileName.endsWith(".avg", Qt::CaseInsensitive) &&
             !fileName.endsWith(".akisvg", Qt::CaseInsensitive)) {
-            fileName += ".avg";  // CHANGED: Default to .avg
+            fileName += ".avg";
         }
         m_currentFile = fileName;
         saveProject();
@@ -1130,7 +1112,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->accept();
     }
 
-    // FIX #21: Persist preferences (theme, window geometry, etc.) on close
+    // Persist preferences (theme, window geometry, etc.) on close
     if (event->isAccepted()) {
         QSettings settings("AkisVG", "AkisVG");
         settings.setValue("theme/index", ThemeManager::instance().currentIndex());
@@ -1139,9 +1121,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 }
 
-// ── FIX #8: Tool Keybinds ────────────────────────────────────────────────────
-// Route single-letter tool keys from anywhere in the window to the toolbox.
-// The canvas previously swallowed these events; now we catch them at the
 // MainWindow level before they get lost.
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
@@ -1222,8 +1201,8 @@ void MainWindow::exportToMp4()
     int endFrame   = qMax(1, m_project->highestUsedFrame());
     int fps        = m_project->fps();
 
-    // ── Locate ffmpeg binary (QProcess::start(singleString) does NOT invoke
-    //    a shell on Linux, so we must pass program + args separately) ────────
+    //  Locate ffmpeg binary (QProcess::start(singleString) does NOT invoke
+    //    a shell on Linux, so we must pass program + args separately)
     QString ffmpegBin = QStandardPaths::findExecutable("ffmpeg");
     if (ffmpegBin.isEmpty()) {
         for (const char *p : {"/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"})
@@ -1272,7 +1251,7 @@ void MainWindow::exportToMp4()
         QApplication::processEvents();
     }
 
-    // Build argument list — NOT a shell string
+    // Build argument list NOT a shell string
     QStringList args;
     args << "-y"
          << "-framerate"    << QString::number(fps)
@@ -1345,7 +1324,7 @@ void MainWindow::exportGifKeyframes() {
         progress.setValue(0);
     });
 
-    connect(&exporter, &GifExporter::frameExported, [&progress](int current, int /*total*/) { // FIXED
+    connect(&exporter, &GifExporter::frameExported, [&progress](int current, int /*total*/) {
         progress.setValue(current);
     });
 
@@ -1621,7 +1600,7 @@ void MainWindow::onInstanceGroupRequested(ObjectGroup *group)
 {
     if (!group || !m_project) return;
 
-    // FIX: Change qobject_cast to dynamic_cast
+    // Change qobject_cast to dynamic_cast
     ObjectGroup *newInstance = dynamic_cast<ObjectGroup*>(group->clone());
 
     if (!newInstance) return; // Safety check
@@ -1645,8 +1624,6 @@ void MainWindow::onInstanceGroupRequested(ObjectGroup *group)
 
 void MainWindow::startInterpolationMode() {
     if (!m_splineOverlay) return;
-
-    // FIX #30: The overlay is parented to the viewport — use viewport size, not
     // canvasView->geometry() which is in the parent widget's coordinate space.
     m_splineOverlay->resize(m_canvasView->viewport()->size());
     m_splineOverlay->move(0, 0);
@@ -1659,15 +1636,6 @@ void MainWindow::startInterpolationMode() {
     statusBar()->showMessage("Draw motion path. [ENTER] to Finish, [ESC] to Cancel.");
 }
 
-// ── NEW: Lasso / Magic Wand action slots ─────────────────────────────────────
-
-// ── FIX #10: Path complexity guard ───────────────────────────────────────────
-//
-// Qt's QPainterPath boolean operations (intersected / subtracted) use an
-// internal Skia-based edge-list algorithm that can segfault or exhaust the
-// stack when the subject path has more than ~2000 elements.  A pressure-
-// sensitive brush stroke that was smoothed with Catmull-Rom can easily produce
-// 50 000+ sub-points.  We reduce the path to a safe element count using a
 // simple Douglas-Peucker-style decimation before passing it to boolean ops.
 
 static QPolygonF decimatePolygon(const QPolygonF &poly, int maxPts)
@@ -1739,10 +1707,6 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
 {
     if (!m_project || !m_project->currentLayer()) return;
 
-    // FIX #22: When the lasso is in fill-tool (click-to-place-points) mode,
-    // create a brand-new filled polygon PathObject rather than recolouring
-    // existing geometry.  This implements the "draw a polygon using the points"
-    // behaviour described in the TODO.
     if (m_lassoTool && m_lassoTool->fillMode()) {
         if (poly.size() < 3) return; // need at least a triangle
 
@@ -1786,15 +1750,6 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
 
 void MainWindow::onLassoCut(const QPolygonF &poly)
 {
-    // ── Photoshop-style lasso split ──────────────────────────────────────────
-    // For each object that intersects the lasso polygon:
-    //   • PathObject / ShapeObject: split into two pieces using QPainterPath
-    //     boolean ops — the part INSIDE stays as a new object, the part OUTSIDE
-    //     stays as the original (modified in place).  Both pieces are kept so
-    //     the user can drag them apart independently.
-    //   • ImageObject: just removed (raster split would need pixel ops).
-    // If the lasso is entirely outside an object, nothing happens to it.
-    // If the lasso entirely contains an object, it is removed (nothing left outside).
 
     if (!m_project || !m_project->currentLayer()) return;
 
@@ -1821,9 +1776,9 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
         VectorObject *src = m_canvas->sourceObject(display);
         if (!src) src = display;
 
-        // ── PathObject split ─────────────────────────────────────────────────
+        // PathObject split
         if (auto *path = dynamic_cast<PathObject*>(src)) {
-            // FIX #10: Simplify before boolean ops — complex pressure paths can
+
             // segfault Qt's internal edge-list algorithm at > ~2000 elements.
             QPainterPath pp = safePath(path->path());
             QPointF offset = src->pos();
@@ -1843,7 +1798,6 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
             }
 
             if (hasInside && hasOutside) {
-                // True split: modify original to be the outside piece,
                 // add a new object for the inside piece
                 path->setPath(outsidePart);
                 path->update();
@@ -1870,7 +1824,7 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
             continue;
         }
 
-        // ── ShapeObject split ────────────────────────────────────────────────
+        // ShapeObject split
         if (auto *shape = dynamic_cast<ShapeObject*>(src)) {
             // Shapes store their path differently — build a painter path from the rect
             QPainterPath shapePath;
@@ -1921,7 +1875,7 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
             continue;
         }
 
-        // ── ImageObject or other — just remove ───────────────────────────────
+        // ImageObject or other — just remove
         m_canvas->removeObject(display);
         anyChange = true;
     }
@@ -1936,7 +1890,6 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
 void MainWindow::onLassoCopy(const QPolygonF &poly)
 {
     // Render the full canvas to an image, then mask to the lasso polygon.
-    // The resulting image is placed on the clipboard as a standard image
     // so it can be pasted anywhere (other apps, or back into AkisVG via Import Image).
     QRectF sceneR(0, 0, m_project->width(), m_project->height());
 
@@ -1969,9 +1922,6 @@ void MainWindow::onLassoCopy(const QPolygonF &poly)
 
 void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
 {
-    // ── Pull: split geometry along lasso boundary, select the inside pieces,
-    //    then switch to Select tool so the user can drag them away.
-    //
     //    This uses the same boolean-op split logic as onLassoCut, but instead
     //    of discarding the pieces it hands them to SelectTool for dragging.
 
@@ -2000,9 +1950,9 @@ void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
         VectorObject *src = m_canvas->sourceObject(display);
         if (!src) src = display;
 
-        // ── PathObject ───────────────────────────────────────────────────────
+        // PathObject
         if (auto *path = dynamic_cast<PathObject*>(src)) {
-            // FIX #10: Guard against segfault on pressure-data-heavy paths
+            // Guard against segfault on pressure-data-heavy paths
             QPainterPath pp = safePath(path->path());
             QPointF offset  = src->pos();
             QPainterPath lassoLocal = lassoPath.translated(-offset);
@@ -2042,7 +1992,7 @@ void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
             continue;
         }
 
-        // ── ShapeObject ──────────────────────────────────────────────────────
+        // ShapeObject
         if (auto *shape = dynamic_cast<ShapeObject*>(src)) {
             QPointF offset = src->pos();
             QPainterPath shapePath;
@@ -2128,7 +2078,7 @@ void MainWindow::provideWandSnapshot(MagicWandTool *wand)
     wand->setCanvasSnapshot(snapshot, sceneR.topLeft());
 }
 
-// ── #24 Recent files ─────────────────────────────────────────────────────────
+// Recent files
 void MainWindow::addToRecentFiles(const QString &path)
 {
     QSettings s("AkisVG", "AkisVG");
