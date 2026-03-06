@@ -31,8 +31,12 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     // Ensure antialiasing survives zoom transformations.
     // Qt can drop render hints during scale operations; re-assert here.
     setOptimizationFlag(QGraphicsView::DontAdjustForAntialiasing, false);
-    setOptimizationFlag(QGraphicsView::DontSavePainterState, false);
-    setViewportUpdateMode(QGraphicsView::SmartViewportUpdate);
+    // DontSavePainterState: skip redundant save/restore around each item paint.
+    // Safe because our items don't rely on inherited painter state.
+    setOptimizationFlag(QGraphicsView::DontSavePainterState, true);
+    // MinimalViewportUpdate: only repaint the exact dirty region, not the full
+    // viewport. With 200+ heavy paths this makes a dramatic difference vs Smart.
+    setViewportUpdateMode(QGraphicsView::MinimalViewportUpdate);
     setCacheMode(QGraphicsView::CacheBackground);
     setDragMode(QGraphicsView::NoDrag);
 
