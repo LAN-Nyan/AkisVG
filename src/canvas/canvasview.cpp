@@ -25,22 +25,16 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
     , m_currentZoom(1.0)
     , m_antTimer(nullptr)
 {
+    // Set render arguments 
     setRenderHints(QPainter::Antialiasing |
                    QPainter::SmoothPixmapTransform |
                    QPainter::TextAntialiasing);
-    // Ensure antialiasing survives zoom transformations.
-    // Qt can drop render hints during scale operations; re-assert here.
     setOptimizationFlag(QGraphicsView::DontAdjustForAntialiasing, false);
-    // DontSavePainterState: skip redundant save/restore around each item paint.
-    // Safe because our items don't rely on inherited painter state.
     setOptimizationFlag(QGraphicsView::DontSavePainterState, true);
-    // MinimalViewportUpdate: only repaint the exact dirty region, not the full
-    // viewport. With 200+ heavy paths this makes a dramatic difference vs Smart.
     setViewportUpdateMode(QGraphicsView::MinimalViewportUpdate);
     setCacheMode(QGraphicsView::CacheBackground);
     setDragMode(QGraphicsView::NoDrag);
 
-    // Marching-ants animation: repaint the foreground at ~30fps while a
     // closed lasso selection is visible.
     m_antTimer = new QTimer(this);
     m_antTimer->setInterval(33); // ~30fps
@@ -73,8 +67,7 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
         centerOn(canvas->sceneRect().center());
 }
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
+// helpers
 void CanvasView::startAntTimer()
 {
     if (m_antTimer && !m_antTimer->isActive())
@@ -114,38 +107,36 @@ QVector<TransformableImageObject*> CanvasView::currentFrameImages()
 
 void CanvasView::setSelectedImage(TransformableImageObject *img)
 {
-    // 1. If it's already selected, do nothing
+    // If it's already selected, do nothing
     if (m_currentZoom && m_selectedImage == img)
         return;
 
-    // 2. Deselect the old one
+    // Deselect the old one
     if (m_selectedImage)
         m_selectedImage->setSelected(false);
 
-    // 3. Assign the new one
+    // Assign the new one
     m_selectedImage = img;
 
-    // 4. Select the new one if it exists
+    // Select the new one if it exists
     if (m_selectedImage)
         m_selectedImage->setSelected(true);
 
-    // 5. Redraw
+    // Redraw
     viewport()->update();
 }
 
 void CanvasView::syncSelectedImage()
 {
-    // After refreshFrame(), all display clones are new objects.
-    // The old m_selectedImage pointer is now dangling (the item was deleted).
-    // Check if it's still in a scene; if not, clear the pointer so we don't crash.
+    //Safety Check to avoid Crash!
     if (m_selectedImage && !m_selectedImage->scene()) {
         m_selectedImage = nullptr;
     }
     viewport()->update();
 }
-// g
+// Good god!
 
-// ─── event filter ─────────────────────────────────────────────────────────────
+// event filter
 
 bool CanvasView::eventFilter(QObject *obj, QEvent *event)
 {
@@ -165,7 +156,7 @@ bool CanvasView::eventFilter(QObject *obj, QEvent *event)
     return QGraphicsView::eventFilter(obj, event);
 }
 
-// ─── drawing ──────────────────────────────────────────────────────────────────
+// drawing 
 
 void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
 {
@@ -178,7 +169,7 @@ void CanvasView::drawBackground(QPainter *painter, const QRectF &rect)
 
 void CanvasView::drawForeground(QPainter *painter, const QRectF & /*rect*/)
 {
-    // FIX #19: Draw transform handles ONLY when Select tool is active
+    // Draw transform handles ONLY when Select tool is active
     if (m_selectedImage) {
         bool isSelectTool = false;
         if (auto *canvas = qobject_cast<VectorCanvas*>(scene()))
@@ -196,8 +187,7 @@ void CanvasView::drawForeground(QPainter *painter, const QRectF & /*rect*/)
     }
 }
 
-// ─── zoom ─────────────────────────────────────────────────────────────────────
-
+// zoom 
 void CanvasView::zoomIn()    { setZoom(m_currentZoom * 1.2); }
 void CanvasView::zoomOut()   { setZoom(m_currentZoom / 1.2); }
 void CanvasView::resetZoom() { setZoom(1.0); }
@@ -242,8 +232,7 @@ void CanvasView::wheelEvent(QWheelEvent *event)
     }
 }
 
-// ─── key events ───────────────────────────────────────────────────────────────
-
+// key events
 void CanvasView::keyPressEvent(QKeyEvent *event)
 {
     if (m_splineOverlay && m_splineOverlay->isVisible()) {
@@ -298,17 +287,14 @@ void CanvasView::keyReleaseEvent(QKeyEvent *event)
     }
 }
 
-// ─── tablet events ────────────────────────────────────────────────────────────
-
+// tablet events
 void CanvasView::tabletEvent(QTabletEvent *event)
 {
-    // Store pressure so mouseMoveEvent (which fires right after) can use it.
-    // Qt routes tablet stylus events here first, then generates synthetic mouse
     // events — so this is always called before the corresponding mouse handler.
     m_tabletPressure = qBound(0.05, event->pressure(), 1.0);
     m_tabletActive   = (event->type() != QEvent::TabletRelease);
 
-    // Notify the active tool with the pressure value
+    // Notify the active tool of the pressure value
     if (auto *canvas = qobject_cast<VectorCanvas*>(scene())) {
         if (auto *tool = canvas->currentTool()) {
             QPointF scenePos = mapToScene(event->position().toPoint());
@@ -322,7 +308,7 @@ void CanvasView::tabletEvent(QTabletEvent *event)
     event->accept();
 }
 
-// ─── mouse events ─────────────────────────────────────────────────────────────
+// mouse events 
 
 void CanvasView::mousePressEvent(QMouseEvent *event)
 {
@@ -340,8 +326,7 @@ void CanvasView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    // ── Image transform hit test (Select tool only) ─────────────────────────
-    // Images can only be moved/resized when the Select tool is active.
+    // Image transform hit test (Select tool only)
     bool isSelectTool = false;
     if (auto *canvas = qobject_cast<VectorCanvas*>(scene()))
         if (auto *tool = canvas->currentTool())
