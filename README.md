@@ -17,7 +17,7 @@ Hey there! I know you’re looking for something that’s lightweight, packed wi
 
 # What’s Next?
 
-working hard to release v0.5 by March 31st, 2026—so stay tuned! 0.4.5 Coming March 6, 2026!
+working hard to release v0.5 by March 31st, 2026—so stay tuned!
 
 # 0.5 Features Coming
 - Add Proper Startup Menu (Fix the existing one, which doesn't show up)
