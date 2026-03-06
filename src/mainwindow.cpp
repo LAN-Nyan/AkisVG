@@ -678,7 +678,7 @@ void MainWindow::createToolBars()
     m_mainToolBar->addSeparator();
 
     // Settings popup button
-    QAction *settingsAct = m_mainToolBar->addAction(getInvertedIcon(":/src/tools/assets/Tooling/Settings.svg"), "Settings");
+    QAction *settingsAct = m_mainToolBar->addAction(getInvertedIcon(":/icons/settings.svg"), "Settings");
     settingsAct->setToolTip("Project Settings (canvas size, FPS, onion skin)");
     connect(settingsAct, &QAction::triggered, this, [this]() {
         // Guard: if m_projectSettings not yet created, skip
