@@ -19,9 +19,9 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     app.setOrganizationName("AkisVG");
-    app.setOrganizationDomain("akisvg by LAN-Nyan");
+    app.setOrganizationDomain("Akis - Lightweight Creative tools, by LAN-Nyan");
     app.setApplicationName("AkisVG");
-    app.setApplicationVersion("1.0.0");
+    app.setApplicationVersion("0.5.0");
 
     // Apply Fusion style on all platforms — this ensures consistent widget
     app.setStyle(QStyleFactory::create("Fusion"));
