@@ -5,10 +5,14 @@
         <file alias="eraser.svg">assets/Eraser.svg</file>
         <file alias="fill.svg">assets/Fill.svg</file>
         <file alias="eyedropper.svg">assets/Eyedropper.svg</file>
+        <file alias="zoomin.svg">assets/ZoomIn.svg</file>
+        <file alias="zoomout.svg">assets/ZoomOut.svg</file>
+        <file alias="zoomreset.svg">assets/ZoomReset.svg</file>
 
         <file alias="rectangle.svg">assets/Square.svg</file>
         <file alias="ellipse.svg">assets/Circle.svg</file>
         <file alias="line.svg">assets/Line.svg</file>
+        <file alias="settings.svg">assets/Settings.svg</file>
 
         <file alias="addframe.svg">assets/AddFrame.svg</file>
         <file alias="removeframe.svg">assets/RemoveFrame.svg</file>
