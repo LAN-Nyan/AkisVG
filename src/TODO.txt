@@ -1,25 +1,5 @@
 TODO:
-1. Replace folder icon on main menu for svg
-2. Give the app a logo to git rid of the current default wayland logo
-3. Fix windows UI Scaling Issue... if someone has there UI scale at 150% (on a drawing tablet) then all the UI looks fucking massiv' so i should make my software componsate by having UI scale in settings. and by default detecting the windows scale and scaling back,
-4. When drawing Over an Image or filled object you cant see the line as you are drawing! this is a issue because your drawing blind.
-5. Lasso tool - the lasso tool cuts geometry but moving the geometry with select tool happens at like 3 FPS, it should constantly show you where it is.
-6. Replace UniCode around UI for SCG icons
-7. Fix dysync issue with Colorpicker. the Hue ring is currently offset from what the Inner triangle displays! it looks wierd.
-8. Allow for color palllet import in Colorpicker, as well as saving color pallets.
 9. At brush (better) textures
-10. Optimize lasso to handle images, or extremely compelx geometry
-11.Make Volume control work!
-12. Make it so when drawing the position of you mouse is tracked every 10ms and then a line is drawn beten it an the previous point (Or path smoothing)
-13. when draging objects with select tool Ensure that you can see where it is being dragged (force it to update)
-14. Fix the lack of audio settings
 15. Fix the Advanced mode for interpolation settings
-16. Fix Blend Tool: Implement a Pixel Buffer or Texture Sampling. Instead of just placing new color on top, the code needs to look at the color currently at Coordinate X, Y, mix it with the brush color, and redraw the result.
-17. Fix liquify tool, chages dont stick (should work like smudge tool)
-18. Fix shape tool, (you cant set the color of the lines, if you set a color in color picker the shape and the line surounding it are the same color, they should be seperate)
-19. Fix Line tool Arrow, doesnt work, doted lines dont work.
 20. Make font selection for text tool a "Uplaod your font" sorta smoothing
 21. Make sure preferences carry across closing and opening (theme should be saved, as well as other settings/preferences (e.g. font, sf2, etc.)
-
-You will find any releavant SVG files in SRC/TOOLS/ASSETS
-If you find any like play button or add layer use them. 
