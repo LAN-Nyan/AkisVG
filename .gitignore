@@ -1,0 +1,15 @@
+# Build artifacts
+Build/
+build/
+*.o
+*.a
+*.so
+AkisVG
+
+# IDE / Editor folders
+.qtc_clangd/
+.qtcreator/
+*.user
+
+# System files
+.DS_Storey
