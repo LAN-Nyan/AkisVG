@@ -13,3 +13,5 @@ AkisVG
 
 # System files
 .DS_Storey
+Build/
+.qtc_clangd/
