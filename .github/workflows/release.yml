@@ -1,0 +1,131 @@
+name: Build and Release v0.3 RC1
+
+#on:
+ # push:
+  #  branches: [ main ]
+#  pull_request:
+#    branches: [ main ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04  # Using 22.04 is often more stable for Qt 6.5 ICU requirements
+            artifact_name: AkisVG-Linux
+            asset_name: AkisVG-Linux.tar.gz
+          - os: windows-latest
+            artifact_name: AkisVG-Windows
+            asset_name: AkisVG-Windows.zip
+          - os: macos-latest
+            artifact_name: AkisVG-Mac
+            asset_name: AkisVG-Mac.dmg
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || '' }}
+          modules: 'qtmultimedia' # Removed qtsvg from here
+          # Keep archives as is, as qtsvg is often handled as a base archive
+          archives: 'qtbase qtsvg'
+
+      - name: Set up MSVC (Windows Only)
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
+            sudo apt-get update
+            # Added libicu-dev and common XCB dependencies
+            sudo apt-get install -y build-essential cmake ninja-build libgl1-mesa-dev libpulse-dev \
+              libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+              libxcb-render-util0 libxcb-shape0 libxkbcommon-x11-0 libicu-dev
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            brew install ninja
+          else
+            choco install ninja
+          fi
+      - name: Configure and Build
+        shell: bash
+        # Setting 'env' here is more reliable than 'export' inside 'run'
+        env:
+          LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib:${{ env.LD_LIBRARY_PATH }}
+        run: |
+          # 1. Configure
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+          
+          # 2. Build
+          cmake --build build
+      - name: Package Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cd build
+          & "$env:QT_ROOT_DIR/bin/windeployqt.exe" --release AkisVG.exe
+          Compress-Archive -Path * -DestinationPath ../AkisVG-Windows.zip
+
+      - name: Package Linux
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          cd build
+          tar -czvf ../${{ matrix.asset_name }} .
+
+      - name: Package macOS
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          cd build
+          # Use find to make sure we locate the .app even if CMake moved it
+          APP_PATH=$(find . -name "AkisVG.app" -type d -maxdepth 2)
+          if [ -z "$APP_PATH" ]; then echo "App bundle not found"; exit 1; fi
+          
+          $QT_ROOT_DIR/bin/macdeployqt "$APP_PATH" -dmg
+          # macdeployqt creates the DMG in the same folder as the app
+          DMG_PATH=$(find . -name "*.dmg")
+          mv "$DMG_PATH" ../${{ matrix.asset_name }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          tag_name: v0.3.RC1-${{ github.run_number }}
+          name: Release v0.3 RC1 (Build ${{ github.run_number }})
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
