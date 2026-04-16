@@ -1,0 +1,16 @@
+TODO:
+10. Optimize lasso to handle images, or extremely complex geometry (ADD BACK THE LASSO TOOL, AS WELL AS MAJICTOOL YOU SOMEHOW REMOVED THEM FROM THE TOOBAR) "zsh: segmentation fault (core dumped)  ./AkisVG"
+15. Fix the Advanced mode for interpolation settings (Crashes when you click back onto canvas after chnage frame numbers)
+29. Fix grouping, when trying to use the bounding box selection (select tool) there is an issue where the context menu is Broken, so you cant use the right click menu to group.
+Better description for Bounding Box, is when you bound somthing with it and right-click you cant interact with anything in the menu.
+
+
+
+
+
+(FOR LATER NOT NOW):
+30. Fix path smoothing, currently when you zoom out, the drawing become more "Stair Steped" if you zoom in it becomes more detailed, this MAY BE (Not is) a sampling issue, this is a critical issue and a major one at that, the Path smoothing should ensure that NO stair stepping effect happens.
+9. At brush (better) textures (FIX NOW)
+10. Select things like frames that have been extened being removed after saving
+16. Allow Color Picker to pick colors from images (Make it take a 1px screenshot and then paste the hexcode in, always black fsr)
+27. When Pressure sensitivity is enabled allow Raster Graphics to be drawn (But store the points, think of it like Reproducable Scaleable Rastor Graphics)

@@ -1,0 +1,9 @@
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/AkisVG.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/edit_cache.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/rebuild_cache.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/list_install_components.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/install.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/install/local.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/install/strip.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/AkisVG_autogen_timestamp_deps.dir
+/home/garrett/Documents/AkisVG-Experimental/Build/CMakeFiles/AkisVG_autogen.dir

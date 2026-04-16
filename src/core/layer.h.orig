@@ -1,0 +1,94 @@
+#ifndef LAYER_H
+#define LAYER_H
+
+#include <QObject>
+#include <QString>
+#include <QColor>
+#include <QMap>
+#include <QList>
+
+class Frame;
+class VectorObject;
+
+enum class LayerType {
+    Art,        // Normal drawing layer
+    Background, // Static background, typically locked
+    Audio,      // Audio waveform layer
+    Reference   // Reference layer for tracing, non-exportable
+};
+
+// NEW: Structure to track frame extensions/holds
+struct FrameExtension {
+    int keyFrame;       // The frame that contains the actual content
+    int extendToFrame;  // The last frame this content should be held to
+
+    FrameExtension() : keyFrame(-1), extendToFrame(-1) {}
+    FrameExtension(int key, int extend) : keyFrame(key), extendToFrame(extend) {}
+};
+
+class Layer : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit Layer(const QString &name, QObject *parent = nullptr);
+    ~Layer();
+
+    // Properties
+    QString name() const { return m_name; }
+    void setName(const QString &name);
+
+    bool isVisible() const { return m_visible; }
+    void setVisible(bool visible);
+
+    bool isLocked() const { return m_locked; }
+    void setLocked(bool locked);
+
+    QColor color() const { return m_color; }
+    void setColor(const QColor &color);
+
+    qreal opacity() const { return m_opacity; }
+    void setOpacity(qreal opacity);
+
+    // Layer type
+    LayerType layerType() const { return m_layerType; }
+    void setLayerType(LayerType type);
+    QString layerTypeString() const;
+
+    // Frame data management
+    QList<VectorObject*> objectsAtFrame(int frameNumber) const;
+    void addObjectToFrame(int frameNumber, VectorObject *obj);
+    void removeObjectFromFrame(int frameNumber, VectorObject *obj);
+    void clearFrame(int frameNumber);
+    bool hasContentAtFrame(int frameNumber) const;
+
+    // NEW: Frame extension/hold functionality
+    void extendFrameTo(int fromFrame, int toFrame);
+    void clearFrameExtension(int frame);
+    bool isFrameExtended(int frameNumber) const;
+    int getKeyFrameFor(int frameNumber) const;  // Returns the key frame that this frame extends from
+    int getExtensionEnd(int frameNumber) const; // Returns the last frame of the extension
+    bool isKeyFrame(int frameNumber) const;     // True if this frame has actual content (not extended)
+
+signals:
+    void modified();
+    void visibilityChanged(bool visible);
+    void lockedChanged(bool locked);
+    void typeChanged(LayerType type);
+
+private:
+    QString m_name;
+    bool m_visible;
+    bool m_locked;
+    QColor m_color;
+    qreal m_opacity;
+    LayerType m_layerType;
+
+    // Frame data: frameNumber -> list of objects
+    QMap<int, QList<VectorObject*>> m_frames;
+
+    // NEW: Frame extensions - maps a frame number to its extension info
+    QMap<int, FrameExtension> m_frameExtensions;
+};
+
+#endif // LAYER_H

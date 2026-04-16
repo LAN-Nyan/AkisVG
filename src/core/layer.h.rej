@@ -1,0 +1,27 @@
+--- src/core/layer.h
++++ src/core/layer.h
+@@ -63,6 +73,14 @@ public:
+     void clearFrame(int frameNumber);
+     bool hasContentAtFrame(int frameNumber) const;
+ 
++    // Frame extension/hold functionality
++    void extendFrameTo(int fromFrame, int toFrame);
++    void clearFrameExtension(int frame);
++    bool isFrameExtended(int frameNumber) const;
++    int getKeyFrameFor(int frameNumber) const;
++    int getExtensionEnd(int frameNumber) const;
++    bool isKeyFrame(int frameNumber) const;
++
+     // For tools that still need Frame* interface
+     Frame* frameAt(int index);
+     Frame* frameIfExists(int index) const;
+@@ -88,6 +106,9 @@ private:
+ 
+     // COMPATIBILITY: Cache Frame objects for tools that need them
+     mutable QMap<int, Frame*> m_framCache;
++    
++    // Frame extensions mapping
++    QMap<int, FrameExtension> m_frameExtensions;
+ };
+ 
+ #endif // LAYER_H
