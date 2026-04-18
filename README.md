@@ -17,25 +17,44 @@ Hey there! I know you’re looking for something that’s lightweight, packed wi
 
 # What’s Next?
 
-working hard to release v0.5 by March 31st, 2026—so stay tuned!
+working hard to release v0.6 by May 31st, 2026—so stay tuned!
+# Version 0.6 Development Roadmap
 
-# 0.5 Features Coming
-- Add Proper Startup Menu (Fix the existing one, which doesn't show up)
-- Increase detail on brush types
-- Force Update for the colour picker to show the colour the current tool is (No more Set Pencil to red, click on brush, Colour picker says it's red, but the brush is actually black)
-- Fix the Canvas random Offset when changing the Resolution, turning on onion skinning, etc.
-- Remove the text part of the toolbar buttons (No more: Icon, + Name! Just Icon)
-- Remove settings from the panels menu and give it its own pop-up in the primary toolbar
-- Fix the fact that when changing the shape settings, there is no difference between Rounded Vs. Sharp corners, and allow the Line thickness to be changed, and the colour of the fill (which is currently always transparent)  and side lines 
-- Add a Startup loading screen for the software (Progress Bar if more than 0.5 seconds have passed since it started)
-- Add Interpolation: Create an interpolation layer, then select an area or object, right-click the drop-down menu, click interpolate, and then a spline should appear where you can click to add points above the canvas. In the window title, it should say “Interpolating.” You can right-click on the points to set their frame, and in the timeline, a purple section with white dots should appear on any keyframe you set while interpolating. You can move the dots to the positions you want the selected object group to be, then set a BE HERE BY frame. When the purple line appears, the program should generate the in-between frames. This will be implemented in phases. Phase one: Fix the select tool to allow grouping, create the InterpolationObject Class, and add the Interpolation layer type. Phase two: Add right-click menu and interpolation mode, as well as the visual spline. Phase three: Finish the core of the interpolation, make the actual interpolation part functional.
-- Ensure frames CANNOT be drawn in Audio Layers!!!!
-- Add Proper Pressure sensitivity and path smoothing
-- Clean UI of duplicate functions.
-- Ensure everything that is drawn on the canvas is saved as an Object class that can be grouped and saved as a single object for interpolation, or individual objects can be selected for interpolation. Object groups should show up in the asset panel and be copyable anywhere on any frame in the project.
-- Make sure UI scaling is consistent across all operating systems, and the colour wheel Triangle and ring are aligned properly.
-- Make the fill tool work 100% of the time.
-- Add tools like (Zoom tool, Hand Tool, and Magic wand tool)
+Building on the successful implementation of the 0.5 feature set, Version 0.6 focuses on professional-grade stability, workflow efficiency, and advanced animation control.
+## Completed in 0.6 (Current Progress)
+
+    -Stability: Fixed Context Menu crash.
+
+    -Optimization: File size decreased by 10X through improved object serialization.
+
+    -Timeline: Added ability to drag-and-drop frames to other positions in the timeline.
+
+# Planned Features for 0.6
+##1. Advanced Animation & Interpolation (Phase 4)
+
+While 0.5 established the Interpolation Object and Spline, 0.6 should refine the "Soul" of the movement.
+
+   - Ease In/Out Profiles: Add preset easing curves (Quadratic, Cubic, Quartic) to the interpolation spline so movement isn't just linear.
+
+  -  Audio Waveform Visualization: Display the audio peaks within the Audio Layer. This allows animators to sync "mouth hits" or "impact frames" accurately to the sound.
+
+   - Ghosting / Onion Skinning +: Allow users to customize the "Before" (Red) and "After" (Green) opacity and frame count to better track interpolated paths.
+
+##2. The "Symbol" System (Asset Management)
+
+Leverage the new Object class architecture to create a reusable workflow.
+
+   - Master Symbols: Allow a grouped object to be saved as a "Symbol." Editing the Master Symbol updates every instance of that object across the entire timeline.
+
+  -  Asset Library Palette: A dedicated panel to store saved Objects/Groups for quick drag-and-drop access into any project.
+
+##3. Professional Rendering & Workflow
+
+   - Layer Clipping Masks: Enable a layer to clip its visibility to the layer directly beneath it (essential for shading and highlights without drawing outside the lines).
+
+   - Customizable Hotkeys: Since text was removed from the toolbar, allow users to define their own shortcuts for a faster "heads-down" drawing experience.
+
+   - Auto-Save / Crash Recovery: Implement a background .tmp save system that triggers every 5–10 minutes to protect against data loss during complex interpolation calculations.
 
 
 
