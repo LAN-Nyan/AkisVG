@@ -257,6 +257,39 @@ void Layer::duplicateFrame(int srcFrame, int destFrame)
     emit modified();
 }
 
+void Layer::swapFrameCells(int a, int b)
+{
+    if (a == b) return;
+
+    QList<VectorObject*> listA = m_frames.contains(a) ? m_frames.take(a) : QList<VectorObject*>();
+    QList<VectorObject*> listB = m_frames.contains(b) ? m_frames.take(b) : QList<VectorObject*>();
+    if (!listB.isEmpty()) m_frames.insert(a, listB);
+    if (!listA.isEmpty()) m_frames.insert(b, listA);
+
+    QColor ca = m_frameColors.value(a);
+    QColor cb = m_frameColors.value(b);
+    m_frameColors.remove(a);
+    m_frameColors.remove(b);
+    if (cb.isValid()) m_frameColors.insert(a, cb);
+    if (ca.isValid()) m_frameColors.insert(b, ca);
+
+    QString la = m_frameLabels.value(a);
+    QString lb = m_frameLabels.value(b);
+    m_frameLabels.remove(a);
+    m_frameLabels.remove(b);
+    if (!lb.isEmpty()) m_frameLabels.insert(a, lb);
+    if (!la.isEmpty()) m_frameLabels.insert(b, la);
+
+    const bool ma = m_motionPathFrames.contains(a);
+    const bool mb = m_motionPathFrames.contains(b);
+    m_motionPathFrames.remove(a);
+    m_motionPathFrames.remove(b);
+    if (ma) m_motionPathFrames.insert(b);
+    if (mb) m_motionPathFrames.insert(a);
+
+    emit modified();
+}
+
 void Layer::clearFrame(int frameNumber){
     if (m_frames.contains(frameNumber)) {
         qDeleteAll(m_frames[frameNumber]);

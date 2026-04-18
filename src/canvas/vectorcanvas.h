@@ -109,6 +109,7 @@ private:
     Tool *m_currentTool;
     bool m_onionSkinEnabled;
     bool m_isDrawing;
+    bool m_isCancelingDrawing = false;  // Track if we're in the process of canceling a drawing
     QSet<Layer*> m_connectedLayers;
     bool m_isInterpolating = false;
     bool m_batchUpdating   = false;

@@ -124,6 +124,8 @@ public:
     QMap<int, FrameInterpolation> allInterpolationRanges() const { return m_interpolations; }
     void clearFrame(int frameNumber);
     void duplicateFrame(int srcFrame, int destFrame);
+    /** Swap all content and per-frame metadata between two frame indices (timeline drag). */
+    void swapFrameCells(int frameA, int frameB);
     bool hasContentAtFrame(int frameNumber) const;
     // Returns all frame numbers that have direct content (for dynamic frame sizing)
     QList<int> allFrameNumbers() const { return m_frames.keys(); }

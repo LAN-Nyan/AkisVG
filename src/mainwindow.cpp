@@ -7,6 +7,7 @@
 #include "canvas/canvasview.h"
 #include "canvas/objects/objectgroup.h"
 #include "canvas/splineoverlay.h"
+#include "core/commands.h"
 #include "panels/toolbox.h"
 #include "panels/layerpanel.h"
 #include "panels/colorpicker.h"
@@ -23,6 +24,7 @@
 #include "tools/eyedroppertool.h"
 #include "utils/thememanager.h"
 // Includes
+#include <algorithm>
 #include <QMenuBar>
 #include <QToolBar>
 #include <QStatusBar>
@@ -1126,7 +1128,7 @@ void MainWindow::openProjectFile(const QString &path)
 void MainWindow::about()
 {
     QMessageBox::about(this, "About AkisVG",
-                       "<h2>AkisVG 0.4 <span style='color: #2a82da;'>Experimental</span></h2>"
+                       "<h2>AkisVG 0.6 <span style='color: #2a82da;'>Experimental</span></h2>"
                        "<p><i>A high-performance, lightweight vector animation suite built for the modern creator.</i></p>"
                        "<hr noshade size='1' style='background-color: #444;'>"
 
@@ -1139,6 +1141,7 @@ void MainWindow::about()
                        "<li><b>Pro Export Engine:</b> High-quality video rendering via <b>FFmpeg</b> (MP4/MKV) and optimized GIF generation.</li>"
                        "<li><b>Multimedia Integration:</b> Full support for synchronized audio layers and image asset imports.</li>"
                        "<li><b>Infinite Canvas:</b> GPU-accelerated 2D engine with real-time onion skinning and zoom.</li>"
+                       "<li><b>Improved Stability:</b> Fixed crashes during drawing cancellation and interpolation overlay rendering.</li>"
                        "</ul>"
 
                        "<p style='color: #a0a0a0;'><small><b>System Info:</b> Running on Qt " QT_VERSION_STR " with FFmpeg Integration.</small></p>"
@@ -1572,10 +1575,12 @@ void MainWindow::onSplineCommitted(const QList<QPointF> &nodes)
         return;
     }
 
+    // Nodes are already in scene coordinates (SplineOverlay stores scene space).
+    // Do NOT map through the view again — that was scaling motion by zoom incorrectly.
     QPainterPath scenePath;
-    scenePath.moveTo(m_canvasView->mapToScene(nodes.first().toPoint()));
+    scenePath.moveTo(nodes.first());
     for (int i = 1; i < nodes.size(); ++i)
-        scenePath.lineTo(m_canvasView->mapToScene(nodes[i].toPoint()));
+        scenePath.lineTo(nodes[i]);
 
     int startFrame = m_project->currentFrame();
     int duration   = m_interpTotalFrames;
@@ -1594,39 +1599,44 @@ void MainWindow::onSplineCommitted(const QList<QPointF> &nodes)
 
     QPointF pathStart = scenePath.pointAtPercent(0.0);
 
-    // Build the list of (targetFrame, t) pairs to generate
-    // Advanced mode: use per-node times to map each path node to a specific frame,
-    //   then interpolate between nodes for in-between frames.
-    // Basic mode: evenly distribute duration frames along the path.
-    QList<QPair<int,qreal>> frames; // {targetFrame, t along scenePath}
+    // Map absolute timeline frame -> path parameter t in [0,1]
+    QMap<int, qreal> frameToT;
 
-    if (m_interpAdvanced && m_interpKeyframeTimes.size() >= 2
-        && m_interpKeyframeTimes.size() == nodes.size()) {
-        // Advanced: for each segment between consecutive nodes, generate frames
-        int totalNodes = nodes.size();
-        for (int seg = 0; seg < totalNodes - 1; ++seg) {
-            int frameA = m_interpKeyframeTimes[seg];
-            int frameB = m_interpKeyframeTimes[seg + 1];
-            qreal tA = static_cast<qreal>(seg)     / (totalNodes - 1);
-            qreal tB = static_cast<qreal>(seg + 1) / (totalNodes - 1);
-            int segFrames = qAbs(frameB - frameA);
-            for (int f = (seg == 0 ? 1 : 0); f <= segFrames; ++f) {
-                qreal segT = static_cast<qreal>(f) / segFrames;
-                qreal t = tA + segT * (tB - tA);
-                frames.append({startFrame + frameA + f, t});
+    if (m_interpAdvanced && m_interpKeyframeTimes.size() == nodes.size() && nodes.size() >= 2) {
+        const QList<int> &kt = m_interpKeyframeTimes;
+        const int n = nodes.size();
+        for (int seg = 0; seg < n - 1; ++seg) {
+            int fa = kt[seg];
+            int fb = kt[seg + 1];
+            qreal tA = static_cast<qreal>(seg) / (n - 1);
+            qreal tB = static_cast<qreal>(seg + 1) / (n - 1);
+            int lo = qMin(fa, fb);
+            int hi = qMax(fa, fb);
+            if (hi == lo) {
+                frameToT[startFrame + lo] = tA;
+                continue;
+            }
+            for (int off = lo; off <= hi; ++off) {
+                qreal u = static_cast<qreal>(off - lo) / static_cast<qreal>(hi - lo);
+                qreal t = tA + u * (tB - tA);
+                frameToT[startFrame + off] = t;
             }
         }
-        duration = frames.isEmpty() ? 0 : (frames.last().first - startFrame);
+        duration = frameToT.isEmpty() ? 0 : (frameToT.lastKey() - startFrame);
     } else {
-        // Basic: evenly space `duration` frames
+        // Basic: evenly space `duration` steps along the path (offsets 1..duration)
         for (int i = 1; i <= duration; ++i) {
             qreal t = static_cast<qreal>(i) / duration;
-            frames.append({startFrame + i, t});
+            frameToT[startFrame + i] = t;
         }
     }
 
-    for (auto &[targetFrame, t] : frames) {
-        QPointF pathPoint = scenePath.pointAtPercent(t);
+    QList<int> sortedFrames = frameToT.keys();
+    std::sort(sortedFrames.begin(), sortedFrames.end());
+
+    for (int targetFrame : sortedFrames) {
+        qreal t = frameToT[targetFrame];
+        QPointF pathPoint = scenePath.pointAtPercent(qBound(0.0, t, 1.0));
         QPointF delta = pathPoint - pathStart;
 
         for (int oi = 0; oi < targets.size(); ++oi) {
@@ -1779,7 +1789,7 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
         obj->setObjectOpacity(1.0);
 
         Layer *layer = m_project->currentLayer();
-        layer->addObjectToFrame(m_project->currentFrame(), obj);
+        m_undoStack->push(new AddObjectCommand(obj, layer, m_project->currentFrame()));
         m_canvas->refreshFrame();
         m_isModified = true;
         updateWindowTitle();
@@ -1787,7 +1797,7 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
     }
 
     // Normal lasso mode: fill colour of intersecting objects
-    bool changed = false;
+    bool macro = false;
     for (QGraphicsItem *item : m_canvas->items()) {
         auto *obj = dynamic_cast<VectorObject*>(item);
         if (!obj) continue;
@@ -1799,10 +1809,16 @@ void MainWindow::onLassoFill(const QPolygonF &poly, const QColor &color)
         // Skip children nested inside a group — the group is the unit to fill
         if (src->parentItem() != nullptr) continue;
 
-        src->setFillColor(color);
-        changed = true;
+        if (!macro) {
+            m_undoStack->beginMacro("Lasso Fill");
+            macro = true;
+        }
+        m_undoStack->push(new FillColorCommand(src, color));
     }
-    if (changed) m_canvas->refreshFrame();
+    if (macro) {
+        m_undoStack->endMacro();
+        m_canvas->refreshFrame();
+    }
 }
 
 void MainWindow::onLassoCut(const QPolygonF &poly)
@@ -1826,6 +1842,13 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
     }
 
     bool anyChange = false;
+    bool undoMacro = false;
+    auto ensureCutMacro = [&]() {
+        if (!undoMacro) {
+            m_undoStack->beginMacro("Lasso Cut");
+            undoMacro = true;
+        }
+    };
 
     for (VectorObject *display : displayItems) {
         if (!objectIntersectsPoly(display, poly)) continue;
@@ -1839,6 +1862,7 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
 
         // ObjectGroup — treat as atomic unit: remove entirely
         if (dynamic_cast<ObjectGroup*>(src)) {
+            ensureCutMacro();
             m_canvas->removeObject(display);
             anyChange = true;
             continue;
@@ -1860,15 +1884,16 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
 
             if (!hasInside && !hasOutside) {
                 // Fully inside lasso — remove
+                ensureCutMacro();
                 m_canvas->removeObject(display);
                 anyChange = true;
                 continue;
             }
 
             if (hasInside && hasOutside) {
-                // add a new object for the inside piece
-                path->setPath(outsidePart);
-                path->update();
+                ensureCutMacro();
+                QPainterPath beforePath = path->path();
+                m_undoStack->push(new PathObjectPathCommand(path, beforePath, outsidePart));
 
                 PathObject *insideObj = new PathObject();
                 insideObj->setPath(insidePart);
@@ -1878,11 +1903,12 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
                 insideObj->setStrokeWidth(path->strokeWidth());
                 insideObj->setObjectOpacity(path->objectOpacity());
                 insideObj->setZValue(path->zValue() + 0.001);
-                layer->addObjectToFrame(frame, insideObj);
+                m_undoStack->push(new AddObjectCommand(insideObj, layer, frame));
                 anyChange = true;
 
             } else if (hasInside && !hasOutside) {
                 // Object is entirely inside the lasso — just remove it
+                ensureCutMacro();
                 m_canvas->removeObject(display);
                 anyChange = true;
 
@@ -1911,6 +1937,7 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
             if (!hasInside) continue; // lasso doesn't cover the shape
 
             if (hasInside && hasOutside) {
+                ensureCutMacro();
                 // Create two PathObjects from the split shape
                 PathObject *insideObj = new PathObject();
                 insideObj->setPath(insidePart.translated(-offset));
@@ -1930,13 +1957,13 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
                 outsideObj->setObjectOpacity(shape->objectOpacity());
                 outsideObj->setZValue(shape->zValue());
 
-                // Remove original shape, add both pieces
                 m_canvas->removeObject(display);
-                layer->addObjectToFrame(frame, insideObj);
-                layer->addObjectToFrame(frame, outsideObj);
+                m_undoStack->push(new AddObjectCommand(insideObj, layer, frame));
+                m_undoStack->push(new AddObjectCommand(outsideObj, layer, frame));
                 anyChange = true;
 
             } else if (hasInside && !hasOutside) {
+                ensureCutMacro();
                 m_canvas->removeObject(display);
                 anyChange = true;
             }
@@ -1944,9 +1971,13 @@ void MainWindow::onLassoCut(const QPolygonF &poly)
         }
 
         // ImageObject or other — just remove
+        ensureCutMacro();
         m_canvas->removeObject(display);
         anyChange = true;
     }
+
+    if (undoMacro)
+        m_undoStack->endMacro();
 
     if (anyChange) {
         m_canvas->refreshFrame();

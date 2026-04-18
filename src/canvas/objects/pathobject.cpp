@@ -24,6 +24,8 @@ VectorObject* PathObject::clone() const
     copy->m_dashStyle        = m_dashStyle;
     copy->m_arrowAtEnd       = m_arrowAtEnd;
     copy->m_texture          = m_texture;
+    copy->m_pressureConnectAnchors = m_pressureConnectAnchors;
+    copy->m_pressureConnWidthScale = m_pressureConnWidthScale;
     copy->setStrokeColor(m_strokeColor);
     copy->setFillColor(m_fillColor);
     copy->setStrokeWidth(m_strokeWidth);
@@ -222,9 +224,13 @@ QRectF PathObject::boundingRect() const
         return m_path.boundingRect().adjusted(-m_strokeWidth*2, -m_strokeWidth*2,
                                                m_strokeWidth*2,  m_strokeWidth*2);
     if (!m_pressurePoints.isEmpty()) {
-        const QPointF p = m_pressurePoints.first().pos;
-        const qreal   r = m_strokeWidth;
-        return QRectF(p - QPointF(r,r), QSizeF(r*2, r*2));
+        QRectF br;
+        const qreal pad = m_strokeWidth * m_pressureConnWidthScale * 2;
+        for (const PressurePoint &pp : m_pressurePoints) {
+            QRectF dot(pp.pos, QSizeF(1, 1));
+            br = br.isNull() ? dot : br.united(dot);
+        }
+        return br.adjusted(-pad, -pad, pad, pad);
     }
     return QRectF();
 }
@@ -285,20 +291,40 @@ static inline qreal jit(quint32 seed, qreal scale)
 void PathObject::paintPressureStroke(QPainter *painter, qreal baseWidth,
                                      qreal minFraction, qreal opacityMul) const
 {
-    if (m_smoothedDirty) rebuildSmoothedPressure();
-    const QVector<PressurePoint> &pts = m_smoothedPressure;
-    if (pts.size() < 2) return;
-
     painter->save();
     painter->setOpacity(m_objectOpacity * opacityMul);
     painter->setRenderHint(QPainter::Antialiasing, true);
 
+    const qreal effBase = baseWidth * m_pressureConnWidthScale;
+
+    // Straight segments between recorded anchor centers only (Line-tool style).
+    // Avoids dense Catmull-resampled beads when strokes should read as polylines.
+    if (m_pressureConnectAnchors && m_pressurePoints.size() >= 2) {
+        const QVector<PressurePoint> &pts = m_pressurePoints;
+        for (int i = 0; i < pts.size() - 1; ++i) {
+            qreal p1 = qMax(minFraction, pts[i].pressure);
+            qreal p2 = qMax(minFraction, pts[i + 1].pressure);
+            qreal width = effBase * ((p1 + p2) * 0.5);
+            painter->setPen(QPen(m_strokeColor, width,
+                                 Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            painter->drawLine(pts[i].pos, pts[i + 1].pos);
+        }
+        painter->restore();
+        return;
+    }
+
+    if (m_smoothedDirty) rebuildSmoothedPressure();
+    const QVector<PressurePoint> &pts = m_smoothedPressure;
+    if (pts.size() < 2) {
+        painter->restore();
+        return;
+    }
+
     for (int i = 0; i < pts.size() - 1; ++i) {
         qreal p1 = qMax(minFraction, pts[i].pressure);
         qreal p2 = qMax(minFraction, pts[i+1].pressure);
-        qreal width = baseWidth * ((p1 + p2) * 0.5);
+        qreal width = effBase * ((p1 + p2) * 0.5);
 
-        // RoundCap & RoundJoin create a seamless connection between segments
         painter->setPen(QPen(m_strokeColor, width,
                              Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter->drawLine(pts[i].pos, pts[i+1].pos);

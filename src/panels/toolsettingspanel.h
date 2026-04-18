@@ -66,6 +66,8 @@ private:
     QGroupBox    *m_interpAdvGroup    = nullptr;
     QSpinBox     *m_interpFramesSpin  = nullptr;
     QList<QSpinBox*> m_interpNodeSpins;
+    /** Last emitted per-node frame indices — preserved when node count changes (no forced even spacing). */
+    QList<int>       m_interpSavedKeyframeTimes;
     Layer    *m_audioLayer    = nullptr;
     ToolType  m_lastToolType  = ToolType::None;
     Tool     *m_lastTool      = nullptr;

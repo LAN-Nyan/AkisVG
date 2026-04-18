@@ -63,6 +63,12 @@ public:
     void addPressurePoint(const QPointF &pos, qreal pressure);
     bool hasPressureData() const { return !m_pressurePoints.isEmpty(); }
 
+    /** When true, pressure strokes render straight segments between anchor samples only (Line-tool style). */
+    void setPressureConnectAnchors(bool on) { m_pressureConnectAnchors = on; update(); }
+    bool pressureConnectAnchors() const { return m_pressureConnectAnchors; }
+    void setPressureConnectionWidthScale(qreal s) { m_pressureConnWidthScale = qBound(0.05, s, 10.0); update(); }
+    qreal pressureConnectionWidthScale() const { return m_pressureConnWidthScale; }
+
 private:
     void rebuildSmoothPath();
     void drawArrowHead(QPainter *painter, const QPainterPath &path) const;
@@ -84,6 +90,8 @@ private:
     qreal  m_minPointDistance;
     QVector<QPointF>       m_rawPoints;
     QVector<PressurePoint> m_pressurePoints;
+    bool   m_pressureConnectAnchors = false;
+    qreal  m_pressureConnWidthScale = 1.0;
     PathTexture   m_texture   = PathTexture::Smooth;
     PathDashStyle m_dashStyle = PathDashStyle::Solid;
     bool  m_arrowAtEnd = false;

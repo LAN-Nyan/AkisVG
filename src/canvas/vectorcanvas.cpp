@@ -28,6 +28,7 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
     , m_currentTool(nullptr)
     , m_onionSkinEnabled(true)
     , m_isDrawing(false)
+    , m_isCancelingDrawing(false)
 {
     if (!m_project) return;
 
@@ -87,7 +88,12 @@ void VectorCanvas::cancelLiveDrawing()
     // accumulate points in m_liveDrawingItem. Since no mouseRelease fires for
     // the original left-button drag, m_isDrawing never resets and the partial
     // stroke is never cleaned up — leaving permanent ghost pixels every time.
-    if (!m_isDrawing && !m_liveDrawingItem) return;
+    if (!m_isDrawing && !m_liveDrawingItem) {
+        return;
+    }
+
+    // Set canceling flag to prevent race conditions with mouse release events
+    m_isCancelingDrawing = true;
 
     m_isDrawing = false;
 
@@ -98,10 +104,16 @@ void VectorCanvas::cancelLiveDrawing()
         m_liveDrawingItem = nullptr;
     }
 
-    if (m_currentTool)
+    if (m_currentTool) {
         m_currentTool->cancelDraw();  // reset tool's own m_isDrawing / m_currentPath
+    }
 
     update();
+
+    // Reset canceling flag after a small delay to ensure any pending events are processed
+    QTimer::singleShot(100, this, [this]() {
+        m_isCancelingDrawing = false;
+    });
 }
 
 
@@ -420,24 +432,43 @@ void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
     }
 
     if (event->button() == Qt::LeftButton) {
+        // If we're in the process of canceling a drawing, ignore this event
+        if (m_isCancelingDrawing) {
+            event->accept();
+            return;
+        }
+
+        // If we're not drawing or don't have a live drawing item, just forward to the base class
+        if (!m_isDrawing || !m_liveDrawingItem) {
+            QGraphicsScene::mouseReleaseEvent(event);
+            return;
+        }
+
         // Always forward to tool, not just when m_isDrawing.
         // SelectTool needs release to commit drag-move even when m_isDrawing=false.
-        if (m_currentTool)
+        if (m_currentTool) {
             m_currentTool->mouseReleaseEvent(event, this);
-        m_isDrawing = false;
-        // Reset the live item's z-value before refreshFrame so that once committed,
-        // it stacks normally with all other objects (z=0 = layer insertion order).
-        if (m_liveDrawingItem)
+        }
+
+        // Check if the live drawing item is still valid before trying to access it
+        if (m_liveDrawingItem && m_liveDrawingItem->scene() == this) {
+            // Reset the live item's z-value before refreshFrame so that once committed,
+            // it stacks normally with all other objects (z=0 = layer insertion order).
             m_liveDrawingItem->setZValue(0);
-        // Call refreshFrame() BEFORE clearing m_liveDrawingItem.
-        // refreshFrame evicts the live item via removeItem() when m_isDrawing is
-        // false and m_liveDrawingItem is non-null. Without this, the item added
-        // directly via addItem() stays in the scene forever (it was never in
-        // m_displayItems so it was never cleaned up), causing every frame to
-        // show the stroke that was drawn on frame 1.
-        refreshFrame();
+            // Call refreshFrame() BEFORE clearing m_liveDrawingItem.
+            // refreshFrame evicts the live item via removeItem() when m_isDrawing is
+            // false and m_liveDrawingItem is non-null. Without this, the item added
+            // directly via addItem() stays in the scene forever (it was never in
+            // m_displayItems so it was never cleaned up), causing every frame to
+            // show the stroke that was drawn on frame 1.
+            refreshFrame();
+        }
+
+        // Clear the live drawing item and reset drawing state
         m_liveDrawingItem = nullptr;
+        m_isDrawing = false;
     }
+
     QGraphicsScene::mouseReleaseEvent(event);
 }
 

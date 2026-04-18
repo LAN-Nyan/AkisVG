@@ -5,6 +5,8 @@
 #include <QString>
 #include <QList>
 #include <memory>
+#include <QUndoStack>
+#include <QSet>
 
 class Layer;
 class Frame;
@@ -16,7 +18,7 @@ class Project : public QObject
 public:
     explicit Project(QObject *parent = nullptr);
     ~Project();
-
+    QUndoStack* undoStack() { return &m_undoStack; }
     // Project properties
     void createNew(int width, int height, int fps);
     QString name() const { return m_name; }
@@ -30,6 +32,7 @@ public:
     void setHeight(int height);
     void setFps(int fps);
 
+    void pushUndoState(const QString &description);
     // Drawing settings
     bool smoothPathsEnabled() const { return m_smoothPathsEnabled; }
     void setSmoothPathsEnabled(bool enabled);
@@ -51,6 +54,8 @@ public:
     // Frame management
     int currentFrame() const { return m_currentFrame; }
     void setCurrentFrame(int frame);
+    /** Swap frame column content across layers (timeline drag). */
+    void swapFrameCells(int frameA, int frameB);
     // The "last used" frame across all layers
     int highestUsedFrame() const;
     // totalFrames = highestUsedFrame() + buffer (10 frames)
@@ -70,6 +75,8 @@ public:
     void moveLayer(int fromIndex, int toIndex);
     Layer* layerAt(int index) const;
     int layerCount() const { return m_layers.size(); }
+
+    void moveMultipleFrames(const QSet<int>& frames, int delta);
 
     // Save/Load
     bool saveToFile(const QString &filePath);
@@ -92,6 +99,7 @@ private:
     int m_totalFrames;
     int m_currentLayerIndex;
     bool m_smoothPathsEnabled;
+    QUndoStack m_undoStack;
 
     // Onion skinning settings
     bool m_onionSkinEnabled;

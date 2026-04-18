@@ -29,7 +29,7 @@
         <file alias="gradient.svg">src/tools/assets/Fill/Gradient/Gradient.svg</file>
         <file alias="newproject.svg">src/tools/assets/Folder/Newlayer/Newlayer.svg</file>
         <file alias="openfolder.svg">src/tools/assets/Folder/group/Group.svg</file>
-        <file alias="app_icon.svg">src/tools/assets/Apple.png</file>
+        <file alias="app_icon.svg">assets/Logo.png</file>
     </qresource>
     <qresource prefix="/">
         <file>src/tools/assets/Tooling/Settings.svg</file>

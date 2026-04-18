@@ -37,6 +37,8 @@ void PencilTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *
     // re-renderable at any zoom because it's still vector geometry, just
     // with per-segment width driven by the recorded pressure values.
     if (m_pressureSensitive) {
+        m_currentPath->setPressureConnectAnchors(m_pressureConnectAnchors);
+        m_currentPath->setPressureConnectionWidthScale(m_anchorConnectWidthScale);
         m_currentPath->addPressurePoint(m_lastPoint, 0.05); // taper in
     } else {
         m_currentPath->moveTo(m_lastPoint);
@@ -55,7 +57,8 @@ void PencilTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *c
     const QPointF delta   = current - m_lastPoint;
     const qreal   dist    = qSqrt(delta.x()*delta.x() + delta.y()*delta.y());
 
-    if (dist < 1.0) return;
+    const qreal minStep = m_pressureSensitive ? m_anchorMinDistance : 1.0;
+    if (dist < minStep) return;
 
     if (m_pressureSensitive) {
         // FIX #27: Record pressure at every registered point.

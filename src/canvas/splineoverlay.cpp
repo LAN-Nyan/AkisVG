@@ -13,18 +13,10 @@ SplineOverlay::SplineOverlay(QWidget *parent)
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_OpaquePaintEvent, false);
     setMouseTracking(true);
-
-    // CRITICAL: This allows the widget to grab the keyboard
     setFocusPolicy(Qt::StrongFocus);
-
     setAttribute(Qt::WA_NoSystemBackground, true);
     setStyleSheet("background: transparent;");
 }
-
-// ── Scene ↔ viewport coordinate helpers ──────────────────────────────────────
-// QGraphicsView::mapFromScene() returns viewport-relative coordinates directly.
-// We store m_view explicitly (set via setView()) to avoid fragile parent-chain
-// walking — QGraphicsView's internal hierarchy is not publicly guaranteed.
 
 QPointF SplineOverlay::sceneToViewport(const QPointF &scenePos) const
 {
@@ -40,12 +32,10 @@ QPointF SplineOverlay::viewportToScene(const QPointF &vp) const
 
 QRectF SplineOverlay::canvasOverlayRect() const
 {
-    if (!m_view || !m_view->scene()) return QRectF(QPointF(0,0), QSizeF(size()));
-    QRectF sr = m_view->scene()->sceneRect();
-    if (sr.isEmpty()) return QRectF(QPointF(0,0), QSizeF(size()));
-    QPointF tl = m_view->mapFromScene(sr.topLeft());
-    QPointF br = m_view->mapFromScene(sr.bottomRight());
-    return QRectF(tl, br).normalized();
+    QRectF r = QRectF(rect());
+    if (!r.isEmpty())
+        return r;
+    return QRectF(QPointF(0, 0), QSizeF(size()));
 }
 
 void SplineOverlay::setNodes(const QList<QPointF> &nodes)
@@ -68,7 +58,6 @@ void SplineOverlay::commitSpline()
     emit committed(m_nodes);
 }
 
-// ── Paint ─────────────────────────────────────────────────────────────────────
 void SplineOverlay::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
@@ -94,8 +83,8 @@ void SplineOverlay::paintEvent(QPaintEvent *)
 
     if (m_nodes.isEmpty()) return;
 
-    // Clip all further drawing to the canvas rect
-    p.setClipRect(cvr);
+    // Clip all further drawing to the canvas rect (excluding the banner)
+    p.setClipRect(cvr.adjusted(0, 36, 0, 0)); // Skip the banner area
 
     // Convert all scene nodes to viewport coords for painting
     QList<QPointF> vpNodes;
@@ -141,7 +130,6 @@ void SplineOverlay::drawSpline(QPainter &p, const QList<QPointF> &vpNodes) const
 {
     if (vpNodes.size() < 2) return;
 
-    // Draw glow / shadow
     QPainterPath path;
     QList<QPointF> pts = catmullRomPoints(vpNodes, 30);
     if (pts.isEmpty()) return;
@@ -150,16 +138,13 @@ void SplineOverlay::drawSpline(QPainter &p, const QList<QPointF> &vpNodes) const
     for (int i = 1; i < pts.size(); ++i)
         path.lineTo(pts[i]);
 
-    // Glow
     p.setPen(QPen(QColor(210, 45, 45, 50), 8));
     p.setBrush(Qt::NoBrush);
     p.drawPath(path);
 
-    // Main line
     p.setPen(QPen(QColor(200, 50, 50), 2.5));
     p.drawPath(path);
 
-    // Dashed extension lines
     p.setPen(QPen(QColor(255, 255, 255, 40), 1, Qt::DashLine));
     for (int i = 1; i < vpNodes.size(); ++i)
         p.drawLine(vpNodes[i - 1], vpNodes[i]);
@@ -198,7 +183,6 @@ QList<QPointF> SplineOverlay::catmullRomPoints(const QList<QPointF> &pts, int se
     return result;
 }
 
-// ── Mouse ─────────────────────────────────────────────────────────────────────
 int SplineOverlay::nodeAt(const QPointF &vpPos) const
 {
     for (int i = 0; i < m_nodes.size(); ++i) {
@@ -220,8 +204,6 @@ void SplineOverlay::mousePressEvent(QMouseEvent *event)
             m_draggingIdx = hit;
             m_dragging = true;
         } else {
-            // Append in click order — K1 = first click, K2 = second, etc.
-            // Do NOT sort by X position; that causes nodes to renumber themselves.
             QPointF scenePos = viewportToScene(vpPos);
             m_nodes.append(scenePos);
             m_draggingIdx = m_nodes.size() - 1;
@@ -245,7 +227,6 @@ void SplineOverlay::mousePressEvent(QMouseEvent *event)
 void SplineOverlay::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging && m_draggingIdx >= 0 && m_draggingIdx < m_nodes.size()) {
-        // Store dragged position in scene coords
         m_nodes[m_draggingIdx] = viewportToScene(event->pos());
         update();
         emit splineChanged(m_nodes);
@@ -275,5 +256,3 @@ void SplineOverlay::keyPressEvent(QKeyEvent *event)
         QWidget::keyPressEvent(event);
     }
 }
-
-// Removed Rest

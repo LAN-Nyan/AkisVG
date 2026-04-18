@@ -31,6 +31,8 @@ void BrushTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *c
     m_lastEventMs  = QDateTime::currentMSecsSinceEpoch();
 
     if (m_pressureSensitive) {
+        m_currentPath->setPressureConnectAnchors(m_pressureConnectAnchors);
+        m_currentPath->setPressureConnectionWidthScale(m_anchorConnectWidthScale);
         m_currentPath->addPressurePoint(m_lastPoint, 0.05);
     } else {
         m_currentPath->moveTo(m_lastPoint);
@@ -50,8 +52,8 @@ void BrushTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *ca
     const qreal   distance     = qSqrt(delta.x()*delta.x() + delta.y()*delta.y());
 
     // Always register the point if it moved at all — smoothing happens in Catmull-Rom.
-    // Only skip true duplicates (< 1px) to avoid degenerate zero-length segments.
-    if (distance < 1.0) return;
+    const qreal minStep = m_pressureSensitive ? m_anchorMinDistance : 1.0;
+    if (distance < minStep) return;
 
     qreal pressure;
 

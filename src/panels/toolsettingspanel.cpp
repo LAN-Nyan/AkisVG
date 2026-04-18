@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QCheckBox>
+#include <QDoubleSpinBox>
 #include <QScrollArea>
 #include <QFileInfo>
 #include <QListWidget>
@@ -303,6 +304,64 @@ void ToolSettingsPanel::buildPencilBrushControls(Tool *tool)
     });
     smg->addWidget(pressureCheck);
     m_contentLayout->addWidget(smGroup);
+
+    // ── Pressure anchor / sampling (pencil & brush) ─────────────────────────
+    QGroupBox *anchorGroup = new QGroupBox("Stroke sampling");
+    anchorGroup->setStyleSheet(sectionStyle());
+    QVBoxLayout *ag = new QVBoxLayout(anchorGroup);
+    ag->setSpacing(6);
+
+    QCheckBox *connCheck = new QCheckBox("Connect anchors with straight segments (line-style)");
+    connCheck->setChecked(tool ? tool->pressureConnectAnchors() : true);
+    connCheck->setStyleSheet(checkStyle());
+    connect(connCheck, &QCheckBox::toggled, this, [tool](bool on) {
+        if (tool) tool->setPressureConnectAnchors(on);
+    });
+    ag->addWidget(connCheck);
+
+    QHBoxLayout *minRow = new QHBoxLayout();
+    minRow->addWidget(makeLabel("Min step:"));
+    QDoubleSpinBox *minSpin = new QDoubleSpinBox();
+    minSpin->setRange(0.05, 100.0);
+    minSpin->setDecimals(2);
+    minSpin->setValue(tool ? tool->anchorMinDistance() : 1.0);
+    minSpin->setSuffix(" px");
+    minSpin->setStyleSheet(inputStyle());
+    connect(minSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [tool](double v) {
+        if (tool) tool->setAnchorMinDistance(v);
+    });
+    minRow->addWidget(minSpin, 1);
+    ag->addLayout(minRow);
+
+    QHBoxLayout *maxRow = new QHBoxLayout();
+    maxRow->addWidget(makeLabel("Max step:"));
+    QDoubleSpinBox *maxSpin = new QDoubleSpinBox();
+    maxSpin->setRange(1.0, 100000.0);
+    maxSpin->setDecimals(0);
+    maxSpin->setValue(tool ? tool->anchorMaxDistance() : 10000.0);
+    maxSpin->setSuffix(" px");
+    maxSpin->setStyleSheet(inputStyle());
+    connect(maxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [tool](double v) {
+        if (tool) tool->setAnchorMaxDistance(v);
+    });
+    maxRow->addWidget(maxSpin, 1);
+    ag->addLayout(maxRow);
+
+    QHBoxLayout *wRow = new QHBoxLayout();
+    wRow->addWidget(makeLabel("Connector width:"));
+    QDoubleSpinBox *wSpin = new QDoubleSpinBox();
+    wSpin->setRange(0.05, 10.0);
+    wSpin->setDecimals(2);
+    wSpin->setValue(tool ? tool->anchorConnectionWidthScale() : 1.0);
+    wSpin->setSuffix(" ×");
+    wSpin->setStyleSheet(inputStyle());
+    connect(wSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [tool](double v) {
+        if (tool) tool->setAnchorConnectionWidthScale(v);
+    });
+    wRow->addWidget(wSpin, 1);
+    ag->addLayout(wRow);
+
+    m_contentLayout->addWidget(anchorGroup);
 
     m_contentLayout->addStretch();
     m_scrollArea->setWidget(m_contentWidget);
@@ -925,7 +984,11 @@ void ToolSettingsPanel::updateInterpolationNodes(int nodeCount)
     for (int i = 0; i < nodeCount; ++i) {
         QSpinBox *sp = new QSpinBox(formContainer);
         sp->setRange(0, 99999);
-        sp->setValue(i * frameStep);
+        int initial = (i < m_interpSavedKeyframeTimes.size())
+                          ? m_interpSavedKeyframeTimes[i]
+                          : (i * frameStep);
+        initial = qBound(0, initial, 99999);
+        sp->setValue(initial);
         sp->setSuffix(" f");
         sp->setStyleSheet(inputStyle());
         m_interpNodeSpins.append(sp);
@@ -935,6 +998,7 @@ void ToolSettingsPanel::updateInterpolationNodes(int nodeCount)
             if (!safeFramesSpin) return;
             QList<int> times;
             for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
+            m_interpSavedKeyframeTimes = times;
             emit interpolationSettingsChanged(m_interpTotalFrames, true, times);
         });
     }
@@ -946,6 +1010,7 @@ void ToolSettingsPanel::updateInterpolationNodes(int nodeCount)
 
     QList<int> times;
     for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
+    m_interpSavedKeyframeTimes = times;
     emit interpolationSettingsChanged(m_interpTotalFrames, true, times);
 }
 
@@ -953,6 +1018,7 @@ void ToolSettingsPanel::buildInterpolationControls(int totalFrames)
 {
     clearContent();
     m_interpNodeSpins.clear();
+    m_interpSavedKeyframeTimes.clear();
     m_contentWidget = new QWidget();
     m_contentWidget->setStyleSheet(QString("background-color:%1;").arg(theme().bg1));
     m_contentLayout = new QVBoxLayout(m_contentWidget);
@@ -1047,6 +1113,7 @@ void ToolSettingsPanel::buildInterpolationControls(int totalFrames)
         m_interpTotalFrames = val;
         QList<int> times;
         for (QSpinBox *s : m_interpNodeSpins) times.append(s->value());
+        m_interpSavedKeyframeTimes = times;
         emit interpolationSettingsChanged(val, safeModeCombo->currentIndex() == 1, times);
     });
 

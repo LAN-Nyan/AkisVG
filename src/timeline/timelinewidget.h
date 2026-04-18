@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QList>
 #include <QMap>
+#include <QSet>
 #include <QElapsedTimer>
 
 class Project;
@@ -42,6 +43,13 @@ private:
     int m_onionFrames;
     bool m_isDragging;
     bool m_onionSkinEnabled;
+    QSet<int> m_selectedFrames;
+    int m_lastClickedFrame = 1;
+    int m_frameDragStart = -1;
+    int m_dragCurrentX = 0;
+    int m_dragStartX = 0; 
+    int m_frameDragBuffer = 1;
+    bool m_frameDragActive = false;
 };
 
 class TimelineWidget : public QWidget

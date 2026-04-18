@@ -74,6 +74,16 @@ public:
     void  setSmoothingAmount(int v) { m_smoothingAmount = qBound(0, v, 100); }
     int   smoothingAmount() const { return m_smoothingAmount; }
 
+    // Pressure pencil/brush: sample spacing & segment connection (see PathObject)
+    void  setPressureConnectAnchors(bool on) { m_pressureConnectAnchors = on; }
+    bool  pressureConnectAnchors() const { return m_pressureConnectAnchors; }
+    void  setAnchorMinDistance(qreal px) { m_anchorMinDistance = qBound(0.05, px, 500.0); }
+    qreal anchorMinDistance() const { return m_anchorMinDistance; }
+    void  setAnchorMaxDistance(qreal px) { m_anchorMaxDistance = qBound(m_anchorMinDistance, px, 100000.0); }
+    qreal anchorMaxDistance() const { return m_anchorMaxDistance; }
+    void  setAnchorConnectionWidthScale(qreal s) { m_anchorConnectWidthScale = qBound(0.05, s, 10.0); }
+    qreal anchorConnectionWidthScale() const { return m_anchorConnectWidthScale; }
+
     // ── New-style events (Lasso, MagicWand) – CanvasView calls these ──────────
     virtual void mousePressEvent  (QMouseEvent *event, QPointF scenePos);
     virtual void mouseMoveEvent   (QMouseEvent *event, QPointF scenePos);
@@ -111,6 +121,11 @@ protected:
     bool        m_pressureSensitive = true; // user toggle
     qreal       m_strokeOpacity    = 1.0;   // 0.0-1.0, applied to stroke alpha
     int         m_smoothingAmount  = 50;    // 0-100, controls point filtering
+
+    bool  m_pressureConnectAnchors   = true;  // straight segments between pressure samples
+    qreal m_anchorMinDistance        = 1.0; // scene px — minimum spacing for new anchor
+    qreal m_anchorMaxDistance        = 10000.0;
+    qreal m_anchorConnectWidthScale  = 1.0;   // scales connector line thickness
 };
 
 #endif // TOOL_H
