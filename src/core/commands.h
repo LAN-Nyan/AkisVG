@@ -4,11 +4,36 @@
 #include <QUndoCommand>
 #include <QString>
 #include <QColor>
+#include <QPainterPath>
+
 
 // Forward declarations
 class VectorObject;
 class Layer;
+// Ensure Project and QSet are available
+class Project;
+#include <QSet>
 
+class MoveFramesCommand : public QUndoCommand {
+public:
+    MoveFramesCommand(Project *project, const QSet<int> &frames, int delta, QUndoCommand *parent = nullptr);
+    void undo() override;
+    void redo() override;
+private:
+    Project *m_project;
+    QSet<int> m_frames;
+    int m_delta;
+};
+
+class AddFramesCommand : public QUndoCommand {
+public:
+    AddFramesCommand(Project *project, int count, QUndoCommand *parent = nullptr);
+    void undo() override;
+    void redo() override;
+private:
+    Project *m_project;
+    int m_count;
+};
 /**
  * Command for adding a vector object to a layer
  */
@@ -105,6 +130,24 @@ private:
     VectorObject *m_object;
     QColor m_oldColor;
     QColor m_newColor;
+};
+
+class PathObject;
+
+/** Undoable in-place path geometry change (lasso cut, path split, etc.). */
+class PathObjectPathCommand : public QUndoCommand
+{
+public:
+    PathObjectPathCommand(PathObject *path, const QPainterPath &oldPath,
+                          const QPainterPath &newPath, QUndoCommand *parent = nullptr);
+
+    void undo() override;
+    void redo() override;
+
+private:
+    PathObject *m_path;
+    QPainterPath m_oldPath;
+    QPainterPath m_newPath;
 };
 
 #endif // COMMANDS_H

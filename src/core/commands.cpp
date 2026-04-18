@@ -2,6 +2,7 @@
 #include "layer.h"
 #include "project.h"
 #include "canvas/objects/vectorobject.h"
+#include "canvas/objects/pathobject.h"
 
 // ddObjectCommand
 
@@ -27,6 +28,30 @@ void AddObjectCommand::undo()
 {
     m_layer->removeObjectFromFrame(m_frame, m_object);
     m_ownsObject = true;
+}
+// ============= MoveFramesCommand =============
+MoveFramesCommand::MoveFramesCommand(Project *project, const QSet<int> &frames, int delta, QUndoCommand *parent)
+    : QUndoCommand(parent), m_project(project), m_frames(frames), m_delta(delta) 
+{
+    setText("Move Frames");
+}
+
+void MoveFramesCommand::undo() { m_project->moveMultipleFrames(m_frames, -m_delta); }
+void MoveFramesCommand::redo() { m_project->moveMultipleFrames(m_frames, m_delta); }
+
+// ============= AddFramesCommand =============
+AddFramesCommand::AddFramesCommand(Project *project, int count, QUndoCommand *parent)
+    : QUndoCommand(parent), m_project(project), m_count(count)
+{
+    setText(QString("Add %1 Frames").arg(count));
+}
+
+void AddFramesCommand::redo() {
+    m_project->setTotalFrames(m_project->totalFrames() + m_count);
+}
+
+void AddFramesCommand::undo() {
+    m_project->setTotalFrames(m_project->totalFrames() - m_count);
 }
 
 void AddObjectCommand::redo()
@@ -168,4 +193,28 @@ void FillColorCommand::undo()
 void FillColorCommand::redo()
 {
     m_object->setFillColor(m_newColor);
+}
+
+// ============= PathObjectPathCommand =============
+
+PathObjectPathCommand::PathObjectPathCommand(PathObject *path, const QPainterPath &oldPath,
+                                             const QPainterPath &newPath, QUndoCommand *parent)
+    : QUndoCommand(parent)
+    , m_path(path)
+    , m_oldPath(oldPath)
+    , m_newPath(newPath)
+{
+    setText("Edit Path");
+}
+
+void PathObjectPathCommand::undo()
+{
+    if (m_path)
+        m_path->setPath(m_oldPath);
+}
+
+void PathObjectPathCommand::redo()
+{
+    if (m_path)
+        m_path->setPath(m_newPath);
 }

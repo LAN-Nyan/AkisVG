@@ -1,9 +1,6 @@
-// TODO:
-// 1. implement proper frame extender logic
-// 2. Add MiDi synth
-
 #include "timelinewidget.h"
 #include "core/project.h"
+#include "core/commands.h"
 #include "core/layer.h"
 #include "utils/thememanager.h"
 
@@ -235,25 +232,56 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
     for (int frame = 1; frame <= m_project->totalFrames() && (frame - 1) * cellWidth < width(); ++frame) {
         int x = (frame - 1) * cellWidth;
-
-        // Vertical grid line through entire widget
         painter.setPen(theme().bg1Color());
         painter.drawLine(x, 0, x, height());
 
-        // Ruler ticks and labels
         if (frame % 5 == 0) {
-            // Major tick + number: draw label starting at x so it's left-aligned to the frame
             painter.setPen(QColor(180, 180, 180));
             painter.setFont(QFont("Arial", 8));
             painter.drawText(QRect(x + 2, 0, cellWidth * 5, headerHeight - 4),
                              Qt::AlignLeft | Qt::AlignBottom, QString::number(frame));
-            // Major tick mark
             painter.setPen(QPen(QColor(130, 130, 130), 1));
             painter.drawLine(x, headerHeight - 8, x, headerHeight);
         } else {
-            // Minor tick mark
             painter.setPen(QPen(QColor(70, 70, 70), 1));
             painter.drawLine(x, headerHeight - 4, x, headerHeight);
+        }
+    }
+
+    // Shift/Ctrl multi-selection highlight (header row)
+    painter.setPen(Qt::NoPen);
+    for (int f : std::as_const(m_selectedFrames)) {
+        int sx = (f - 1) * cellWidth;
+
+        if (m_frameDragActive) {
+            int offset = m_dragCurrentX - m_dragStartX;
+            sx = sx + offset;
+        } else if (m_frameDragBuffer != 0) {
+            sx = (m_frameDragBuffer - 1) * cellWidth;
+        }
+
+        painter.fillRect(sx, 1, cellWidth - 1, headerHeight - 2, QColor(0, 120, 215, 150));
+    }
+
+    // Preview of frames being dragged
+    if (!m_selectedFrames.isEmpty() && m_frameDragActive) {
+        int dragOffsetPx = m_dragCurrentX - m_dragStartX;
+        bool isOutOfBounds = false;
+
+        // Check if any frame would be out of bounds
+        for (int f : m_selectedFrames) {
+            int newFrame = f + (dragOffsetPx / cellWidth);
+            if (newFrame < 1 || newFrame > m_project->totalFrames()) {
+                isOutOfBounds = true;
+                break;
+            }
+        }
+
+        // Draw preview of dragged frames
+        for (int f : m_selectedFrames) {
+            int sx = (f - 1) * cellWidth + dragOffsetPx;
+            QColor previewColor = isOutOfBounds ? QColor(215, 0, 0, 100) : QColor(0, 120, 215, 100);
+            painter.fillRect(sx, headerHeight, cellWidth, height() - headerHeight, previewColor);
         }
     }
 
@@ -520,8 +548,39 @@ void FrameGridWidget::paintEvent(QPaintEvent *event) {
 
 void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
     const int cellWidth = 16;
+    const int headerHeight = 32;
 
     int clickedFrame = (event->pos().x() / cellWidth) + 1;
+    if (clickedFrame < 1 || clickedFrame > m_project->totalFrames())
+        return;
+
+    if (event->button() == Qt::LeftButton && event->pos().y() < headerHeight) {
+        m_dragStartX = event->pos().x();
+        m_dragCurrentX = event->pos().x();
+
+        if (event->modifiers() & Qt::ShiftModifier) {
+            int a = m_lastClickedFrame;
+            int lo = qMin(a, clickedFrame);
+            int hi = qMax(a, clickedFrame);
+            for (int f = lo; f <= hi; ++f)
+                m_selectedFrames.insert(f);
+        } else if (event->modifiers() & Qt::ControlModifier) {
+            if (m_selectedFrames.contains(clickedFrame))
+                m_selectedFrames.remove(clickedFrame);
+            else
+                m_selectedFrames.insert(clickedFrame);
+        } else {
+            m_selectedFrames.clear();
+            m_selectedFrames.insert(clickedFrame);
+        }
+
+        m_lastClickedFrame = clickedFrame;
+        m_frameDragStart = clickedFrame;
+        m_frameDragActive = true;
+        setCursor(Qt::ClosedHandCursor);
+        update();
+        return;
+    }
 
     if (clickedFrame > 0 && clickedFrame <= m_project->totalFrames()) {
         m_project->setCurrentFrame(clickedFrame);
@@ -529,8 +588,29 @@ void FrameGridWidget::mousePressEvent(QMouseEvent *event) {
 }
 
 void FrameGridWidget::mouseMoveEvent(QMouseEvent *event) {
-    if (event->buttons() & Qt::LeftButton) {
-        const int cellWidth = 16;
+    const int cellWidth = 16;
+    const int headerHeight = 32;
+
+    if (m_frameDragActive) {
+        m_dragCurrentX = event->pos().x();
+
+        // Snap to frame boundaries if close enough
+        int frameAtPos = (event->pos().x() / cellWidth) + 1;
+        int snapThreshold = cellWidth / 3;
+        int dragOffsetPx = m_dragCurrentX - m_dragStartX;
+        int snapOffsetPx = (frameAtPos * cellWidth) - m_dragStartX;
+
+        if (qAbs(dragOffsetPx - snapOffsetPx) < snapThreshold) {
+            m_dragCurrentX = m_dragStartX + snapOffsetPx;
+        }
+
+        // Prevent dragging out of bounds
+        int minX = 0;
+        int maxX = m_project->totalFrames() * cellWidth;
+        m_dragCurrentX = qBound(minX, m_dragCurrentX, maxX);
+
+        update();
+    } else if (event->buttons() & Qt::LeftButton && event->pos().y() >= headerHeight) {
         int frame = (event->pos().x() / cellWidth) + 1;
         if (frame > 0 && frame <= m_project->totalFrames() && frame != m_project->currentFrame()) {
             m_project->setCurrentFrame(frame);
@@ -551,13 +631,17 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
         QAction *add10 = menu.addAction("Add 10 Frames");
         QAction *add24 = menu.addAction("Add 24 Frames");
         QAction *selected = menu.exec(event->globalPos());
-        if (selected == add10) m_project->setTotalFrames(m_project->totalFrames() + 10);
-        else if (selected == add24) m_project->setTotalFrames(m_project->totalFrames() + 24);
+        if (selected == add10) {
+            m_project->undoStack()->push(new AddFramesCommand(m_project, 10));
+        } else if (selected == add24) {
+            m_project->undoStack()->push(new AddFramesCommand(m_project, 24));
+        }
         updateGeometry();
         update();
         return;
     }
 
+    // Layer context menu
     auto layers = m_project->layers();
     int layerRow = (y - headerHeight) / rowHeight;
     int layerIndex = layers.size() - 1 - layerRow;
@@ -666,38 +750,57 @@ void FrameGridWidget::contextMenuEvent(QContextMenuEvent *event) {
             return;
         }
 
-        // === ART LAYER CONTEXT MENU ===
-        bool isKeyFrame = layer->isKeyFrame(clickedFrame);
+       // === ART LAYER CONTEXT MENU ===
+       bool isKeyFrame = layer->isKeyFrame(clickedFrame);
 
-        QAction *makeKeyAction = menu.addAction("Make Keyframe");
-        makeKeyAction->setEnabled(!isKeyFrame); // Only enable if NOT a keyframe
+       QAction *makeKeyAction = menu.addAction("Make Keyframe");
+       makeKeyAction->setEnabled(!isKeyFrame);
 
-        QAction *dupFrameAction = menu.addAction("Duplicate Frame");
-        dupFrameAction->setEnabled(isKeyFrame);
+       QAction *dupFrameAction = menu.addAction("Duplicate Frame");
+       dupFrameAction->setEnabled(isKeyFrame);
 
-        menu.addSeparator();
-        QAction *extendAction = menu.addAction("Extend Frame (Hold)");
-        extendAction->setEnabled(isKeyFrame);
+       menu.addSeparator();
 
-        QAction *interpAction = menu.addAction("Start Interpolation (Tween)");
-        interpAction->setEnabled(isKeyFrame);
+       QAction *extendAction = menu.addAction("Extend Frame (Hold)");
+       extendAction->setEnabled(isKeyFrame);
 
-        if (isKeyFrame) {
-            menu.addSeparator();
-            QAction *clearAction = menu.addAction("Clear Frame");
-            menu.addAction(clearAction);
-        }
+       QAction *interpAction = menu.addAction("Start Interpolation (Tween)");
+       interpAction->setEnabled(isKeyFrame);
 
-        // Per-frame colour / label (always available on any frame)
-        menu.addSeparator();
-        QAction *setColorAct  = menu.addAction("Set Frame Color…");
-        QAction *clearColorAct = menu.addAction("Clear Frame Color");
-        clearColorAct->setEnabled(layer->frameColor(clickedFrame).isValid());
-        QAction *setLabelAct  = menu.addAction("Set Frame Label…");
-        QAction *clearLabelAct = menu.addAction("Clear Frame Label");
-        clearLabelAct->setEnabled(!layer->frameLabel(clickedFrame).isEmpty());
+       if (isKeyFrame) {
+           menu.addSeparator();
+           QAction *clearAction = menu.addAction("Clear Frame");
+           menu.addAction(clearAction);
+       }
 
-        QAction *selected = menu.exec(event->globalPos());
+       // Per-frame color/label actions
+       menu.addSeparator();
+       QAction *setColorAct = menu.addAction("Set Frame Color…");
+       QAction *clearColorAct = menu.addAction("Clear Frame Color");
+       clearColorAct->setEnabled(layer->frameColor(clickedFrame).isValid());
+       QAction *setLabelAct = menu.addAction("Set Frame Label…");
+       QAction *clearLabelAct = menu.addAction("Clear Frame Label");
+       clearLabelAct->setEnabled(!layer->frameLabel(clickedFrame).isEmpty());
+
+       // Add "Move Frame" action for selected frames
+       if (!m_selectedFrames.isEmpty()) {
+           menu.addSeparator();
+           QAction *moveFramesAction = menu.addAction("Move Selected Frames…");
+           connect(moveFramesAction, &QAction::triggered, [this, layer]() {
+               bool ok;
+               int delta = QInputDialog::getInt(
+                   this, "Move Frames",
+                   "Move selected frames by how many frames?",
+                   0, -1000, 1000, 1, &ok);
+               if (ok && delta != 0) {
+                   m_project->pushUndoState("Move Frames");
+                   m_project->moveMultipleFrames(m_selectedFrames, delta);
+                   update();
+               }
+           });
+       }
+
+       QAction *selected = menu.exec(event->globalPos());
 
         if (selected == makeKeyAction) {
             layer->makeKeyFrame(clickedFrame);
@@ -1172,10 +1275,30 @@ AudioData FrameGridWidget::loadAudioFile(const QString &filePath, int startFrame
 
     return audio;
 }
-
 void FrameGridWidget::mouseReleaseEvent(QMouseEvent *event) {
-    Q_UNUSED(event);
-    m_isDragging = false;
+    const int cellWidth = 16;
+
+    if (m_frameDragActive && event->button() == Qt::LeftButton) {
+        int delta = (m_dragCurrentX / cellWidth) - (m_dragStartX / cellWidth);
+
+        if (delta != 0) {
+            QSet<int> newSelection;
+            for (int f : m_selectedFrames) {
+                newSelection.insert(f + delta);
+            }
+
+            // Use the custom undo command for moving frames
+            m_project->undoStack()->push(new MoveFramesCommand(m_project, m_selectedFrames, delta));
+
+            // Update the selection
+            m_selectedFrames = newSelection;
+        }
+
+        m_frameDragActive = false;
+        m_frameDragBuffer = 0;
+        setCursor(Qt::ArrowCursor);
+        update();
+    }
 }
 
 // === TimelineWidget Implementation ===

@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QColor>
 #include <QBuffer>
+#include <QUndoCommand>
 
 // Forward declarations for serialization helpers
 static QJsonObject serializeVectorObject(VectorObject *obj);
@@ -148,7 +149,33 @@ void Project::setFps(int fps)
         emit modified();
     }
 }
+void Project::pushUndoState(const QString &description) {
+    // Create a custom undo command to save the current state
+    class SaveStateCommand : public QUndoCommand {
+    public:
+        SaveStateCommand(Project *project, const QString &desc, QUndoCommand *parent = nullptr)
+            : QUndoCommand(desc, parent), m_project(project) {
+        }
 
+        void undo() override {
+            // Restore the previous state here
+            // You'll need to implement logic to restore the project state
+            qDebug() << "Undo:" << text();
+        }
+
+        void redo() override {
+            // Reapply the state here
+            // You'll need to implement logic to reapply the project state
+            qDebug() << "Redo:" << text();
+        }
+
+    private:
+        Project *m_project;
+    };
+
+    // Push the command onto the undo stack
+    m_undoStack.push(new SaveStateCommand(this, description));
+}
 void Project::setSmoothPathsEnabled(bool enabled)
 {
     if (m_smoothPathsEnabled != enabled) {
@@ -199,6 +226,17 @@ void Project::setCurrentFrame(int frame)
         m_currentFrame = frame;
         emit currentFrameChanged(frame);
     }
+}
+
+void Project::swapFrameCells(int frameA, int frameB)
+{
+    if (frameA == frameB || frameA < 1 || frameB < 1) return;
+    for (Layer *layer : m_layers) {
+        if (layer->layerType() == LayerType::Audio)
+            continue;
+        layer->swapFrameCells(frameA, frameB);
+    }
+    emit modified();
 }
 
 void Project::setTotalFrames(int frames)
@@ -303,6 +341,32 @@ void Project::moveLayer(int fromIndex, int toIndex)
 
         emit layersChanged();
         emit modified();
+    }
+}
+
+void Project::moveMultipleFrames(const QSet<int>& frames, int delta) {
+    if (delta == 0) return;
+
+    // 1. Turn the Bucket (Set) into a Sorted List
+    // We need them in order so we know who is "in front"
+    QList<int> sortedFrames = frames.values();
+    std::sort(sortedFrames.begin(), sortedFrames.end());
+
+    // 2. Decide the direction
+    if (delta > 0) {
+        // Moving Right: Start from the HIGHEST frame number and work backwards
+        for (int i = sortedFrames.size() - 1; i >= 0; --i) {
+            int oldPos = sortedFrames[i];
+            int newPos = oldPos + delta;
+            this->swapFrameCells(oldPos, newPos); // Using your existing sniper!
+        }
+    } else {
+        // Moving Left: Start from the LOWEST frame number and work forwards
+        for (int i = 0; i < sortedFrames.size(); ++i) {
+            int oldPos = sortedFrames[i];
+            int newPos = oldPos + delta;
+            this->swapFrameCells(oldPos, newPos);
+        }
     }
 }
 
