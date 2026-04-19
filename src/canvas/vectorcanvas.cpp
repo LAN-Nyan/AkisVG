@@ -18,6 +18,7 @@
 #include <QPen>
 #include <QDateTime>
 #include <QGraphicsView>
+#include <QUuid>
 #include <QGraphicsRectItem>
 #include <QTimer>
 
@@ -450,23 +451,24 @@ void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
             m_currentTool->mouseReleaseEvent(event, this);
         }
 
-        // Check if the live drawing item is still valid before trying to access it
-        if (m_liveDrawingItem && m_liveDrawingItem->scene() == this) {
-            // Reset the live item's z-value before refreshFrame so that once committed,
-            // it stacks normally with all other objects (z=0 = layer insertion order).
-            m_liveDrawingItem->setZValue(0);
-            // Call refreshFrame() BEFORE clearing m_liveDrawingItem.
-            // refreshFrame evicts the live item via removeItem() when m_isDrawing is
-            // false and m_liveDrawingItem is non-null. Without this, the item added
-            // directly via addItem() stays in the scene forever (it was never in
-            // m_displayItems so it was never cleaned up), causing every frame to
-            // show the stroke that was drawn on frame 1.
+        // Snapshot before toggling m_isDrawing — refreshFrame() nulls m_liveDrawingItem
+        // when it evicts the live stroke from the scene.
+        VectorObject *wasLive = m_liveDrawingItem;
+        m_isDrawing = false;
+
+        if (wasLive && wasLive->scene() == this) {
+            // Once committed, display clones use z=0 (layer order); live preview used 9999.
+            wasLive->setZValue(0);
+        }
+        if (wasLive) {
+            // refreshFrame() only removeItem()s the live stroke at the top when
+            // !m_isDrawing && m_liveDrawingItem. If we called it while m_isDrawing was
+            // still true, the layer-owned item stayed on the scene (never in
+            // m_displayItems) and appeared on every frame after scrubbing.
             refreshFrame();
         }
 
-        // Clear the live drawing item and reset drawing state
         m_liveDrawingItem = nullptr;
-        m_isDrawing = false;
     }
 
     QGraphicsScene::mouseReleaseEvent(event);
@@ -566,6 +568,31 @@ void VectorCanvas::ungroupSelected()
     int frame = m_project ? m_project->currentFrame() : 1;
 
     for (QGraphicsItem *item : sel) {
+        // Check if this is a symbol instance
+        SymbolInstance *instance = dynamic_cast<SymbolInstance*>(sourceObject(dynamic_cast<VectorObject*>(item)));
+        if (instance) {
+            // Convert symbol instance back to a regular group
+            ObjectGroup *group = new ObjectGroup(instance->groupName());
+            group->setPos(instance->pos());
+
+            // Move all children from the instance to the group
+            for (VectorObject *child : instance->ObjectGroup::children()) {
+                instance->ObjectGroup::removeChild(child);
+                child->setPos(child->pos());
+                group->addChild(child);
+            }
+
+            // Replace the instance with the group in the layer
+            if (layer) {
+                layer->removeObjectFromFrame(frame, instance);
+                layer->addObjectToFrame(frame, group);
+            }
+
+            delete instance;
+            continue;
+        }
+
+        // Handle regular groups
         ObjectGroup *group = dynamic_cast<ObjectGroup*>(sourceObject(dynamic_cast<VectorObject*>(item)));
         if (!group) continue;
         QPointF groupPos = group->scenePos();
@@ -577,4 +604,172 @@ void VectorCanvas::ungroupSelected()
         if (layer) layer->removeObjectFromFrame(frame, group);
         delete group;
     }
+}
+
+// =============================================================================
+// SymbolMaster Implementation
+// =============================================================================
+
+SymbolMaster::SymbolMaster(const QString &name, QGraphicsItem *parent)
+    : ObjectGroup(name, parent)
+    , m_uuid(QUuid::createUuid())
+{
+    setFlag(QGraphicsItem::ItemIsSelectable);
+    setFlag(QGraphicsItem::ItemIsMovable);
+}
+
+SymbolMaster::~SymbolMaster()
+{
+    for (SymbolInstance *instance : m_instances) {
+        if (instance) instance->setMaster(nullptr);
+    }
+}
+
+void SymbolMaster::setName(const QString &name)
+{
+    ObjectGroup::setGroupName(name);
+    updateAllInstances();
+}
+
+void SymbolMaster::addInstance(SymbolInstance *instance)
+{
+    if (!instance || m_instances.contains(instance)) return;
+    m_instances.append(instance);
+    emit instanceAdded(instance);
+}
+
+void SymbolMaster::removeInstance(SymbolInstance *instance)
+{
+    if (!instance) return;
+    m_instances.removeAll(instance);
+    emit instanceRemoved(instance);
+}
+
+void SymbolMaster::updateAllInstances()
+{
+    for (SymbolInstance *instance : m_instances) {
+        if (instance) instance->updateFromMaster();
+    }
+    emit masterModified();
+}
+
+VectorObject* SymbolMaster::clone() const
+{
+    return new SymbolInstance(const_cast<SymbolMaster*>(this), nullptr);
+}
+
+QPixmap SymbolMaster::thumbnail(int size) const
+{
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(QBrush(QColor(100, 180, 255, 128)));
+    painter.setPen(QPen(QColor(100, 180, 255), 1));
+    painter.drawRect(2, 2, size-4, size-4);
+    painter.setPen(QPen(Qt::white, 2));
+    painter.drawText(QRect(0, 0, size, size), Qt::AlignCenter, "S");
+    return pixmap;
+}
+
+// =============================================================================
+// Symbol Master Creation
+// =============================================================================
+
+SymbolMaster* VectorCanvas::createMasterSymbol(const QList<VectorObject*> &objects, const QString &name)
+{
+    if (objects.isEmpty()) return nullptr;
+
+    // Calculate the bounding rect for the group
+    QRectF united;
+    for (VectorObject *obj : objects) {
+        if (!obj) continue;
+        QRectF r = obj->mapRectToScene(obj->boundingRect());
+        united = united.isNull() ? r : united.united(r);
+    }
+    if (united.isNull()) return nullptr;
+
+    // Create the master symbol
+    QString masterName = name.isEmpty()
+        ? QString("Symbol %1").arg(QDateTime::currentMSecsSinceEpoch() % 10000)
+        : name;
+    SymbolMaster *master = new SymbolMaster(masterName);
+
+    // Position the master at the top-left of the united bounds
+    master->setPos(united.topLeft());
+
+    // Add all objects to the master
+    for (VectorObject *obj : objects) {
+        if (!obj) continue;
+        QPointF scenePos = obj->scenePos();
+        obj->setPos(scenePos - united.topLeft());
+        master->addChild(obj);
+    }
+
+    // Add the master to the project's symbol library (if applicable)
+    if (m_project) {
+        m_project->addMasterSymbol(master);
+    }
+
+    return master;
+}
+
+// =============================================================================
+// SymbolInstance Implementation
+// =============================================================================
+
+SymbolInstance::SymbolInstance(SymbolMaster *master, QGraphicsItem *parent)
+    : ObjectGroup(master ? master->groupName() : "Symbol Instance", parent)
+    , m_master(master)
+{
+    setFlag(QGraphicsItem::ItemIsSelectable);
+    setFlag(QGraphicsItem::ItemIsMovable);
+    if (m_master) {
+        m_master->addInstance(this);
+        updateFromMaster();
+    }
+}
+SymbolInstance::~SymbolInstance()
+{
+    if (m_master) m_master->removeInstance(this);
+}
+
+void SymbolInstance::setName(const QString &name)
+{
+    ObjectGroup::setGroupName(name);
+}
+
+void SymbolInstance::setMaster(SymbolMaster *master)
+{
+    if (m_master) m_master->removeInstance(this);
+    m_master = master;
+    if (m_master) {
+        m_master->addInstance(this);
+        updateFromMaster();
+    }
+    setName(m_master ? m_master->groupName() : "Symbol Instance");
+}
+
+VectorObject* SymbolInstance::clone() const
+{
+    if (m_master) return new SymbolInstance(m_master, nullptr);
+    return ObjectGroup::clone();
+}
+
+void SymbolInstance::updateFromMaster()
+{
+    if (!m_master) return;
+    // Clear existing children
+    for (VectorObject *child : ObjectGroup::children()) {
+        ObjectGroup::removeChild(child);
+        delete child;
+    }
+    // Clone children from master
+    for (VectorObject *masterChild : m_master->children()) {
+        VectorObject *childClone = masterChild->clone();
+        childClone->setPos(masterChild->pos());
+        ObjectGroup::addChild(childClone);
+    }
+    ObjectGroup::setGroupName(m_master->groupName());
+    update();
 }
