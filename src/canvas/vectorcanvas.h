@@ -6,20 +6,20 @@
 #include <QImage>
 #include <QSet>
 #include <QMap>
-#include "tools/tool.h"
-
-#include <QGraphicsScene>
-#include <QUndoStack>
-#include <QImage>
-#include <QSet>
-#include <QMap>
+#include <QList>
+#include <QUuid>
 #include "tools/tool.h"
 #include "core/layer.h"
+#include "canvas/objects/objectgroup.h"  // Include the full definition
 
+// Forward declarations
 class Project;
 class VectorObject;
-class ObjectGroup;
 class QPainter;
+class QGraphicsSceneDragDropEvent;
+class QGraphicsSceneMouseEvent;
+class SymbolMaster;
+class SymbolInstance;
 
 class VectorCanvas : public QGraphicsScene
 {
@@ -47,9 +47,6 @@ public:
     void clearDisplay(); // call before loading a new project
     void cancelLiveDrawing(); // discard in-progress stroke before context menu
 
-    // Discard any in-progress stroke — must be called before opening a context
-    // menu so the modal event loop cannot accumulate ghost pixels in the scene.
-
     // Batch-update guard: suppresses refreshFrame re-entrancy during multi-step
     // operations (grouping, interpolation). Signals still fire normally so that
     // undo, redo, and layer visibility continue to work correctly.
@@ -68,6 +65,13 @@ public:
     // Reverse lookup: given a source object, find its current display clone.
     // Returns nullptr if the source has no clone (e.g. it's on a different frame).
     VectorObject* displayCloneFor(VectorObject *source) const;
+
+    // Master Symbols functionality
+    SymbolMaster* createMasterSymbol(const QList<VectorObject*> &objects, const QString &name = QString());
+    SymbolInstance* createSymbolInstance(SymbolMaster *master);
+    void updateSymbolInstances(SymbolMaster *master);
+    QList<SymbolMaster*> allMasterSymbols() const;
+    void removeMasterSymbol(SymbolMaster *master);
 
 signals:
     // Emitted just before display items are destroyed during refreshFrame().
@@ -128,5 +132,62 @@ private:
     // Dashed bounding-box overlays showing the current bounding-box selection.
     QList<QGraphicsRectItem*> m_selectionOverlays;
 };
+
+/**
+ * @class SymbolMaster
+ * @brief Represents a master symbol that can be instanced across the project
+ */
+ class SymbolMaster : public ObjectGroup
+ {
+     Q_OBJECT
+ 
+ public:
+     explicit SymbolMaster(const QString &name, QGraphicsItem *parent = nullptr);
+     virtual ~SymbolMaster();
+ 
+     QUuid uuid() const { return m_uuid; }
+     QList<SymbolInstance*> instances() const { return m_instances; }
+ 
+     void addInstance(SymbolInstance *instance);
+     void removeInstance(SymbolInstance *instance);
+     void updateAllInstances();
+ 
+     VectorObject* clone() const override;
+     QPixmap thumbnail(int size) const;
+     void setName(const QString &name);
+ 
+ signals:
+     void instanceAdded(SymbolInstance *instance);
+     void instanceRemoved(SymbolInstance *instance);
+     void masterModified();
+ 
+ private:
+     QUuid m_uuid;
+     QList<SymbolInstance*> m_instances;
+ };
+ 
+ /**
+  * @class SymbolInstance
+  * @brief Represents an instance of a master symbol
+  */
+ class SymbolInstance : public ObjectGroup
+ {
+     Q_OBJECT
+ 
+ public:
+     explicit SymbolInstance(SymbolMaster *master, QGraphicsItem *parent = nullptr);
+     virtual ~SymbolInstance();
+ 
+     SymbolMaster* master() const { return m_master; }
+     void setMaster(SymbolMaster *master);
+ 
+     VectorObject* clone() const override;
+     void updateFromMaster();
+     QPixmap thumbnail(int size) const;
+     void setName(const QString &name);
+ 
+ private:
+     SymbolMaster *m_master;
+ };
 
 #endif // VECTORCANVAS_H

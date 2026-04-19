@@ -23,6 +23,7 @@
 #include "panels/settingspanel.h"
 #include "tools/eyedroppertool.h"
 #include "utils/thememanager.h"
+#include "canvas/objects/vectorobject.h"
 // Includes
 #include <algorithm>
 #include <QMenuBar>
@@ -297,7 +298,64 @@ MainWindow::MainWindow(QWidget *parent)
         m_canvasView->viewport()->update();
     });
 }
-// Mainwindow
+
+void MainWindow::createMasterSymbol(const QList<VectorObject*> &selected)
+{
+    if (!m_project || !m_canvas) return;
+
+    bool ok;
+    QString name = QInputDialog::getText(this, "Create Master Symbol", "Symbol Name:", QLineEdit::Normal, "Symbol", &ok);
+    if (!ok || name.isEmpty()) return;
+
+    // Create a temporary group first to get the bounding rect
+    ObjectGroup *tempGroup = m_canvas->groupObjects(selected, name);
+    if (!tempGroup) return;
+
+    // Create the master symbol
+    SymbolMaster *symbol = m_canvas->createMasterSymbol(selected, name);
+    if (symbol) {
+        m_assetLibrary->addMasterSymbol(symbol);
+        statusBar()->showMessage("Master Symbol created: " + name, 3000);
+    }
+
+    // Clean up the temporary group
+    m_undoStack->undo(); // Undo the group creation
+}
+
+void MainWindow::breakSymbolInstances(const QList<VectorObject*> &selected)
+{
+    if (!m_project || !m_canvas) return;
+
+    Layer *layer = m_project->currentLayer();
+    int frame = m_project->currentFrame();
+
+    if (!layer) return;
+
+    for (VectorObject *obj : selected) {
+        SymbolInstance *instance = dynamic_cast<SymbolInstance*>(obj);
+        if (!instance) continue;
+
+        // Create a regular group from the instance
+        ObjectGroup *group = new ObjectGroup(instance->groupName());
+        group->setPos(instance->pos());
+
+        // Move all children from the instance to the group
+        for (VectorObject *child : instance->ObjectGroup::children()) {
+            instance->ObjectGroup::removeChild(child);
+            child->setPos(child->pos());
+            group->addChild(child);
+        }
+
+        // Replace the instance with the group in the layer
+        layer->removeObjectFromFrame(frame, instance);
+        layer->addObjectToFrame(frame, group);
+
+        delete instance;
+    }
+
+    m_canvas->refreshFrame();
+}
+
 MainWindow::~MainWindow()
 {
 }
@@ -431,6 +489,12 @@ void MainWindow::setupCanvas()
 
         // Restore Actions
         QAction *groupAct  = menu.addAction("Group Selected");
+
+        // Symbol Actions
+        QAction *createSymbolAct = menu.addAction("Create Master Symbol");
+        QAction *breakSymbolAct = menu.addAction("Break Symbol Instance");
+        menu.addSeparator();
+
         QAction *interpAct = menu.addAction("Interpolate");
         menu.addSeparator();
         QAction *cutAct      = menu.addAction("Cut");
@@ -443,6 +507,18 @@ void MainWindow::setupCanvas()
 
         bool hasSel = !selected.isEmpty();
         groupAct->setEnabled(selected.size() >= 2);
+        createSymbolAct->setEnabled(selected.size() >= 1);
+
+        // Check if any selected object is a symbol instance
+        bool hasSymbolInstance = false;
+        for (VectorObject *obj : selected) {
+            if (dynamic_cast<SymbolInstance*>(obj)) {
+                hasSymbolInstance = true;
+                break;
+            }
+        }
+        breakSymbolAct->setEnabled(hasSymbolInstance);
+
         interpAct->setEnabled(hasSel);
         cutAct->setEnabled(hasSel);
         copyAct->setEnabled(hasSel);
@@ -460,6 +536,17 @@ void MainWindow::setupCanvas()
                 ObjectGroup *grp = m_canvas->groupObjects(selected, name);
                 if (grp) m_assetLibrary->addObjectGroup(grp);
             }
+        } else if (chosen == createSymbolAct) {
+            bool ok;
+            QString name = QInputDialog::getText(this, "Create Master Symbol", "Symbol Name:", QLineEdit::Normal, "Symbol", &ok);
+            if (ok) {
+                SymbolMaster *symbol = m_canvas->createMasterSymbol(selected, name);
+                if (symbol) {
+                    m_assetLibrary->addMasterSymbol(symbol);
+                }
+            }
+        } else if (chosen == breakSymbolAct) {
+            breakSymbolInstances(selected);
         } else if (chosen == interpAct) {
             // resolve each display clone to its layer-owned source object.
             m_interpolationTargets.clear();

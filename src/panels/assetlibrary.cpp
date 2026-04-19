@@ -1,6 +1,7 @@
 #include "assetlibrary.h"
 #include "canvas/objects/objectgroup.h"
 #include "utils/thememanager.h"
+#include "canvas/vectorcanvas.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -133,6 +134,21 @@ void AssetLibrary::addObjectGroup(ObjectGroup *group)
     emit assetAdded(asset);
 }
 
+void AssetLibrary::addMasterSymbol(SymbolMaster *symbol)
+{
+    if (!symbol) return;
+    Asset asset;
+    asset.id        = QString("symbol_%1").arg(QDateTime::currentMSecsSinceEpoch());
+    asset.name      = symbol->groupName().isEmpty() ? "Unnamed Symbol" : symbol->groupName();
+    asset.path      = QString();
+    asset.type      = Asset::Symbol;
+    asset.symbol    = symbol;
+    asset.thumbnail = symbol->thumbnail(64);
+    m_assets.append(asset);
+    updateAssetList();
+    emit assetAdded(asset);
+}
+
 void AssetLibrary::onImportClicked()
 {
     QStringList files = QFileDialog::getOpenFileNames(this, "Import Assets", "",
@@ -233,23 +249,38 @@ QWidget* AssetLibrary::createAssetItem(const Asset &asset)
     if (asset.type == Asset::Image)      detail = QString("Image • %1 KB").arg(QFileInfo(asset.path).size()/1024);
     else if (asset.type == Asset::Audio) detail = QString("Audio • %1 KB").arg(QFileInfo(asset.path).size()/1024);
     else {
-        int cnt = asset.group ? asset.group->childCount() : 0;
-        detail  = QString("Group • %1 object%2").arg(cnt).arg(cnt==1?"":"s");
+        if (asset.type == Asset::Group) {
+            int cnt = asset.group ? asset.group->childCount() : 0;
+            detail  = QString("Group • %1 object%2").arg(cnt).arg(cnt==1?"":"s");
+        } else if (asset.type == Asset::Symbol) {
+            int cnt = asset.symbol ? asset.symbol->childCount() : 0;
+            detail  = QString("Symbol • %1 object%2").arg(cnt).arg(cnt==1?"":"s");
+        }
     }
     QLabel *det = new QLabel(detail);
     det->setStyleSheet("color:#888; font-size:10px;");
     info->addWidget(det);
 
-    // Instance button for groups
-    if (asset.type == Asset::Group && asset.group) {
+    // Instance button for groups and symbols
+    if ((asset.type == Asset::Group && asset.group) || (asset.type == Asset::Symbol && asset.symbol)) {
         QPushButton *btn = new QPushButton("▶  Instance onto Canvas");
         btn->setFixedHeight(22);
         btn->setCursor(Qt::PointingHandCursor);
         btn->setStyleSheet(
             "QPushButton { background:#2a82da; color:white; border:none; border-radius:3px; font-size:10px; padding:2px 8px; }"
             "QPushButton:hover { background:#3a92ea; }");
-        ObjectGroup *grp = asset.group;
-        connect(btn, &QPushButton::clicked, this, [this, grp](){ emit groupInstanceRequested(grp); });
+
+        if (asset.type == Asset::Group) {
+            ObjectGroup *grp = asset.group;
+            connect(btn, &QPushButton::clicked, this, [this, grp](){ emit groupInstanceRequested(grp); });
+        } else if (asset.type == Asset::Symbol) {
+            SymbolMaster *symbol = asset.symbol;
+            connect(btn, &QPushButton::clicked, this, [this, symbol](){
+                SymbolInstance *instance = new SymbolInstance(symbol);
+                emit groupInstanceRequested(instance);
+            });
+        }
+
         info->addWidget(btn);
     }
 
@@ -277,7 +308,7 @@ void AssetLibrary::showContextMenu(const QPoint &pos)
     Asset *asset = assetById(id);
 
     QAction *instanceAct = nullptr;
-    if (asset && asset->type == Asset::Group) {
+    if (asset && (asset->type == Asset::Group || asset->type == Asset::Symbol)) {
         instanceAct = menu.addAction("Instance onto Canvas");
         menu.addSeparator();
     }
@@ -287,8 +318,13 @@ void AssetLibrary::showContextMenu(const QPoint &pos)
     if (sel == deleteAct) {
         m_assetList->setCurrentItem(item);
         onDeleteClicked();
-    } else if (instanceAct && sel == instanceAct && asset && asset->group) {
-        emit groupInstanceRequested(asset->group);
+    } else if (instanceAct && sel == instanceAct && asset) {
+        if (asset->type == Asset::Group && asset->group) {
+            emit groupInstanceRequested(asset->group);
+        } else if (asset->type == Asset::Symbol && asset->symbol) {
+            SymbolInstance *instance = new SymbolInstance(asset->symbol);
+            emit groupInstanceRequested(instance);
+        }
     }
 }
 
@@ -310,6 +346,12 @@ void AssetLibrary::startDrag(QListWidgetItem *item)
     mime->setData("application/x-lumina-asset", asset->id.toUtf8());
     mime->setData("application/x-lumina-asset-type", QByteArray::number(static_cast<int>(asset->type)));
     mime->setData("application/x-lumina-asset-path", asset->path.toUtf8());
+
+    // For symbols, we need to create an instance when dragging
+    if (asset->type == Asset::Symbol && asset->symbol) {
+        SymbolInstance *instance = new SymbolInstance(asset->symbol);
+        mime->setProperty("symbolInstance", QVariant::fromValue(instance));
+    }
 
     QDrag *drag = new QDrag(this);
     drag->setMimeData(mime);

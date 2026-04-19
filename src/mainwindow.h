@@ -12,6 +12,7 @@ class ToolBox;
 class LayerPanel;
 class ColorPicker;
 class AssetLibrary;
+class ToolSettingsPanel;
 class TimelineWidget;
 class QMenu;
 class QToolBar;
@@ -22,6 +23,8 @@ class ProjectSettings;
 class SplineOverlay;
 class ObjectGroup;
 class EyedropperTool;
+class SymbolMaster;
+class SymbolInstance;
 // ── NEW TOOL INCLUDES ────────────────────────────────────────────────────────
 class LassoTool;
 class MagicWandTool;
@@ -71,6 +74,8 @@ private slots:
     void provideWandSnapshot(MagicWandTool *wand);
     void addToRecentFiles(const QString &path);
     void updateRecentFilesMenu();
+    void createMasterSymbol(const QList<VectorObject*> &selected);
+    void breakSymbolInstances(const QList<VectorObject*> &selected);
 
 private:
    // void createActions();

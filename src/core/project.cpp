@@ -7,6 +7,7 @@
 #include "canvas/objects/textobject.h"
 #include "canvas/objects/imageobject.h"
 #include "canvas/objects/transformableimageobject.h"
+#include "canvas/vectorcanvas.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -432,6 +433,28 @@ bool Project::saveToFile(const QString &filePath)
     onionSkin["opacity"] = m_onionSkinOpacity;
     projectObj["onionSkin"] = onionSkin;
 
+    // Master Symbols
+    QJsonArray symbolsArray;
+    for (SymbolMaster *symbol : m_masterSymbols) {
+        QJsonObject symbolObj;
+        symbolObj["uuid"] = symbol->uuid().toString();
+        symbolObj["name"] = symbol->groupName();
+        // SymbolMaster doesn't have a position, so we'll use default values
+        symbolObj["pos_x"] = 0;
+        symbolObj["pos_y"] = 0;
+
+        // Save children
+        QJsonArray childrenArray;
+        for (VectorObject *child : symbol->ObjectGroup::children()) {
+            QJsonObject childObj = serializeVectorObject(child);
+            childrenArray.append(childObj);
+        }
+        symbolObj["children"] = childrenArray;
+
+        symbolsArray.append(symbolObj);
+    }
+    projectObj["masterSymbols"] = symbolsArray;
+
     // Layers
     QJsonArray layersArray;
     for (Layer *layer : m_layers) {
@@ -715,23 +738,43 @@ bool Project::loadFromFile(const QString &filePath)
             }
         }
 
-        // Load frames with vector objects
-        if (layerObj.contains("frames")) {
-            QJsonArray framesArray = layerObj["frames"].toArray();
-            for (const QJsonValue &frameVal : framesArray) {
-                QJsonObject frameObj = frameVal.toObject();
-                int frameNum = frameObj["number"].toInt(1);
+    // Load frames with vector objects
+    if (layerObj.contains("frames")) {
+        QJsonArray framesArray = layerObj["frames"].toArray();
+        for (const QJsonValue &frameVal : framesArray) {
+            QJsonObject frameObj = frameVal.toObject();
+            int frameNum = frameObj["number"].toInt(1);
 
-                // Load objects
-                QJsonArray objectsArray = frameObj["objects"].toArray();
-                for (const QJsonValue &objVal : objectsArray) {
-                    VectorObject *obj = deserializeVectorObject(objVal.toObject());
-                    if (obj) {
-                        layer->addObjectToFrame(frameNum, obj);
+            // Load objects
+            QJsonArray objectsArray = frameObj["objects"].toArray();
+            for (const QJsonValue &objVal : objectsArray) {
+                QJsonObject objData = objVal.toObject();
+                VectorObject *obj = deserializeVectorObject(objData);
+
+                // Handle symbol instances
+                if (objData["type"].toInt() == static_cast<int>(VectorObjectType::Group)) {
+                    if (objData.contains("isSymbolInstance") && objData["isSymbolInstance"].toBool()) {
+                        // Find the master symbol by UUID
+                        QUuid masterUuid(objData["masterUuid"].toString());
+                        SymbolMaster *master = findMasterSymbol(masterUuid);
+
+                        if (master) {
+                            // Create a symbol instance
+                            SymbolInstance *instance = new SymbolInstance(master);
+                            // SymbolInstance doesn't have these methods directly
+                            // We'll need to implement them or find another way
+                            // For now, just create the instance
+                            obj = instance;
+                        }
                     }
+                }
+
+                if (obj) {
+                    layer->addObjectToFrame(frameNum, obj);
                 }
             }
         }
+    }
 
         m_layers.append(layer);
 
@@ -774,6 +817,30 @@ bool Project::loadFromFile(const QString &filePath)
                 if (fr > 0 && !lbl.isEmpty())
                     layer->setFrameLabel(fr, lbl);
             }
+        }
+    }
+
+    // Load master symbols
+    if (projectObj.contains("masterSymbols")) {
+        QJsonArray symbolsArray = projectObj["masterSymbols"].toArray();
+        for (const QJsonValue &symbolVal : symbolsArray) {
+            QJsonObject symbolObj = symbolVal.toObject();
+
+            SymbolMaster *symbol = new SymbolMaster(symbolObj["name"].toString());
+            // SymbolMaster doesn't have a position, so we'll skip this
+            // symbol->setPos(symbolObj["pos_x"].toDouble(), symbolObj["pos_y"].toDouble());
+
+            // Load children
+            QJsonArray childrenArray = symbolObj["children"].toArray();
+            for (const QJsonValue &childVal : childrenArray) {
+                QJsonObject childObj = childVal.toObject();
+                VectorObject *child = deserializeVectorObject(childObj);
+                if (child) {
+                    symbol->ObjectGroup::addChild(child);
+                }
+            }
+
+            addMasterSymbol(symbol);
         }
     }
 
@@ -829,8 +896,24 @@ static QJsonObject serializeVectorObject(VectorObject *obj)
     data["opacity"] = obj->objectOpacity();
     data["zValue"] = obj->zValue();
 
+    // Handle symbol instances
+    if (SymbolInstance *instance = dynamic_cast<SymbolInstance*>(obj)) {
+        data["isSymbolInstance"] = true;
+        data["masterUuid"] = instance->master()->uuid().toString();
+    }
+
     // Type-specific properties
     switch (obj->objectType()) {
+    case VectorObjectType::Group: {
+        ObjectGroup *group = static_cast<ObjectGroup*>(obj);
+        data["groupName"] = group->groupName();
+        QJsonArray childrenArray;
+        for (VectorObject *child : group->children()) {
+            childrenArray.append(serializeVectorObject(child));
+        }
+        data["children"] = childrenArray;
+        break;
+    }
     case VectorObjectType::Path: {
         PathObject *path = static_cast<PathObject*>(obj);
         QPainterPath painterPath = path->path();
@@ -959,13 +1042,23 @@ static VectorObject* deserializeVectorObject(const QJsonObject &data)
             }
         }
 
+
         path->setPath(painterPath);
         path->setSmoothPaths(data["smoothPaths"].toBool(true));
         path->setTexture(static_cast<PathTexture>(data["texture"].toInt()));
         obj = path;
         break;
     }
-
+    case VectorObjectType::Group: {
+        ObjectGroup *group = new ObjectGroup(data["groupName"].toString("Group"));
+        QJsonArray childrenArray = data["children"].toArray();
+        for (const QJsonValue &childVal : childrenArray) {
+            VectorObject *child = deserializeVectorObject(childVal.toObject());
+            if (child) group->addChild(child);
+        }
+        obj = group;
+        break;
+    }
     case VectorObjectType::Rectangle: {
         // FIXED: Removed the redundant ShapeType:: scope
         ShapeObject *shape = new ShapeObject(ShapeObject::Rectangle);
@@ -1037,4 +1130,40 @@ static VectorObject* deserializeVectorObject(const QJsonObject &data)
     }
 
     return obj;
+}
+
+// =============================================================================
+// Master Symbols Implementation
+// =============================================================================
+
+void Project::addMasterSymbol(SymbolMaster *symbol)
+{
+    if (!symbol || m_masterSymbols.contains(symbol)) return;
+
+    m_masterSymbols.append(symbol);
+    connect(symbol, &SymbolMaster::masterModified, this, &Project::modified);
+    emit masterSymbolAdded(symbol);
+}
+
+void Project::removeMasterSymbol(SymbolMaster *symbol)
+{
+    if (!symbol) return;
+
+    m_masterSymbols.removeAll(symbol);
+    emit masterSymbolRemoved(symbol);
+}
+
+QList<SymbolMaster*> Project::masterSymbols() const
+{
+    return m_masterSymbols;
+}
+
+SymbolMaster* Project::findMasterSymbol(const QUuid &uuid) const
+{
+    for (SymbolMaster *symbol : m_masterSymbols) {
+        if (symbol && symbol->uuid() == uuid) {
+            return symbol;
+        }
+    }
+    return nullptr;
 }

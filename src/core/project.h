@@ -82,12 +82,20 @@ public:
     bool saveToFile(const QString &filePath);
     bool loadFromFile(const QString &filePath);
 
+    // Master Symbols management
+    void addMasterSymbol(class SymbolMaster *symbol);
+    void removeMasterSymbol(class SymbolMaster *symbol);
+    QList<class SymbolMaster*> masterSymbols() const;
+    class SymbolMaster* findMasterSymbol(const QUuid &uuid) const;
+
 
 signals:
     void modified();
     void currentFrameChanged(int frame);
     void currentLayerChanged(Layer *layer);
     void layersChanged();
+    void masterSymbolAdded(class SymbolMaster *symbol);
+    void masterSymbolRemoved(class SymbolMaster *symbol);
     void onionSkinSettingsChanged();
 
 private:
@@ -108,6 +116,7 @@ private:
     qreal m_onionSkinOpacity; // Base opacity for onion skins
 
     QList<Layer*> m_layers;
+    QList<class SymbolMaster*> m_masterSymbols;
 };
 
 #endif // PROJECT_H

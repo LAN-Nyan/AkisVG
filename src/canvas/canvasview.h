@@ -4,6 +4,11 @@
 #include <QGraphicsView>
 #include <QMouseEvent>
 #include <optional>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QGraphicsSceneDragDropEvent>
+#include <QGraphicsSceneMouseEvent>
 
 class VectorCanvas;
 class TransformableImageObject;
@@ -48,6 +53,11 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void drawBackground(QPainter *painter, const QRectF &rect) override;
     void drawForeground(QPainter *painter, const QRectF &rect) override;
+
+    // Drag and drop support
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;

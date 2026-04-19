@@ -14,7 +14,8 @@ struct Asset {
     enum Type {
         Image,
         Audio,
-        Group   // NEW: object groups from canvas
+        Group,   // NEW: object groups from canvas
+        Symbol   // NEW: master symbols
     };
 
     QString id;
@@ -23,6 +24,7 @@ struct Asset {
     Type type;
     QPixmap thumbnail;
     ObjectGroup *group = nullptr;  // non-null for Group assets
+    class SymbolMaster *symbol = nullptr;  // non-null for Symbol assets
 };
 
 class AssetLibrary : public QWidget
@@ -37,6 +39,7 @@ public:
 
     // Called by VectorCanvas when user groups objects
     void addObjectGroup(ObjectGroup *group);
+    void addMasterSymbol(class SymbolMaster *symbol);
     void applyTheme();
 
 signals:
