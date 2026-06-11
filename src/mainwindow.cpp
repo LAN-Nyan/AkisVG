@@ -1,6 +1,7 @@
 //Headers
 #include "mainwindow.h"
 #include "core/project.h"
+#include "core/layer.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/pathobject.h"
 #include "canvas/objects/shapeobject.h"
@@ -24,6 +25,8 @@
 #include "tools/eyedroppertool.h"
 #include "utils/thememanager.h"
 #include "canvas/objects/vectorobject.h"
+#include "ui/preferencesdialog.h"
+#include "utils/hotkeymanager.h"
 // Includes
 #include <algorithm>
 #include <QMenuBar>
@@ -66,6 +69,11 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QDoubleSpinBox>
+#include <QTimer>
+#include <QStandardPaths>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDir>
 // Constructor
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -307,19 +315,202 @@ void MainWindow::createMasterSymbol(const QList<VectorObject*> &selected)
     QString name = QInputDialog::getText(this, "Create Master Symbol", "Symbol Name:", QLineEdit::Normal, "Symbol", &ok);
     if (!ok || name.isEmpty()) return;
 
-    // Create a temporary group first to get the bounding rect
-    ObjectGroup *tempGroup = m_canvas->groupObjects(selected, name);
-    if (!tempGroup) return;
-
-    // Create the master symbol
     SymbolMaster *symbol = m_canvas->createMasterSymbol(selected, name);
     if (symbol) {
         m_assetLibrary->addMasterSymbol(symbol);
         statusBar()->showMessage("Master Symbol created: " + name, 3000);
+        if (SelectTool *sel = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select))) {
+            sel->clearSelection(m_canvas);
+        }
+    }
+}
+
+void MainWindow::editMasterSymbol(SymbolMaster *master)
+{
+    enterSymbolEditMode(master);
+}
+
+void MainWindow::enterSymbolEditMode(SymbolMaster *master)
+{
+    if (!master || !m_project || m_symbolEditMaster)
+        return;
+
+    m_symbolEditMaster = master;
+    m_symbolEditProject = new Project(this);
+    m_symbolEditProject->createNew(m_project->width(), m_project->height(), m_project->fps());
+    m_symbolEditProject->setCurrentFrame(1);
+    m_symbolEditUndo = new QUndoStack(this);
+
+    if (Layer *layer = m_symbolEditProject->currentLayer()) {
+        for (VectorObject *c : master->children()) {
+            if (c)
+                layer->addObjectToFrame(1, c->clone());
+        }
     }
 
-    // Clean up the temporary group
-    m_undoStack->undo(); // Undo the group creation
+    m_canvas->rebindProject(m_symbolEditProject, m_symbolEditUndo);
+    m_layerPanel->setProject(m_symbolEditProject);
+    connect(m_symbolEditUndo, &QUndoStack::indexChanged, m_canvas, &VectorCanvas::refreshFrame);
+
+    if (m_timelineDock)
+        m_timelineDock->hide();
+    if (m_symbolEditBanner) {
+        if (auto *lbl = m_symbolEditBanner->findChild<QLabel *>())
+            lbl->setText(tr("Editing Master Symbol: %1").arg(master->groupName()));
+        m_symbolEditBanner->show();
+    }
+
+    setWindowTitle(tr("AkisVG — Editing symbol: %1").arg(master->groupName()));
+    statusBar()->showMessage(tr("Symbol edit mode — same tools as main canvas. Timeline hidden."), 5000);
+}
+
+void MainWindow::applySymbolEditToMaster()
+{
+    if (!m_symbolEditMaster || !m_symbolEditProject)
+        return;
+
+    Layer *layer = m_symbolEditProject->currentLayer();
+    if (!layer)
+        return;
+
+    QList<VectorObject *> objs = layer->objectsAtFrame(1);
+    QRectF united;
+    for (VectorObject *o : objs) {
+        if (!o) continue;
+        united = united.isNull()
+                     ? o->mapRectToScene(o->boundingRect())
+                     : united.united(o->mapRectToScene(o->boundingRect()));
+    }
+
+    if (united.isNull()) {
+        m_symbolEditMaster->setArtworkChildren({});
+        return;
+    }
+
+    QList<VectorObject *> forMaster;
+    for (VectorObject *o : objs) {
+        if (!o) continue;
+        layer->removeObjectFromFrame(1, o);
+        o->setPos(o->scenePos() - united.topLeft());
+        forMaster.append(o);
+    }
+    m_symbolEditMaster->setArtworkChildren(forMaster);
+}
+
+void MainWindow::exitSymbolEditMode(bool apply)
+{
+    if (!m_symbolEditMaster)
+        return;
+
+    SymbolMaster *master = m_symbolEditMaster;
+    if (apply) {
+        applySymbolEditToMaster();
+        m_assetLibrary->refreshSymbolThumbnail(master);
+        m_isModified = true;
+        statusBar()->showMessage(tr("Master symbol updated — all instances refreshed."), 4000);
+    } else {
+        statusBar()->showMessage(tr("Symbol edit cancelled."), 3000);
+    }
+
+    if (m_symbolEditUndo)
+        disconnect(m_symbolEditUndo, nullptr, m_canvas, nullptr);
+
+    m_canvas->rebindProject(m_project, m_undoStack);
+    m_layerPanel->setProject(m_project);
+
+    if (m_symbolEditProject) {
+        if (Layer *layer = m_symbolEditProject->currentLayer())
+            layer->clearFrame(1);
+        m_symbolEditProject->deleteLater();
+        m_symbolEditProject = nullptr;
+    }
+    if (m_symbolEditUndo) {
+        m_symbolEditUndo->deleteLater();
+        m_symbolEditUndo = nullptr;
+    }
+
+    m_symbolEditMaster = nullptr;
+    if (m_timelineDock)
+        m_timelineDock->show();
+    if (m_symbolEditBanner)
+        m_symbolEditBanner->hide();
+
+    m_canvas->refreshFrame();
+    updateWindowTitle();
+}
+
+void MainWindow::setupAutoSave()
+{
+    m_autoSaveTimer = new QTimer(this);
+    m_autoSaveTimer->setInterval(7 * 60 * 1000); // 7 minutes
+    connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::performAutoSave);
+    m_autoSaveTimer->start();
+}
+
+void MainWindow::performAutoSave()
+{
+    if (!m_project || m_symbolEditMaster)
+        return;
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/autosave";
+    QDir().mkpath(dir);
+    const QString path = dir + "/recovery.avg.tmp";
+    const QString metaPath = dir + "/recovery.meta";
+
+    if (!m_project->saveToFile(path))
+        return;
+
+    QFile meta(metaPath);
+    if (meta.open(QIODevice::WriteOnly)) {
+        QJsonObject o;
+        o["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        o["sourceFile"] = m_currentFile;
+        o["projectName"] = m_project->name();
+        meta.write(QJsonDocument(o).toJson());
+        meta.close();
+    }
+    statusBar()->showMessage(tr("Auto-saved recovery copy."), 2000);
+}
+
+void MainWindow::offerCrashRecovery()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/autosave";
+    const QString path = dir + "/recovery.avg.tmp";
+    if (!QFile::exists(path))
+        return;
+
+    QString when = tr("unknown time");
+    QFile meta(dir + "/recovery.meta");
+    if (meta.open(QIODevice::ReadOnly)) {
+        const QJsonObject o = QJsonDocument::fromJson(meta.readAll()).object();
+        when = o.value("timestamp").toString(when);
+        meta.close();
+    }
+
+    const auto reply = QMessageBox::question(
+        this, tr("Recover Auto-Save?"),
+        tr("An auto-saved project from %1 was found. Recover it now?").arg(when),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+
+    if (reply == QMessageBox::Yes) {
+        if (m_project->loadFromFile(path)) {
+            m_canvas->clearDisplay();
+            m_canvas->refreshFrame();
+            m_isModified = true;
+            updateWindowTitle();
+            statusBar()->showMessage(tr("Recovered auto-saved project."), 5000);
+        }
+    } else {
+        QFile::remove(path);
+        QFile::remove(dir + "/recovery.meta");
+    }
+}
+
+void MainWindow::showPreferences()
+{
+    PreferencesDialog dlg(this);
+    if (dlg.exec() == QDialog::Accepted)
+        m_toolBox->refreshShortcutLabels();
 }
 
 void MainWindow::breakSymbolInstances(const QList<VectorObject*> &selected)
@@ -368,7 +559,27 @@ void MainWindow::setupCanvas()
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(4);
 
+    m_symbolEditBanner = new QWidget();
+    m_symbolEditBanner->setFixedHeight(40);
+    m_symbolEditBanner->setStyleSheet("background-color: #2a2a2a; border-bottom: 1px solid #c0392b;");
+    auto *bannerLayout = new QHBoxLayout(m_symbolEditBanner);
+    bannerLayout->setContentsMargins(12, 0, 12, 0);
+    auto *bannerLabel = new QLabel(tr("Editing Master Symbol"));
+    bannerLabel->setStyleSheet("color: #e0e0e0; font-weight: bold;");
+    bannerLayout->addWidget(bannerLabel);
+    bannerLayout->addStretch();
+    auto *doneBtn = new QPushButton(tr("Done"));
+    auto *cancelBtn = new QPushButton(tr("Cancel"));
+    doneBtn->setStyleSheet("QPushButton { background: #c0392b; color: white; border: none; padding: 6px 16px; border-radius: 4px; }");
+    cancelBtn->setStyleSheet("QPushButton { background: #444; color: white; border: none; padding: 6px 16px; border-radius: 4px; }");
+    connect(doneBtn, &QPushButton::clicked, this, [this]() { exitSymbolEditMode(true); });
+    connect(cancelBtn, &QPushButton::clicked, this, [this]() { exitSymbolEditMode(false); });
+    bannerLayout->addWidget(cancelBtn);
+    bannerLayout->addWidget(doneBtn);
+    m_symbolEditBanner->hide();
+
     m_canvasView->setStyleSheet("QGraphicsView { background-color: #3c3c3c; border: none; }");
+    layout->addWidget(m_symbolEditBanner);
     layout->addWidget(m_canvasView);
     setCentralWidget(centralWidget);
 
@@ -457,6 +668,7 @@ void MainWindow::setupCanvas()
     });
 
     connect(m_assetLibrary, &AssetLibrary::groupInstanceRequested, this, &MainWindow::onInstanceGroupRequested);
+    connect(m_assetLibrary, &AssetLibrary::editMasterSymbolRequested, this, &MainWindow::editMasterSymbol);
 
     // Context Menu
     connect(m_canvas, &VectorCanvas::contextMenuRequestedAt, this, [this](const QPoint &globalPos, const QPointF &scenePos) {
@@ -493,6 +705,7 @@ void MainWindow::setupCanvas()
         // Symbol Actions
         QAction *createSymbolAct = menu.addAction("Create Master Symbol");
         QAction *breakSymbolAct = menu.addAction("Break Symbol Instance");
+        QAction *editMasterCtxAct = menu.addAction("Edit Master Symbol…");
         menu.addSeparator();
 
         QAction *interpAct = menu.addAction("Interpolate");
@@ -509,15 +722,17 @@ void MainWindow::setupCanvas()
         groupAct->setEnabled(selected.size() >= 2);
         createSymbolAct->setEnabled(selected.size() >= 1);
 
-        // Check if any selected object is a symbol instance
+        SymbolMaster *symbolMasterForEdit = nullptr;
         bool hasSymbolInstance = false;
         for (VectorObject *obj : selected) {
-            if (dynamic_cast<SymbolInstance*>(obj)) {
+            if (auto *si = dynamic_cast<SymbolInstance *>(obj)) {
                 hasSymbolInstance = true;
-                break;
+                if (!symbolMasterForEdit && si->master())
+                    symbolMasterForEdit = si->master();
             }
         }
         breakSymbolAct->setEnabled(hasSymbolInstance);
+        editMasterCtxAct->setEnabled(symbolMasterForEdit != nullptr);
 
         interpAct->setEnabled(hasSel);
         cutAct->setEnabled(hasSel);
@@ -543,10 +758,14 @@ void MainWindow::setupCanvas()
                 SymbolMaster *symbol = m_canvas->createMasterSymbol(selected, name);
                 if (symbol) {
                     m_assetLibrary->addMasterSymbol(symbol);
+                    if (SelectTool *sel = qobject_cast<SelectTool *>(m_toolBox->getTool(ToolType::Select)))
+                        sel->clearSelection(m_canvas);
                 }
             }
         } else if (chosen == breakSymbolAct) {
             breakSymbolInstances(selected);
+        } else if (chosen == editMasterCtxAct && symbolMasterForEdit) {
+            editMasterSymbol(symbolMasterForEdit);
         } else if (chosen == interpAct) {
             // resolve each display clone to its layer-owned source object.
             m_interpolationTargets.clear();
@@ -653,6 +872,12 @@ void MainWindow::createMenus()
     m_redoAction->setShortcut(QKeySequence::Redo);
     m_redoAction->setIcon(QIcon::fromTheme("edit-redo"));
     m_editMenu->addAction(m_redoAction);
+
+    m_editMenu->addSeparator();
+
+    QAction *prefsAct = m_editMenu->addAction(tr("&Preferences…"));
+    prefsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+    connect(prefsAct, &QAction::triggered, this, &MainWindow::showPreferences);
 
     m_editMenu->addSeparator();
 
@@ -994,16 +1219,14 @@ void MainWindow::createDockWindows()
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
     // timeline
-    QDockWidget *timelineDock = new QDockWidget("Timeline", this);
-    timelineDock->setWidget(m_timeline);
-    timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
-    timelineDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-    timelineDock->setMinimumHeight(sc(160));
-    // Cap max height so the timeline never covers more than ~30% of the screen.
-    // Users can still resize it up by dragging the dock separator.
-    timelineDock->setMaximumHeight(sc(320));
-    addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
-    m_viewMenu->addAction(timelineDock->toggleViewAction());
+    m_timelineDock = new QDockWidget("Timeline", this);
+    m_timelineDock->setWidget(m_timeline);
+    m_timelineDock->setAllowedAreas(Qt::BottomDockWidgetArea);
+    m_timelineDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    m_timelineDock->setMinimumHeight(sc(160));
+    m_timelineDock->setMaximumHeight(sc(320));
+    addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
+    m_viewMenu->addAction(m_timelineDock->toggleViewAction());
 
     // Load persisted preferences on startup
     QSettings settings("AkisVG", "AkisVG");
@@ -1023,6 +1246,12 @@ void MainWindow::createDockWindows()
         restoreGeometry(settings.value("window/geometry").toByteArray());
     if (settings.contains("window/state"))
         restoreState(settings.value("window/state").toByteArray());
+
+    HotkeyManager::instance().load();
+    if (m_toolBox)
+        m_toolBox->refreshShortcutLabels();
+    setupAutoSave();
+    offerCrashRecovery();
 }
 
 void MainWindow::newProject()
@@ -1109,6 +1338,9 @@ void MainWindow::saveProject()
         updateWindowTitle();        // Remove the '*' from title
         statusBar()->showMessage(tr("Project saved to %1").arg(m_currentFile), 3000);
         addToRecentFiles(m_currentFile);
+        const QString autoDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/autosave";
+        QFile::remove(autoDir + "/recovery.avg.tmp");
+        QFile::remove(autoDir + "/recovery.meta");
     } else {
         QMessageBox::critical(this, tr("Save Error"),
                               tr("Failed to save project to %1").arg(m_currentFile));
@@ -1284,29 +1516,29 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    static const QMap<int, ToolType> keyToolMap = {
-                                                   { Qt::Key_V, ToolType::Select    },
-                                                   { Qt::Key_I, ToolType::eyedropper},
-                                                   { Qt::Key_L, ToolType::Lasso     },
-                                                   { Qt::Key_W, ToolType::MagicWand },
-                                                   { Qt::Key_P, ToolType::Pencil    },
-                                                   { Qt::Key_B, ToolType::Brush     },
-                                                   { Qt::Key_E, ToolType::Eraser    },
-                                                   { Qt::Key_G, ToolType::Fill      },
-                                                   { Qt::Key_D, ToolType::Gradient  },
-                                                   { Qt::Key_H, ToolType::Blend     },
-                                                   { Qt::Key_K, ToolType::Liquify   },
-                                                   { Qt::Key_R, ToolType::Rectangle },
-                                                   { Qt::Key_C, ToolType::Ellipse   },
-                                                   { Qt::Key_U, ToolType::Line      },
-                                                   { Qt::Key_T, ToolType::Text      },
-                                                   };
+    if (event->key() == Qt::Key_Escape) {
+        if (m_symbolEditMaster) {
+            exitSymbolEditMode(false);
+            event->accept();
+            return;
+        }
+        if (SelectTool *sel = qobject_cast<SelectTool *>(m_toolBox->getTool(ToolType::Select))) {
+            sel->clearSelection(m_canvas);
+            event->accept();
+            return;
+        }
+    }
 
-    auto it = keyToolMap.find(event->key());
-    if (it != keyToolMap.end()) {
-        m_toolBox->activateTool(it.value());
-        event->accept();
-        return;
+    const HotkeyManager &hk = HotkeyManager::instance();
+    if (event->modifiers() == Qt::NoModifier) {
+        for (ToolType type : hk.configurableTools()) {
+            const QKeySequence seq = hk.shortcutFor(type);
+            if (seq.count() == 1 && seq[0].key() == event->key()) {
+                m_toolBox->activateTool(type);
+                event->accept();
+                return;
+            }
+        }
     }
 
     QMainWindow::keyPressEvent(event);
@@ -1750,26 +1982,15 @@ void MainWindow::onInstanceGroupRequested(ObjectGroup *group)
 {
     if (!group || !m_project) return;
 
-    // Change qobject_cast to dynamic_cast
     ObjectGroup *newInstance = dynamic_cast<ObjectGroup*>(group->clone());
+    if (!newInstance) return;
 
-    if (!newInstance) return; // Safety check
-
-    // Determine the target position (Center of the visible screen)
     QPointF targetPos = m_canvasView->mapToScene(m_canvasView->viewport()->rect().center());
-
-    // Offset the position so the center of the art is at the cursor
     QRectF bounds = newInstance->boundingRect();
-    newInstance->setPos(targetPos.x() - bounds.width()/2,
-                        targetPos.y() - bounds.height()/2);
+    newInstance->setPos(targetPos.x() - bounds.width() / 2.0,
+                        targetPos.y() - bounds.height() / 2.0);
 
-    Layer *currentLayer = m_project->currentLayer();
-    if (currentLayer) {
-        currentLayer->addObjectToFrame(m_project->currentFrame(), newInstance);
-    }
-
-    m_canvas->addItem(newInstance);
-    m_canvas->update();
+    m_canvas->addPlacedObject(newInstance);
 }
 
 void MainWindow::startInterpolationMode() {
@@ -2252,7 +2473,7 @@ void MainWindow::onLassoPull(const QPolygonF &poly, QPointF /*dragStart*/)
 
     SelectTool *sel = qobject_cast<SelectTool*>(m_toolBox->getTool(ToolType::Select));
     if (sel) {
-        sel->clearSelection();
+        sel->clearSelection(m_canvas);
         sel->setSelectedObjects(pulledPieces);
     }
 

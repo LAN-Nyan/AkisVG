@@ -23,7 +23,9 @@ public:
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
 
-    void clearSelection();
+    /// Clears the selection. Pass \a canvas so dashed overlays update immediately
+    /// (otherwise highlights can stick until the next refreshFrame).
+    void clearSelection(VectorCanvas *canvas = nullptr);
     QList<VectorObject*> selectedObjects() const { return m_selectedObjects; }
 
     // Programmatically pre-select objects (used by Lasso Pull mode).
@@ -55,7 +57,11 @@ private:
     QList<VectorObject*> m_selectedObjects; // always SOURCE pointers
 
     void updateSelection(VectorCanvas *canvas, const QRectF &rect, bool additive);
-    bool hitTestSelected(QPointF scenePos, VectorCanvas *canvas) const;
+    VectorObject *topObjectAt(QPointF scenePos, VectorCanvas *canvas) const;
+
+    static constexpr qreal m_dragThreshold = 4.0;
+    QPointF m_pressPos;
+    bool    m_awaitingMove = false;
 };
 
 #endif // SELECTTOOL_H

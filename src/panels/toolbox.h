@@ -28,6 +28,7 @@ public:
     // Programmatically switch to a tool (e.g. from Pull mode)
     void activateTool(ToolType type);
     ToolSettingsPanel* settingsPanel() const { return m_settingsPanel; }
+    void refreshShortcutLabels();
     void applyTheme();
 
 signals:

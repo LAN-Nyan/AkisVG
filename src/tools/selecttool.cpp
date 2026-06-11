@@ -1,10 +1,12 @@
 #include "selecttool.h"
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/vectorobject.h"
+#include "canvas/objects/objectgroup.h"
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsRectItem>
 #include <QPen>
 #include <QBrush>
+#include <QtMath>
 
 SelectTool::SelectTool(QObject *parent)
     : Tool(ToolType::Select, parent)
@@ -13,135 +15,103 @@ SelectTool::SelectTool(QObject *parent)
 
 SelectTool::~SelectTool()
 {
-    // m_selectionRect is scene-owned — don't delete here, just clear the pointer.
     m_selectionRect = nullptr;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Returns true if scenePos lands on any currently selected object's display clone.
-bool SelectTool::hitTestSelected(QPointF scenePos, VectorCanvas *canvas) const
+VectorObject *SelectTool::topObjectAt(QPointF scenePos, VectorCanvas *canvas) const
 {
-    if (m_selectedObjects.isEmpty()) return false;
     for (QGraphicsItem *item : canvas->items(scenePos)) {
-        VectorObject *vo = dynamic_cast<VectorObject*>(item);
-        if (!vo) continue;
-        VectorObject *src = canvas->sourceObject(vo);
-        if (m_selectedObjects.contains(src)) return true;
+        if (item == m_selectionRect)
+            continue;
+        if (auto *vo = dynamic_cast<VectorObject *>(item))
+            return canvas->sourceObject(vo);
     }
-    return false;
+    return nullptr;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Mouse events
-// ─────────────────────────────────────────────────────────────────────────────
 
 void SelectTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
     if (!canvas || event->button() != Qt::LeftButton) return;
 
-    QPointF pos = event->scenePos();
-    m_dragStart = pos;
+    const QPointF pos = event->scenePos();
+    m_dragStart   = pos;
+    m_pressPos    = pos;
+    m_awaitingMove = false;
+    m_isMovingObjects = false;
+    m_isRubberBanding = false;
 
-    // ── Clicked on an already-selected object → start moving them ────────────
-    if (hitTestSelected(pos, canvas)) {
-        m_isMovingObjects = true;
-        m_lastDragPos     = pos;
-        event->accept();
-        return;
-    }
-
-    // ── Find topmost object at click ─────────────────────────────────────────
-    VectorObject *clickedDisplay = nullptr;
-    for (QGraphicsItem *item : canvas->items(pos)) {
-        if (auto *vo = dynamic_cast<VectorObject*>(item)) {
-            clickedDisplay = vo;
-            break;
-        }
-    }
-    VectorObject *clickedSrc = clickedDisplay
-                                   ? canvas->sourceObject(clickedDisplay) : nullptr;
-
-    bool shift = event->modifiers() & Qt::ShiftModifier;
+    VectorObject *clickedSrc = topObjectAt(pos, canvas);
+    const bool shift = event->modifiers() & Qt::ShiftModifier;
 
     if (clickedSrc) {
-        if (!shift) {
-            // Replace selection unless clicking something already selected
-            if (!m_selectedObjects.contains(clickedSrc))
-                clearSelection();
-        }
-
-        if (m_selectedObjects.contains(clickedSrc)) {
-            if (shift) {
+        if (shift) {
+            if (m_selectedObjects.contains(clickedSrc))
                 m_selectedObjects.removeOne(clickedSrc);
-            }
-            // else: already selected, prepare to move
-        } else {
+            else
+                m_selectedObjects.append(clickedSrc);
+        } else if (!m_selectedObjects.contains(clickedSrc)) {
+            clearSelection(canvas);
             m_selectedObjects.append(clickedSrc);
         }
 
-        // Start move immediately
-        m_isMovingObjects = true;
-        m_lastDragPos     = pos;
+        // Only start moving after the user drags past the threshold.
+        m_awaitingMove = !m_selectedObjects.isEmpty();
+        m_lastDragPos  = pos;
 
         canvas->showSelectionOverlays(m_selectedObjects);
         emit selectionChanged(m_selectedObjects);
         event->accept();
-
-    } else {
-        // ── Empty space → rubber-band ─────────────────────────────────────────
-        if (!shift) clearSelection();
-
-        m_isRubberBanding = true;
-
-        if (!m_selectionRect) {
-            m_selectionRect = new QGraphicsRectItem();
-            m_selectionRect->setPen(QPen(QColor(220, 50, 50), 1.5, Qt::DashLine));
-            m_selectionRect->setBrush(QBrush(QColor(220, 50, 50, 25)));
-            m_selectionRect->setZValue(10000);
-            canvas->addItem(m_selectionRect);
-        }
-        m_selectionRect->setRect(QRectF(pos, pos));
-        m_selectionRect->setVisible(true);
-        event->accept();
+        return;
     }
+
+    // Empty canvas click — deselect immediately.
+    if (!shift)
+        clearSelection(canvas);
+
+    m_isRubberBanding = true;
+    if (!m_selectionRect) {
+        m_selectionRect = new QGraphicsRectItem();
+        m_selectionRect->setPen(QPen(QColor(220, 50, 50), 1.5, Qt::DashLine));
+        m_selectionRect->setBrush(QBrush(QColor(220, 50, 50, 25)));
+        m_selectionRect->setZValue(10000);
+        m_selectionRect->setAcceptedMouseButtons(Qt::NoButton);
+        canvas->addItem(m_selectionRect);
+    }
+    m_selectionRect->setRect(QRectF(pos, pos));
+    m_selectionRect->setVisible(true);
+    event->accept();
 }
 
 void SelectTool::mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
     if (!canvas) return;
 
-    QPointF pos = event->scenePos();
+    const QPointF pos = event->scenePos();
 
-    // ── Move selected objects ─────────────────────────────────────────────────
+    if (m_awaitingMove && !m_isMovingObjects && !m_selectedObjects.isEmpty()) {
+        if (QLineF(m_pressPos, pos).length() >= m_dragThreshold) {
+            m_isMovingObjects = true;
+            m_lastDragPos = m_pressPos;
+        }
+    }
+
     if (m_isMovingObjects && !m_selectedObjects.isEmpty()) {
-        QPointF delta = pos - m_lastDragPos;
+        const QPointF delta = pos - m_lastDragPos;
         m_lastDragPos = pos;
 
         for (VectorObject *src : m_selectedObjects) {
-            // Move the source (authoritative position, persists to layer).
             src->moveBy(delta.x(), delta.y());
-            // Also move its display clone so the visual feedback is immediate.
-            // Without this, the clone stays in the old position until the
-            // refreshFrame() on mouseRelease, causing a jarring snap.
-            // We deliberately avoid refreshFrame() here because it destroys
-            // and recreates all display clones — when a right-click QMenu is
-            // open its event loop receives those queued scene-rebuild events,
-            // which steal focus and make every menu item unclickable.
-            VectorObject *clone = canvas->displayCloneFor(src);
-            if (clone) clone->moveBy(delta.x(), delta.y());
+            if (VectorObject *clone = canvas->displayCloneFor(src))
+                clone->moveBy(delta.x(), delta.y());
         }
         canvas->showSelectionOverlays(m_selectedObjects);
         event->accept();
         return;
     }
 
-    // ── Update rubber-band rect ───────────────────────────────────────────────
     if (m_isRubberBanding) {
-        QRectF rect = QRectF(m_dragStart, pos).normalized();
-        if (m_selectionRect) m_selectionRect->setRect(rect);
+        if (m_selectionRect)
+            m_selectionRect->setRect(QRectF(m_dragStart, pos).normalized());
         event->accept();
         return;
     }
@@ -153,53 +123,80 @@ void SelectTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas
 {
     if (!canvas) return;
 
-    // ── Finish object move — commit positions to layer ────────────────────────
     if (m_isMovingObjects) {
         m_isMovingObjects = false;
-        // Objects were moved directly on source objects; refresh display clones
+        m_awaitingMove = false;
         canvas->refreshFrame();
         event->accept();
         return;
     }
 
-    // ── Finish rubber-band selection ──────────────────────────────────────────
     if (m_isRubberBanding) {
-        QRectF selArea = QRectF(m_dragStart, event->scenePos()).normalized();
-        bool   shift   = event->modifiers() & Qt::ShiftModifier;
+        const QPointF rel = event->scenePos() - m_dragStart;
+        if (qAbs(rel.x()) < m_dragThreshold && qAbs(rel.y()) < m_dragThreshold) {
+            if (m_selectionRect) m_selectionRect->setVisible(false);
+            m_isRubberBanding = false;
+            canvas->showSelectionOverlays(m_selectedObjects);
+            emit selectionChanged(m_selectedObjects);
+            event->accept();
+            return;
+        }
+
+        const QRectF selArea = QRectF(m_dragStart, event->scenePos()).normalized();
+        const bool shift = event->modifiers() & Qt::ShiftModifier;
         updateSelection(canvas, selArea, shift);
         if (m_selectionRect) m_selectionRect->setVisible(false);
         m_isRubberBanding = false;
-        // Show dashed highlight boxes around every selected object.
         canvas->showSelectionOverlays(m_selectedObjects);
         emit selectionChanged(m_selectedObjects);
         event->accept();
         return;
     }
 
+    m_awaitingMove = false;
     event->accept();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Selection management
-// ─────────────────────────────────────────────────────────────────────────────
-
 void SelectTool::updateSelection(VectorCanvas *canvas, const QRectF &rect, bool additive)
 {
-    if (!additive) clearSelection();
+    if (!additive) clearSelection(canvas);
 
     for (QGraphicsItem *item : canvas->items(rect, Qt::IntersectsItemShape)) {
-        VectorObject *display = dynamic_cast<VectorObject*>(item);
-        if (!display || item == m_selectionRect) continue;
+        if (item == m_selectionRect) continue;
+        VectorObject *display = dynamic_cast<VectorObject *>(item);
+        if (!display) continue;
         VectorObject *src = canvas->sourceObject(display);
         if (src && !m_selectedObjects.contains(src))
             m_selectedObjects.append(src);
     }
 }
 
-void SelectTool::clearSelection()
+void SelectTool::clearSelection(VectorCanvas *canvas)
 {
     m_selectedObjects.clear();
-    // Visual deselect happens naturally on next refreshFrame.
+    if (canvas)
+        canvas->showSelectionOverlays(m_selectedObjects);
+    emit selectionChanged(m_selectedObjects);
+}
+
+void SelectTool::notifyGrouped(ObjectGroup *group, const QList<VectorObject *> &members, VectorCanvas *canvas)
+{
+    Q_UNUSED(members);
+    m_selectedObjects.clear();
+    if (group)
+        m_selectedObjects.append(group);
+    if (canvas)
+        canvas->showSelectionOverlays(m_selectedObjects);
+    emit selectionChanged(m_selectedObjects);
+}
+
+void SelectTool::notifyUngrouped(ObjectGroup *ungrouped, const QList<VectorObject *> &released, VectorCanvas *canvas)
+{
+    Q_UNUSED(ungrouped);
+    m_selectedObjects = released;
+    if (canvas)
+        canvas->showSelectionOverlays(m_selectedObjects);
+    emit selectionChanged(m_selectedObjects);
 }
 
 void SelectTool::setSelectedObjects(const QList<VectorObject*> &objects)

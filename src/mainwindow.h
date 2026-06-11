@@ -25,6 +25,8 @@ class ObjectGroup;
 class EyedropperTool;
 class SymbolMaster;
 class SymbolInstance;
+class QDockWidget;
+class QTimer;
 // ── NEW TOOL INCLUDES ────────────────────────────────────────────────────────
 class LassoTool;
 class MagicWandTool;
@@ -76,6 +78,14 @@ private slots:
     void updateRecentFilesMenu();
     void createMasterSymbol(const QList<VectorObject*> &selected);
     void breakSymbolInstances(const QList<VectorObject*> &selected);
+    void editMasterSymbol(SymbolMaster *master);
+    void enterSymbolEditMode(SymbolMaster *master);
+    void exitSymbolEditMode(bool apply);
+    void applySymbolEditToMaster();
+    void setupAutoSave();
+    void performAutoSave();
+    void offerCrashRecovery();
+    void showPreferences();
 
 private:
    // void createActions();
@@ -123,6 +133,13 @@ private:
 
     QString m_currentFile;
     bool m_isModified;
+
+    QDockWidget *m_timelineDock = nullptr;
+    QWidget *m_symbolEditBanner = nullptr;
+    SymbolMaster *m_symbolEditMaster = nullptr;
+    Project *m_symbolEditProject = nullptr;
+    QUndoStack *m_symbolEditUndo = nullptr;
+    QTimer *m_autoSaveTimer = nullptr;
 
 };
 

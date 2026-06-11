@@ -28,6 +28,12 @@ ToolButton::ToolButton(const QString &iconPath, const QString &toolName, const Q
     applyTheme();
 }
 
+void ToolButton::setShortcutKey(const QString &shortcut)
+{
+    m_shortcut = shortcut;
+    setToolTip(QString("%1 (%2)").arg(m_toolName, m_shortcut));
+}
+
 void ToolButton::paintEvent(QPaintEvent *event)
 {
     QPushButton::paintEvent(event);

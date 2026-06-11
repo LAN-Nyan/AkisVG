@@ -261,6 +261,11 @@ QWidget* LayerPanel::createLayerItem(Layer *layer, int index)
 
     textLayout->addWidget(nameLabel);
     textLayout->addWidget(typeLabel);
+    if (layer->clipsToLayerBelow()) {
+        QLabel *clipBadge = new QLabel(QStringLiteral("CLIP"));
+        clipBadge->setStyleSheet("color: #5dade2; font-size: 8px; font-weight: bold;");
+        textLayout->addWidget(clipBadge);
+    }
     layout->addWidget(textContainer, 1);
 
     // Helper: render an SVG resource as a white/grey icon pixmap
@@ -484,6 +489,13 @@ void LayerPanel::showContextMenu(const QPoint &pos)
     case LayerType::Interpolation: break; // Interpolation layers use Art visually
     }
 
+    QAction *clipAct = nullptr;
+    if (layer->layerType() != LayerType::Audio) {
+        clipAct = menu.addAction(layer->clipsToLayerBelow()
+                                     ? QStringLiteral("Disable Clipping Mask")
+                                     : QStringLiteral("Clip to Layer Below"));
+    }
+
     menu.addSeparator();
     QAction *deleteAct = menu.addAction("Delete Layer");
 
@@ -512,6 +524,23 @@ void LayerPanel::showContextMenu(const QPoint &pos)
         rebuildLayerList();
     } else if (selected == refAct) {
         layer->setLayerType(LayerType::Reference);
+        rebuildLayerList();
+    } else if (clipAct && selected == clipAct) {
+        layer->setClipsToLayerBelow(!layer->clipsToLayerBelow());
+        rebuildLayerList();
+    }
+}
+
+void LayerPanel::setProject(Project *project)
+{
+    if (m_project) {
+        disconnect(m_project, &Project::layersChanged, this, nullptr);
+        disconnect(m_project, &Project::currentLayerChanged, this, nullptr);
+    }
+    m_project = project;
+    if (m_project) {
+        connect(m_project, &Project::layersChanged, this, &LayerPanel::rebuildLayerList, Qt::QueuedConnection);
+        connect(m_project, &Project::currentLayerChanged, this, &LayerPanel::updateSelection);
         rebuildLayerList();
     }
 }

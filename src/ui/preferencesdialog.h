@@ -4,7 +4,9 @@
 #include <QDialog>
 #include <QSpinBox>
 #include <QCheckBox>
-#include <QComboBox>
+#include <QMap>
+#include <QKeySequenceEdit>
+#include "tools/tool.h"
 
 class PreferencesDialog : public QDialog
 {
@@ -12,8 +14,7 @@ class PreferencesDialog : public QDialog
 
 public:
     explicit PreferencesDialog(QWidget *parent = nullptr);
-    
-    // Getters for settings
+
     bool onionSkinEnabled() const;
     int onionSkinFrames() const;
     QColor onionSkinColor() const;
@@ -26,12 +27,13 @@ private:
     void setupUI();
     void loadSettings();
     void saveSettings();
-    
-    QCheckBox *m_onionSkinEnabled;
-    QSpinBox *m_onionSkinFrames;
-    QSpinBox *m_onionSkinOpacity;
-    QPushButton *m_onionSkinColorBtn;
+
+    QCheckBox *m_onionSkinEnabled = nullptr;
+    QSpinBox *m_onionSkinFrames = nullptr;
+    QSpinBox *m_onionSkinOpacity = nullptr;
+    QPushButton *m_onionSkinColorBtn = nullptr;
     QColor m_onionSkinColor;
+    QMap<ToolType, QKeySequenceEdit *> m_hotkeyEdits;
 };
 
-#endif // PREFERENCESDIALOG_H
+#endif

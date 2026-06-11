@@ -20,7 +20,23 @@
 #include <QGraphicsView>
 #include <QUuid>
 #include <QGraphicsRectItem>
+#include <QGraphicsPathItem>
 #include <QTimer>
+
+namespace {
+QPainterPath objectClipShape(VectorObject *obj)
+{
+    if (!obj) return QPainterPath();
+    if (auto *pathObj = dynamic_cast<PathObject *>(obj)) {
+        if (!pathObj->path().isEmpty())
+            return pathObj->mapToScene(pathObj->path());
+    }
+    const QRectF r = obj->mapRectToScene(obj->boundingRect());
+    QPainterPath p;
+    p.addRect(r);
+    return p;
+}
+} // namespace
 
 VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *parent)
     : QGraphicsScene(parent)
@@ -51,6 +67,36 @@ VectorCanvas::VectorCanvas(Project *project, QUndoStack *undoStack, QObject *par
 
 VectorCanvas::~VectorCanvas() {}
 
+void VectorCanvas::rebindProject(Project *project, QUndoStack *undoStack)
+{
+    if (m_project) {
+        disconnect(m_project, nullptr, this, nullptr);
+    }
+    for (Layer *layer : m_connectedLayers) {
+        if (layer)
+            disconnect(layer, nullptr, this, nullptr);
+    }
+    m_connectedLayers.clear();
+
+    m_project = project;
+    m_undoStack = undoStack;
+
+    if (!m_project) {
+        clearDisplay();
+        return;
+    }
+
+    setSceneRect(0, 0, m_project->width(), m_project->height());
+    connect(m_project, &Project::currentFrameChanged, this, &VectorCanvas::onFrameChanged);
+    connect(m_project, &Project::onionSkinSettingsChanged, this, &VectorCanvas::refreshFrame);
+    connect(m_project, &Project::layersChanged, this, [this]() {
+        setupLayerConnections();
+        refreshFrame();
+    }, Qt::QueuedConnection);
+    setupLayerConnections();
+    refreshFrame();
+}
+
 void VectorCanvas::setupLayerConnections()
 {
     if (!m_project) return;
@@ -58,6 +104,7 @@ void VectorCanvas::setupLayerConnections()
         if (!layer || m_connectedLayers.contains(layer)) continue;
         m_connectedLayers.insert(layer);
         connect(layer, &Layer::visibilityChanged, this, [this](bool) { refreshFrame(); });
+        connect(layer, &Layer::clipModeChanged,   this, [this](bool) { refreshFrame(); });
         connect(layer, &Layer::modified,          this, [this]()      { refreshFrame(); });
         connect(layer, &QObject::destroyed, this, [this, layer]() { m_connectedLayers.remove(layer); });
     }
@@ -140,14 +187,25 @@ void VectorCanvas::refreshFrame()
     // destroyed, so they can null any raw pointers to them before we delete.
     emit aboutToRefreshFrame();
 
-    // Tear down all previous display items.
+    // Tear down clip containers (also deletes parented display clones).
+    for (QGraphicsPathItem *clip : m_clipContainers) {
+        if (clip->scene() == this)
+            removeItem(clip);
+        delete clip;
+    }
+    m_clipContainers.clear();
+
+    // Tear down standalone display items (onion skin / unclipped).
     for (VectorObject *item : m_displayItems) {
+        if (item->parentItem())
+            continue;
         m_cloneToSource.remove(item);
         if (item->scene() == this)
             removeItem(item);
         delete item;
     }
     m_displayItems.clear();
+    m_cloneToSource.clear();
 
     if (!m_project) return;
 
@@ -206,9 +264,69 @@ void VectorCanvas::refreshFrame()
         }
     }
 
-    for (Layer *layer : m_project->layers()) {
+    struct LayerDisplay {
+        VectorObject *display = nullptr;
+        VectorObject *source  = nullptr;
+    };
+    QMap<Layer *, QList<LayerDisplay>> currentDisplays;
+    const QList<Layer *> layers = m_project->layers();
+
+    for (Layer *layer : layers) {
         if (!layer->isVisible()) continue;
-        addForFrame(layer, currentFrame, layer->opacity(), 1.0);
+        const bool isInBetween = layer->isInterpolated(currentFrame);
+        for (VectorObject *obj : layer->objectsAtFrame(currentFrame)) {
+            if (obj == m_liveDrawingItem) {
+                if (isInBetween) delete obj;
+                continue;
+            }
+            VectorObject *display = isInBetween ? obj : obj->clone();
+            display->setOpacity(layer->opacity());
+            display->setObjectOpacity(1.0);
+            display->setFlag(QGraphicsItem::ItemIsMovable, false);
+            display->setFlag(QGraphicsItem::ItemIsSelectable, false);
+            display->setAcceptedMouseButtons(Qt::NoButton);
+            display->setCacheMode(QGraphicsItem::NoCache);
+            LayerDisplay ld;
+            ld.display = display;
+            ld.source  = isInBetween ? nullptr : obj;
+            currentDisplays[layer].append(ld);
+        }
+    }
+
+    for (int i = 0; i < layers.size(); ++i) {
+        Layer *layer = layers[i];
+        if (!currentDisplays.contains(layer))
+            continue;
+
+        QGraphicsPathItem *clipHost = nullptr;
+        if (layer->clipsToLayerBelow() && i > 0) {
+            Layer *below = layers[i - 1];
+            if (currentDisplays.contains(below)) {
+                QPainterPath clipPath;
+                for (const LayerDisplay &bd : currentDisplays[below]) {
+                    clipPath = clipPath.united(objectClipShape(bd.display));
+                }
+                if (!clipPath.isEmpty()) {
+                    clipHost = new QGraphicsPathItem(clipPath);
+                    clipHost->setPen(Qt::NoPen);
+                    clipHost->setBrush(Qt::NoBrush);
+                    clipHost->setFlag(QGraphicsItem::ItemClipsChildrenToShape, true);
+                    addItem(clipHost);
+                    m_clipContainers.append(clipHost);
+                }
+            }
+        }
+
+        for (const LayerDisplay &ld : currentDisplays[layer]) {
+            VectorObject *display = ld.display;
+            if (clipHost)
+                display->setParentItem(clipHost);
+            else
+                addItem(display);
+            m_displayItems.append(display);
+            if (ld.source)
+                m_cloneToSource[display] = ld.source;
+        }
     }
 
     // SAFETY: After rebuilding all display clones, the live stroke must sit above
@@ -325,6 +443,19 @@ void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
 }
 
 void VectorCanvas::setCurrentTool(Tool *tool) { m_currentTool = tool; }
+
+void VectorCanvas::addPlacedObject(VectorObject *obj)
+{
+    if (!obj || !m_project->currentLayer()) return;
+
+    obj->setFlag(QGraphicsItem::ItemIsMovable, false);
+    obj->setFlag(QGraphicsItem::ItemIsSelectable, false);
+    obj->setAcceptedMouseButtons(Qt::NoButton);
+    obj->setCacheMode(QGraphicsItem::NoCache);
+    m_undoStack->push(new AddObjectCommand(obj, m_project->currentLayer(),
+                                           m_project->currentFrame()));
+    refreshFrame();
+}
 
 void VectorCanvas::addObject(VectorObject *obj)
 {
@@ -660,16 +791,33 @@ VectorObject* SymbolMaster::clone() const
 
 QPixmap SymbolMaster::thumbnail(int size) const
 {
-    QPixmap pixmap(size, size);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setBrush(QBrush(QColor(100, 180, 255, 128)));
-    painter.setPen(QPen(QColor(100, 180, 255), 1));
-    painter.drawRect(2, 2, size-4, size-4);
-    painter.setPen(QPen(Qt::white, 2));
-    painter.drawText(QRect(0, 0, size, size), Qt::AlignCenter, "S");
-    return pixmap;
+    if (children().isEmpty()) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setBrush(QBrush(QColor(100, 180, 255, 128)));
+        painter.setPen(QPen(QColor(100, 180, 255), 1));
+        painter.drawRect(2, 2, size - 4, size - 4);
+        painter.setPen(QPen(Qt::white, 2));
+        painter.drawText(QRect(0, 0, size, size), Qt::AlignCenter, "S");
+        return pixmap;
+    }
+    return ObjectGroup::thumbnail(size);
+}
+
+void SymbolMaster::setArtworkChildren(const QList<VectorObject *> &objects)
+{
+    const QList<VectorObject *> old = children();
+    for (VectorObject *c : old) {
+        removeChild(c);
+        delete c;
+    }
+    for (VectorObject *o : objects) {
+        if (o)
+            addChild(o);
+    }
+    updateAllInstances();
 }
 
 // =============================================================================
@@ -678,9 +826,12 @@ QPixmap SymbolMaster::thumbnail(int size) const
 
 SymbolMaster* VectorCanvas::createMasterSymbol(const QList<VectorObject*> &objects, const QString &name)
 {
-    if (objects.isEmpty()) return nullptr;
+    if (objects.isEmpty() || !m_project || !m_project->currentLayer())
+        return nullptr;
 
-    // Calculate the bounding rect for the group
+    Layer *layer = m_project->currentLayer();
+    const int frame = m_project->currentFrame();
+
     QRectF united;
     for (VectorObject *obj : objects) {
         if (!obj) continue;
@@ -689,29 +840,49 @@ SymbolMaster* VectorCanvas::createMasterSymbol(const QList<VectorObject*> &objec
     }
     if (united.isNull()) return nullptr;
 
-    // Create the master symbol
     QString masterName = name.isEmpty()
         ? QString("Symbol %1").arg(QDateTime::currentMSecsSinceEpoch() % 10000)
         : name;
     SymbolMaster *master = new SymbolMaster(masterName);
 
-    // Position the master at the top-left of the united bounds
-    master->setPos(united.topLeft());
-
-    // Add all objects to the master
+    beginBatchUpdate();
     for (VectorObject *obj : objects) {
         if (!obj) continue;
+        layer->removeObjectFromFrame(frame, obj);
         QPointF scenePos = obj->scenePos();
         obj->setPos(scenePos - united.topLeft());
         master->addChild(obj);
     }
+    SymbolInstance *inst = new SymbolInstance(master);
+    inst->setPos(united.topLeft());
+    layer->addObjectToFrame(frame, inst);
+    endBatchUpdate();
 
-    // Add the master to the project's symbol library (if applicable)
-    if (m_project) {
-        m_project->addMasterSymbol(master);
-    }
-
+    m_project->addMasterSymbol(master);
+    refreshFrame();
     return master;
+}
+
+SymbolInstance* VectorCanvas::createSymbolInstance(SymbolMaster *master)
+{
+    return master ? new SymbolInstance(master) : nullptr;
+}
+
+void VectorCanvas::updateSymbolInstances(SymbolMaster *master)
+{
+    if (master)
+        master->updateAllInstances();
+}
+
+QList<SymbolMaster*> VectorCanvas::allMasterSymbols() const
+{
+    return m_project ? m_project->masterSymbols() : QList<SymbolMaster*>();
+}
+
+void VectorCanvas::removeMasterSymbol(SymbolMaster *master)
+{
+    if (m_project)
+        m_project->removeMasterSymbol(master);
 }
 
 // =============================================================================

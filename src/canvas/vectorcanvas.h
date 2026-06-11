@@ -73,6 +73,12 @@ public:
     QList<SymbolMaster*> allMasterSymbols() const;
     void removeMasterSymbol(SymbolMaster *master);
 
+    /** Commit a non-interactive object to the current frame (no live-draw preview path). */
+    void addPlacedObject(VectorObject *obj);
+
+    /** Swap the backing project/undo stack (symbol editor mode). */
+    void rebindProject(Project *project, QUndoStack *undoStack);
+
 signals:
     // Emitted just before display items are destroyed during refreshFrame().
     // Connect to clear any raw pointers to display clones before they become dangling.
@@ -131,6 +137,9 @@ private:
 
     // Dashed bounding-box overlays showing the current bounding-box selection.
     QList<QGraphicsRectItem*> m_selectionOverlays;
+
+    // Clipping-mask containers (own display children; deleted each refreshFrame).
+    QList<class QGraphicsPathItem*> m_clipContainers;
 };
 
 /**
@@ -155,6 +164,9 @@ private:
      VectorObject* clone() const override;
      QPixmap thumbnail(int size) const;
      void setName(const QString &name);
+
+     /** Replace all child artwork and push updates to every instance (symbol editor). */
+     void setArtworkChildren(const QList<VectorObject*> &objects);
  
  signals:
      void instanceAdded(SymbolInstance *instance);

@@ -463,6 +463,7 @@ bool Project::saveToFile(const QString &filePath)
         layerObj["visible"] = layer->isVisible();
         layerObj["locked"] = layer->isLocked();
         layerObj["opacity"] = layer->opacity();
+        layerObj["clipsToLayerBelow"] = layer->clipsToLayerBelow();
         layerObj["color"] = layer->color().name();
         layerObj["type"] = layer->layerTypeString();
 
@@ -665,6 +666,7 @@ bool Project::loadFromFile(const QString &filePath)
         layer->setVisible(layerObj["visible"].toBool(true));
         layer->setLocked(layerObj["locked"].toBool(false));
         layer->setOpacity(layerObj["opacity"].toDouble(1.0));
+        layer->setClipsToLayerBelow(layerObj["clipsToLayerBelow"].toBool(false));
         layer->setColor(QColor(layerObj["color"].toString("#808080")));
 
         // Set layer type based on saved type string

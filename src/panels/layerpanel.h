@@ -16,6 +16,7 @@ class LayerPanel : public QWidget
 
 public:
     explicit LayerPanel(Project *project, QUndoStack *undoStack, QWidget *parent = nullptr);
+    void setProject(Project *project);
     void rebuildLayerList();
     void applyTheme();
 

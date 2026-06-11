@@ -56,6 +56,8 @@ set(SOURCES
     src/ui/startupscreen.cpp
     src/canvas/objects/objectgroup.cpp
     src/ui/startupdialog.cpp
+    src/ui/symboleditordialog.cpp
+    src/ui/preferencesdialog.cpp
     src/canvas/splineoverlay.cpp
     # ── NEW TOOLS ──────────────────────────────────────────────────────────────
     src/tools/lassotool.cpp
@@ -83,8 +85,10 @@ set(HEADERS
     src/canvas/objects/imageobject.h
     src/io/gifexporter.h
     src/ui/startupscreen.h
+    src/ui/symboleditordialog.h
     src/utils/thememanager.h
     src/utils/thememanager.cpp
+    src/utils/hotkeymanager.cpp
     # ── NEW TOOLS ──────────────────────────────────────────────────────────────
     src/tools/lassotool.h
     src/tools/gradienttool.h

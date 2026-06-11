@@ -63,6 +63,15 @@ void Layer::setOpacity(qreal opacity)
     }
 }
 
+void Layer::setClipsToLayerBelow(bool clip)
+{
+    if (m_clipsToLayerBelow != clip) {
+        m_clipsToLayerBelow = clip;
+        emit clipModeChanged(clip);
+        emit modified();
+    }
+}
+
 void Layer::setLayerType(LayerType type)
 {
     if (m_layerType != type) {

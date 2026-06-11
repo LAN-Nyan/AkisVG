@@ -4,6 +4,7 @@
 #include "tools/penciltool.h"
 #include "tools/brushtool.h"
 #include "utils/thememanager.h"
+#include "utils/hotkeymanager.h"
 #include "toolbutton.h"
 #include "tools/erasertool.h"
 #include "tools/shapetool.h"
@@ -111,11 +112,13 @@ void ToolBox::setupUI()
             m_accentLabels.append(label);
     };
 
-    auto addToolButton = [&](ToolType type, const QString &icon, const QString &name, const QString &key) {
+    auto addToolButton = [&](ToolType type, const QString &icon, const QString &name, const QString &keyFallback) {
         QString path = ":/" + icon + ".svg";
         if (!QFile::exists(path)) path = IconConfig::getToolIconPath(icon);
 
-        ToolButton *btn = new ToolButton(path, name, key, this);
+        const QString key = HotkeyManager::instance().shortcutLabel(type);
+        const QString hint = key.isEmpty() ? keyFallback : key;
+        ToolButton *btn = new ToolButton(path, name, hint, this);
         m_toolButtons->addButton(btn, static_cast<int>(type));
         buttonLayout->addWidget(btn);
 
@@ -177,6 +180,17 @@ void ToolBox::onToolButtonClicked(int id)
 Tool* ToolBox::getTool(ToolType type) const
 {
     return m_tools.value(type, nullptr);
+}
+
+void ToolBox::refreshShortcutLabels()
+{
+    for (auto it = m_tools.cbegin(); it != m_tools.cend(); ++it) {
+        if (auto *btn = qobject_cast<ToolButton *>(m_toolButtons->button(static_cast<int>(it.key())))) {
+            const QString label = HotkeyManager::instance().shortcutLabel(it.key());
+            if (!label.isEmpty())
+                btn->setShortcutKey(label);
+        }
+    }
 }
 
 void ToolBox::activateTool(ToolType type)

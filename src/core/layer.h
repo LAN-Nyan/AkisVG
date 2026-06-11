@@ -109,6 +109,10 @@ public:
     qreal opacity() const { return m_opacity; }
     void setOpacity(qreal opacity);
 
+    /** When true, this layer is only visible where the layer directly below has content. */
+    bool clipsToLayerBelow() const { return m_clipsToLayerBelow; }
+    void setClipsToLayerBelow(bool clip);
+
     LayerType layerType() const { return m_layerType; }
     void setLayerType(LayerType type);
     QString layerTypeString() const;
@@ -202,6 +206,7 @@ signals:
     void visibilityChanged(bool visible);
     void lockedChanged(bool locked);
     void typeChanged(LayerType type);
+    void clipModeChanged(bool clip);
 
 private:
     QString m_name;
@@ -211,6 +216,7 @@ private:
     QMap<int, QColor>   m_frameColors;   // per-frame timeline colour dot
     QMap<int, QString>  m_frameLabels;   // per-frame label / function marker
     qreal m_opacity;
+    bool m_clipsToLayerBelow = false;
     LayerType m_layerType;
 
     // Frame data: frameNumber -> list of objects
