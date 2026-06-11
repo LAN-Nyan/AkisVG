@@ -8,6 +8,7 @@
 #include "canvas/objects/imageobject.h"
 #include "canvas/objects/transformableimageobject.h"
 #include "canvas/vectorcanvas.h"
+#include "utils/debuglog.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -224,6 +225,7 @@ void Project::setOnionSkinOpacity(qreal opacity)
 void Project::setCurrentFrame(int frame)
 {
     if (frame >= 1 && frame != m_currentFrame) {
+        AKIS_LOG(Frame, QStringLiteral("setCurrentFrame %1 → %2").arg(m_currentFrame).arg(frame));
         m_currentFrame = frame;
         emit currentFrameChanged(frame);
     }
@@ -414,6 +416,7 @@ Layer* Project::layerAt(int index) const
 
 bool Project::saveToFile(const QString &filePath)
 {
+    AKIS_LOG(IO, QStringLiteral("saveToFile START %1").arg(filePath));
     QJsonObject projectObj;
 
     // Project metadata
@@ -590,6 +593,7 @@ bool Project::saveToFile(const QString &filePath)
     // and are still loaded correctly in loadFromFile().
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
+        AKIS_LOG(IO, QStringLiteral("saveToFile FAILED open: %1").arg(filePath));
         qWarning() << "Failed to open file for writing:" << filePath;
         return false;
     }
@@ -602,13 +606,16 @@ bool Project::saveToFile(const QString &filePath)
     file.write(compressed);
     file.close();
 
+    AKIS_LOG(IO, QStringLiteral("saveToFile OK %1").arg(filePath));
     return true;
 }
 
 bool Project::loadFromFile(const QString &filePath)
 {
+    AKIS_LOG(IO, QStringLiteral("loadFromFile START %1").arg(filePath));
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
+        AKIS_LOG(IO, QStringLiteral("loadFromFile FAILED open: %1").arg(filePath));
         qWarning() << "Failed to open file for reading:" << filePath;
         return false;
     }
@@ -875,6 +882,8 @@ bool Project::loadFromFile(const QString &filePath)
     emit layersChanged();
     emit onionSkinSettingsChanged();
 
+    AKIS_LOG(IO, QStringLiteral("loadFromFile OK %1 layers=%2 frames=%3")
+                        .arg(filePath).arg(m_layers.size()).arg(m_totalFrames));
     return true;
 }
 

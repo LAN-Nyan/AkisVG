@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 #include "ui/startupdialog.h"
+#include "utils/crashguard.h"
+#include "utils/debuglog.h"
 #include <QApplication>
+#include <QCoreApplication>
 #include <QStyleFactory>
 
 int main(int argc, char *argv[])
@@ -18,6 +21,9 @@ int main(int argc, char *argv[])
 #endif
 
     QApplication app(argc, argv);
+    installCrashGuard();
+    AKIS_LOG(App, QStringLiteral("AkisVG starting (pid %1)").arg(QCoreApplication::applicationPid()));
+
     app.setOrganizationName("AkisVG");
     app.setOrganizationDomain("akisvg by LAN-Nyan");
     app.setApplicationName("AkisVG");
@@ -29,17 +35,21 @@ int main(int argc, char *argv[])
     // ── Startup dialog ───────────────────────────────────────────────────────
     StartupDialog startup;
     if (startup.exec() != QDialog::Accepted) {
-        return 0; // user closed the dialog → quit
+        AKIS_LOG(App, QStringLiteral("Startup cancelled — exiting"));
+        return 0;
     }
+    AKIS_LOG(App, QStringLiteral("Startup accepted"));
 
     // ── Build main window ────────────────────────────────────────────────────
     MainWindow window;
 
     if (startup.action() == StartupDialog::Action::OpenProject) {
-        // Open existing project file
+        AKIS_LOG(IO, QStringLiteral("Opening project: %1").arg(startup.openPath()));
         window.show();
         window.openProjectFile(startup.openPath());
     } else {
+        AKIS_LOG(Project, QStringLiteral("New project %1x%2 @%3fps")
+                            .arg(startup.canvasWidth()).arg(startup.canvasHeight()).arg(startup.fps()));
         // Apply new-project settings before showing the window
         window.applyStartupSettings(
             startup.projectName(),
@@ -49,5 +59,8 @@ int main(int argc, char *argv[])
         window.show();
     }
 
-    return app.exec();
+    AKIS_LOG(App, QStringLiteral("Entering event loop"));
+    const int code = app.exec();
+    AKIS_LOG(App, QStringLiteral("Event loop finished (code %1)").arg(code));
+    return code;
 }

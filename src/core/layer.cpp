@@ -1,5 +1,6 @@
 #include "layer.h"
 #include "frame.h"
+#include "utils/debuglog.h"
 #include "canvas/objects/vectorobject.h"
 #include "canvas/objects/pathobject.h"
 #include <QRectF>
@@ -66,6 +67,7 @@ void Layer::setOpacity(qreal opacity)
 void Layer::setClipsToLayerBelow(bool clip)
 {
     if (m_clipsToLayerBelow != clip) {
+        AKIS_LOG(Layer, QStringLiteral("'%1' clipToBelow=%2").arg(m_name).arg(clip));
         m_clipsToLayerBelow = clip;
         emit clipModeChanged(clip);
         emit modified();
@@ -182,6 +184,9 @@ QList<VectorObject*> Layer::objectsAtFrame(int frameNumber) const
 
 void Layer::addObjectToFrame(int frameNumber, VectorObject *obj)
 {
+    AKIS_LOG(Layer, QStringLiteral("addObjectToFrame layer='%1' frame=%2 obj=%3")
+                        .arg(m_name).arg(frameNumber)
+                        .arg(reinterpret_cast<quintptr>(obj), 0, 16));
     if (obj) {
         // CRITICAL FIX: Check if this frame is extended from a key frame
         int keyFrame = getKeyFrameFor(frameNumber);
@@ -233,6 +238,9 @@ void Layer::addMotionPathObjectToFrame(int frameNumber, VectorObject *obj)
 
 void Layer::removeObjectFromFrame(int frameNumber, VectorObject *obj)
 {
+    AKIS_LOG(Layer, QStringLiteral("removeObjectFromFrame layer='%1' frame=%2 obj=%3")
+                        .arg(m_name).arg(frameNumber)
+                        .arg(reinterpret_cast<quintptr>(obj), 0, 16));
     if (m_frames.contains(frameNumber)) {
         m_frames[frameNumber].removeOne(obj);
         if (m_frames[frameNumber].isEmpty()) {
@@ -300,6 +308,7 @@ void Layer::swapFrameCells(int a, int b)
 }
 
 void Layer::clearFrame(int frameNumber){
+    AKIS_LOG(Layer, QStringLiteral("clearFrame layer='%1' frame=%2").arg(m_name).arg(frameNumber));
     if (m_frames.contains(frameNumber)) {
         qDeleteAll(m_frames[frameNumber]);
         m_frames.remove(frameNumber);

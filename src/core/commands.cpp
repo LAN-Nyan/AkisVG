@@ -1,5 +1,6 @@
 #include "commands.h"
 #include "layer.h"
+#include "utils/debuglog.h"
 #include "project.h"
 #include "canvas/objects/vectorobject.h"
 #include "canvas/objects/pathobject.h"
@@ -26,6 +27,8 @@ AddObjectCommand::~AddObjectCommand()
 
 void AddObjectCommand::undo()
 {
+    AKIS_LOG(Undo, QStringLiteral("AddObjectCommand::undo frame=%1 obj=%2")
+                        .arg(m_frame).arg(reinterpret_cast<quintptr>(m_object), 0, 16));
     m_layer->removeObjectFromFrame(m_frame, m_object);
     m_ownsObject = true;
 }
@@ -56,6 +59,8 @@ void AddFramesCommand::undo() {
 
 void AddObjectCommand::redo()
 {
+    AKIS_LOG(Undo, QStringLiteral("AddObjectCommand::redo frame=%1 obj=%2")
+                        .arg(m_frame).arg(reinterpret_cast<quintptr>(m_object), 0, 16));
     m_layer->addObjectToFrame(m_frame, m_object);
     m_ownsObject = false;
 }
@@ -82,12 +87,16 @@ RemoveObjectCommand::~RemoveObjectCommand()
 
 void RemoveObjectCommand::undo()
 {
+    AKIS_LOG(Undo, QStringLiteral("RemoveObjectCommand::undo frame=%1 obj=%2")
+                        .arg(m_frame).arg(reinterpret_cast<quintptr>(m_object), 0, 16));
     m_layer->addObjectToFrame(m_frame, m_object);
     m_ownsObject = false;
 }
 
 void RemoveObjectCommand::redo()
 {
+    AKIS_LOG(Undo, QStringLiteral("RemoveObjectCommand::redo frame=%1 obj=%2")
+                        .arg(m_frame).arg(reinterpret_cast<quintptr>(m_object), 0, 16));
     m_layer->removeObjectFromFrame(m_frame, m_object);
     m_ownsObject = true;
 }

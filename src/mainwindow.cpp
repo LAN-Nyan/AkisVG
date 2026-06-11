@@ -27,6 +27,8 @@
 #include "canvas/objects/vectorobject.h"
 #include "ui/preferencesdialog.h"
 #include "utils/hotkeymanager.h"
+#include "utils/debuglog.h"
+#include "panels/debuglogpanel.h"
 // Includes
 #include <algorithm>
 #include <QMenuBar>
@@ -208,6 +210,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_toolBox, &ToolBox::toolChanged, m_canvas, &VectorCanvas::setCurrentTool);
 
     connect(m_toolBox, &ToolBox::toolChanged, this, [this](Tool *tool) {
+        if (tool)
+            AKIS_LOG(Tool, QStringLiteral("Active tool → %1").arg(tool->name()));
+    });
+    connect(m_toolBox, &ToolBox::toolChanged, this, [this](Tool *tool) {
         if (!tool) return;
         QColor toolColor = tool->strokeColor();
         if (m_colorPicker->currentColor() != toolColor) {
@@ -243,6 +249,10 @@ MainWindow::MainWindow(QWidget *parent)
     });
     // Undo and Redo Stack
     connect(m_undoStack, &QUndoStack::indexChanged, this, [this]() {
+        AKIS_LOG(Undo, QStringLiteral("Stack index=%1 clean=%2 text=%3")
+                            .arg(m_undoStack->index())
+                            .arg(m_undoStack->isClean())
+                            .arg(m_undoStack->text(m_undoStack->index())));
         m_canvas->refreshFrame();
         if (m_layerPanel) {
             m_layerPanel->rebuildLayerList();
@@ -1227,6 +1237,15 @@ void MainWindow::createDockWindows()
     m_timelineDock->setMaximumHeight(sc(320));
     addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
     m_viewMenu->addAction(m_timelineDock->toggleViewAction());
+
+    // Debug log dock (verbose trace of all AKIS_LOG output)
+    auto *debugDock = new QDockWidget(tr("Debug Log"), this);
+    debugDock->setWidget(new DebugLogPanel(this));
+    debugDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    debugDock->setMinimumHeight(sc(120));
+    addDockWidget(Qt::BottomDockWidgetArea, debugDock);
+    splitDockWidget(m_timelineDock, debugDock, Qt::Vertical);
+    m_viewMenu->addAction(debugDock->toggleViewAction());
 
     // Load persisted preferences on startup
     QSettings settings("AkisVG", "AkisVG");

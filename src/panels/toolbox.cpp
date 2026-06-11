@@ -5,6 +5,7 @@
 #include "tools/brushtool.h"
 #include "utils/thememanager.h"
 #include "utils/hotkeymanager.h"
+#include "utils/debuglog.h"
 #include "toolbutton.h"
 #include "tools/erasertool.h"
 #include "tools/shapetool.h"
@@ -196,6 +197,7 @@ void ToolBox::refreshShortcutLabels()
 void ToolBox::activateTool(ToolType type)
 {
     if (!m_tools.contains(type)) return;
+    AKIS_LOG(Tool, QStringLiteral("activateTool type=%1").arg(static_cast<int>(type)));
     m_currentTool = m_tools[type];
     // Update button check state
     if (auto *btn = m_toolButtons->button(static_cast<int>(type))) {

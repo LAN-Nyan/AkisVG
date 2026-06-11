@@ -8,6 +8,7 @@
 #include "objects/objectgroup.h"
 #include "objects/shapeobject.h"
 #include "core/commands.h"
+#include "utils/debuglog.h"
 
 #include <QPainter>
 #include <QGraphicsSceneDragDropEvent>
@@ -108,6 +109,9 @@ VectorCanvas::~VectorCanvas() {}
 
 void VectorCanvas::rebindProject(Project *project, QUndoStack *undoStack)
 {
+    AKIS_LOG(Canvas, QStringLiteral("rebindProject project=%1 undo=%2")
+                        .arg(reinterpret_cast<quintptr>(project), 0, 16)
+                        .arg(reinterpret_cast<quintptr>(undoStack), 0, 16));
     if (m_project) {
         disconnect(m_project, nullptr, this, nullptr);
     }
@@ -151,6 +155,7 @@ void VectorCanvas::setupLayerConnections()
 
 void VectorCanvas::clearDisplay()
 {
+    AKIS_LOG(Canvas, QStringLiteral("clearDisplay"));
     m_isDrawing = false;
     m_isCancelingDrawing = false;
 
@@ -188,7 +193,9 @@ void VectorCanvas::clearDisplay()
 
 void VectorCanvas::cancelLiveDrawing()
 {
-    // Called before context menu / tool switch while a stroke is in progress.
+    AKIS_LOG(Canvas, QStringLiteral("cancelLiveDrawing isDrawing=%1 live=%2")
+                        .arg(m_isDrawing)
+                        .arg(reinterpret_cast<quintptr>(m_liveDrawingItem), 0, 16));
     if (!m_isDrawing && !m_liveDrawingItem)
         return;
 
@@ -236,7 +243,14 @@ void VectorCanvas::cancelLiveDrawing()
 
 void VectorCanvas::refreshFrame()
 {
-    if (m_batchUpdating) return;
+    if (m_batchUpdating) {
+        AKIS_LOG(Canvas, QStringLiteral("refreshFrame skipped (batch update)"));
+        return;
+    }
+    AKIS_LOG(Canvas, QStringLiteral("refreshFrame START frame=%1 drawing=%2 live=%3")
+                        .arg(m_project ? m_project->currentFrame() : -1)
+                        .arg(m_isDrawing)
+                        .arg(reinterpret_cast<quintptr>(m_liveDrawingItem), 0, 16));
 
     // Clear selection overlays — SelectTool will re-add them after refreshFrame if needed.
     for (QGraphicsRectItem *r : m_selectionOverlays) {
@@ -344,11 +358,21 @@ void VectorCanvas::refreshFrame()
         if (!layer->isVisible()) continue;
         const bool isInBetween = layer->isInterpolated(currentFrame);
         for (VectorObject *obj : layer->objectsAtFrame(currentFrame)) {
+            if (!obj) {
+                AKIS_LOG(Crash, QStringLiteral("refreshFrame: null object on layer '%1' frame %2")
+                                    .arg(layer->name()).arg(currentFrame));
+                continue;
+            }
             if (obj == m_liveDrawingItem) {
                 if (isInBetween) delete obj;
                 continue;
             }
             VectorObject *display = isInBetween ? obj : obj->clone();
+            if (!display) {
+                AKIS_LOG(Crash, QStringLiteral("refreshFrame: clone failed for obj %1")
+                                    .arg(reinterpret_cast<quintptr>(obj), 0, 16));
+                continue;
+            }
             display->setOpacity(layer->opacity());
             display->setObjectOpacity(1.0);
             display->setFlag(QGraphicsItem::ItemIsMovable, false);
@@ -407,6 +431,10 @@ void VectorCanvas::refreshFrame()
     if (m_isDrawing && m_liveDrawingItem) {
         m_liveDrawingItem->setZValue(9999);
     }
+    AKIS_LOG(Canvas, QStringLiteral("refreshFrame END displays=%1 clips=%2 clones=%3")
+                        .arg(m_displayItems.size())
+                        .arg(m_clipContainers.size())
+                        .arg(m_cloneToSource.size()));
 }
 
 VectorObject* VectorCanvas::sourceObject(VectorObject *item) const
@@ -515,6 +543,10 @@ void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
 
 void VectorCanvas::setCurrentTool(Tool *tool)
 {
+    AKIS_LOG(Tool, QStringLiteral("setCurrentTool %1 → %2 (drawing=%3)")
+                        .arg(m_currentTool ? m_currentTool->name() : QStringLiteral("null"))
+                        .arg(tool ? tool->name() : QStringLiteral("null"))
+                        .arg(m_isDrawing));
     if ((m_isDrawing || m_liveDrawingItem) && tool != m_currentTool)
         cancelLiveDrawing();
     m_currentTool = tool;
@@ -522,7 +554,12 @@ void VectorCanvas::setCurrentTool(Tool *tool)
 
 void VectorCanvas::addPlacedObject(VectorObject *obj)
 {
-    if (!obj || !m_project->currentLayer()) return;
+    AKIS_LOG(Canvas, QStringLiteral("addPlacedObject obj=%1")
+                        .arg(reinterpret_cast<quintptr>(obj), 0, 16));
+    if (!obj || !m_project->currentLayer()) {
+        AKIS_LOG(Canvas, QStringLiteral("addPlacedObject ABORT — null obj or layer"));
+        return;
+    }
 
     obj->setFlag(QGraphicsItem::ItemIsMovable, false);
     obj->setFlag(QGraphicsItem::ItemIsSelectable, false);
@@ -535,7 +572,13 @@ void VectorCanvas::addPlacedObject(VectorObject *obj)
 
 void VectorCanvas::addObject(VectorObject *obj)
 {
-    if (!obj || !m_project->currentLayer()) return;
+    AKIS_LOG(Canvas, QStringLiteral("addObject (live) obj=%1 frame=%2")
+                        .arg(reinterpret_cast<quintptr>(obj), 0, 16)
+                        .arg(m_project ? m_project->currentFrame() : -1));
+    if (!obj || !m_project->currentLayer()) {
+        AKIS_LOG(Canvas, QStringLiteral("addObject ABORT — null obj or layer"));
+        return;
+    }
 
     // Show the live object immediately for real-time drawing feedback.
     // Strip interactive flags — this is a drawing-in-progress item, not an
@@ -589,6 +632,11 @@ void VectorCanvas::clearCurrentFrame()
 
 void VectorCanvas::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
+    AKIS_LOG(Event, QStringLiteral("mousePress btn=%1 pos=(%2,%3) tool=%4")
+                        .arg(static_cast<int>(event->button()))
+                        .arg(event->scenePos().x(), 0, 'f', 1)
+                        .arg(event->scenePos().y(), 0, 'f', 1)
+                        .arg(m_currentTool ? m_currentTool->name() : QStringLiteral("none")));
     if (m_project && m_project->currentLayer() &&
         m_project->currentLayer()->layerType() == LayerType::Audio) {
         QGraphicsScene::mousePressEvent(event);
@@ -633,6 +681,10 @@ void VectorCanvas::mouseMoveEvent(QGraphicsSceneMouseEvent *event)
 
 void VectorCanvas::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
 {
+    AKIS_LOG(Event, QStringLiteral("mouseRelease btn=%1 canceling=%2 drawing=%3")
+                        .arg(static_cast<int>(event->button()))
+                        .arg(m_isCancelingDrawing)
+                        .arg(m_isDrawing));
     if (event->button() == Qt::RightButton) {
         // Right-click context menu is handled by CanvasView::contextMenuEvent.
         event->accept();

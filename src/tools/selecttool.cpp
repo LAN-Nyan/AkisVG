@@ -2,6 +2,7 @@
 #include "canvas/vectorcanvas.h"
 #include "canvas/objects/vectorobject.h"
 #include "canvas/objects/objectgroup.h"
+#include "utils/debuglog.h"
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsRectItem>
 #include <QPen>
@@ -31,6 +32,10 @@ VectorObject *SelectTool::topObjectAt(QPointF scenePos, VectorCanvas *canvas) co
 
 void SelectTool::mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas)
 {
+    AKIS_LOG(Tool, QStringLiteral("SelectTool press pos=(%1,%2) sel=%3")
+                        .arg(event->scenePos().x(), 0, 'f', 1)
+                        .arg(event->scenePos().y(), 0, 'f', 1)
+                        .arg(m_selectedObjects.size()));
     if (!canvas || event->button() != Qt::LeftButton) return;
 
     const QPointF pos = event->scenePos();
@@ -173,6 +178,7 @@ void SelectTool::updateSelection(VectorCanvas *canvas, const QRectF &rect, bool 
 
 void SelectTool::clearSelection(VectorCanvas *canvas)
 {
+    AKIS_LOG(Tool, QStringLiteral("SelectTool clearSelection"));
     m_selectedObjects.clear();
     if (canvas)
         canvas->showSelectionOverlays(m_selectedObjects);

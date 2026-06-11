@@ -89,6 +89,9 @@ set(HEADERS
     src/utils/thememanager.h
     src/utils/thememanager.cpp
     src/utils/hotkeymanager.cpp
+    src/utils/debuglog.cpp
+    src/utils/crashguard.cpp
+    src/panels/debuglogpanel.cpp
     # ── NEW TOOLS ──────────────────────────────────────────────────────────────
     src/tools/lassotool.h
     src/tools/gradienttool.h

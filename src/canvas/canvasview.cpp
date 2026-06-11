@@ -19,8 +19,11 @@
 #include <QGraphicsSceneMouseEvent>
 #include "core/project.h"
 #include "core/layer.h"
+#include "panels/assetlibrary.h"
+#include "canvas/objects/objectgroup.h"
 #include "tools/tool.h"
 #include "tools/lassotool.h"
+#include "utils/debuglog.h"
 #include <QTimer>
 
 CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
@@ -58,6 +61,8 @@ CanvasView::CanvasView(VectorCanvas *canvas, QWidget *parent)
             m_selectedImage = nullptr;
         });
     }
+
+    setAcceptDrops(true);
 
     viewport()->installEventFilter(this);
 
@@ -474,6 +479,7 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
 
 void CanvasView::contextMenuEvent(QContextMenuEvent *event)
 {
+    AKIS_LOG(UI, QStringLiteral("contextMenu — canceling live draw if any"));
     auto *canvas = qobject_cast<VectorCanvas*>(scene());
     if (!canvas) return;
 
@@ -486,7 +492,9 @@ void CanvasView::contextMenuEvent(QContextMenuEvent *event)
 
 void CanvasView::dragEnterEvent(QDragEnterEvent *event)
 {
-    if (event->mimeData()->hasText() || event->mimeData()->hasFormat("application/x-lumina-asset")) {
+    const QMimeData *m = event->mimeData();
+    if (m->hasText() || m->hasFormat("application/x-lumina-asset")
+        || m->property("symbolInstance").isValid()) {
         event->acceptProposedAction();
     } else {
         QGraphicsView::dragEnterEvent(event);
@@ -495,7 +503,9 @@ void CanvasView::dragEnterEvent(QDragEnterEvent *event)
 
 void CanvasView::dragMoveEvent(QDragMoveEvent *event)
 {
-    if (event->mimeData()->hasText() || event->mimeData()->hasFormat("application/x-lumina-asset")) {
+    const QMimeData *md = event->mimeData();
+    if (md->hasText() || md->hasFormat("application/x-lumina-asset")
+        || md->property("symbolInstance").isValid()) {
         event->acceptProposedAction();
     } else {
         QGraphicsView::dragMoveEvent(event);
@@ -504,51 +514,53 @@ void CanvasView::dragMoveEvent(QDragMoveEvent *event)
 
 void CanvasView::dropEvent(QDropEvent *event)
 {
-    if (!event->mimeData()->hasText() && !event->mimeData()->hasFormat("application/x-lumina-asset")) {
+    auto *canvas = qobject_cast<VectorCanvas *>(scene());
+    if (!canvas) {
         QGraphicsView::dropEvent(event);
         return;
     }
 
-    auto *canvas = qobject_cast<VectorCanvas*>(scene());
-    if (!canvas) return;
+    const QPointF scenePos = mapToScene(event->position().toPoint());
 
-    QPointF scenePos = mapToScene(event->position().toPoint());
-
-    // Handle symbol instance drop
     if (event->mimeData()->property("symbolInstance").isValid()) {
-        SymbolInstance *instance = event->mimeData()->property("symbolInstance").value<SymbolInstance*>();
+        SymbolInstance *instance =
+            event->mimeData()->property("symbolInstance").value<SymbolInstance *>();
         if (instance) {
-            instance->setPos(scenePos.x(), scenePos.y());
-            canvas->addObject(instance);
+            QRectF b = instance->boundingRect();
+            instance->setPos(scenePos.x() - b.width() / 2.0, scenePos.y() - b.height() / 2.0);
+            canvas->addPlacedObject(instance);
             event->acceptProposedAction();
             return;
         }
     }
 
-    // Handle regular asset drop - disabled due to missing AssetLibrary
-    /*
-    QString id = event->mimeData()->text();
-    if (!id.isEmpty()) {
-        // Find the asset in the library
-        AssetLibrary *library = qobject_cast<AssetLibrary*>(parent()->findChild<AssetLibrary*>());
-        if (library) {
-            Asset *asset = library->assetById(id);
-            if (asset) {
-                if (asset->type == Asset::Group && asset->group) {
-                    ObjectGroup *group = asset->group->clone();
-                    group->setPos(scenePos.x(), scenePos.y());
-                    canvas->addObject(group);
-                    event->acceptProposedAction();
-                } else if (asset->type == Asset::Symbol && asset->symbol) {
-                    SymbolInstance *instance = new SymbolInstance(asset->symbol);
-                    instance->setPos(scenePos.x(), scenePos.y());
-                    canvas->addObject(instance);
-                    event->acceptProposedAction();
+    if (event->mimeData()->hasFormat("application/x-lumina-asset")) {
+        QWidget *top = window();
+        if (top) {
+            if (AssetLibrary *lib = top->findChild<AssetLibrary *>()) {
+                const QString id = QString::fromUtf8(event->mimeData()->data("application/x-lumina-asset"));
+                Asset *asset = lib->assetById(id);
+                if (asset) {
+                    if (asset->type == Asset::Group && asset->group) {
+                        if (ObjectGroup *g = dynamic_cast<ObjectGroup *>(asset->group->clone())) {
+                            QRectF b = g->boundingRect();
+                            g->setPos(scenePos.x() - b.width() / 2.0, scenePos.y() - b.height() / 2.0);
+                            canvas->addPlacedObject(g);
+                            event->acceptProposedAction();
+                            return;
+                        }
+                    } else if (asset->type == Asset::Symbol && asset->symbol) {
+                        SymbolInstance *instance = new SymbolInstance(asset->symbol);
+                        QRectF b = instance->boundingRect();
+                        instance->setPos(scenePos.x() - b.width() / 2.0, scenePos.y() - b.height() / 2.0);
+                        canvas->addPlacedObject(instance);
+                        event->acceptProposedAction();
+                        return;
+                    }
                 }
             }
         }
     }
-    */
 
     QGraphicsView::dropEvent(event);
 }
