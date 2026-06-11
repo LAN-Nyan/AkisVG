@@ -47,6 +47,8 @@ public:
     void undo() override;
     void redo() override;
 
+    VectorObject *object() const { return m_object; }
+
 private:
     VectorObject *m_object;
     Layer *m_layer;

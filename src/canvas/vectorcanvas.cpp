@@ -6,6 +6,7 @@
 #include "objects/vectorobject.h"
 #include "objects/pathobject.h"
 #include "objects/objectgroup.h"
+#include "objects/shapeobject.h"
 #include "core/commands.h"
 
 #include <QPainter>
@@ -27,14 +28,52 @@ namespace {
 QPainterPath objectClipShape(VectorObject *obj)
 {
     if (!obj) return QPainterPath();
+
     if (auto *pathObj = dynamic_cast<PathObject *>(obj)) {
         if (!pathObj->path().isEmpty())
             return pathObj->mapToScene(pathObj->path());
     }
+
+    if (auto *shape = dynamic_cast<ShapeObject *>(obj)) {
+        QPainterPath p;
+        const QRectF r = shape->rect();
+        if (shape->shapeType() == ShapeObject::Ellipse)
+            p.addEllipse(r);
+        else
+            p.addRect(r);
+        return shape->mapToScene(p);
+    }
+
+    if (auto *group = dynamic_cast<ObjectGroup *>(obj)) {
+        QPainterPath united;
+        for (VectorObject *child : group->children())
+            united = united.united(objectClipShape(child));
+        if (!united.isEmpty())
+            return united;
+    }
+
     const QRectF r = obj->mapRectToScene(obj->boundingRect());
+    if (r.isEmpty()) return QPainterPath();
     QPainterPath p;
     p.addRect(r);
     return p;
+}
+
+bool undoStackContainsAddForObject(const QUndoStack *stack, VectorObject *obj, int depth = 0)
+{
+    if (!stack || !obj || !stack->canUndo() || depth > 4)
+        return false;
+    const QUndoCommand *cmd = stack->command(stack->index() - 1 - depth);
+    if (!cmd) return false;
+    if (const auto *add = dynamic_cast<const AddObjectCommand *>(cmd)) {
+        if (add->object() == obj) return true;
+    }
+    for (int i = 0; i < cmd->childCount(); ++i) {
+        if (const auto *add = dynamic_cast<const AddObjectCommand *>(cmd->child(i))) {
+            if (add->object() == obj) return true;
+        }
+    }
+    return false;
 }
 } // namespace
 
@@ -112,12 +151,30 @@ void VectorCanvas::setupLayerConnections()
 
 void VectorCanvas::clearDisplay()
 {
+    m_isDrawing = false;
+    m_isCancelingDrawing = false;
+
     if (m_liveDrawingItem) {
         if (m_liveDrawingItem->scene() == this)
             removeItem(m_liveDrawingItem);
         m_liveDrawingItem = nullptr;
     }
+
+    for (QGraphicsRectItem *r : m_selectionOverlays) {
+        if (r->scene() == this) removeItem(r);
+        delete r;
+    }
+    m_selectionOverlays.clear();
+
+    for (QGraphicsPathItem *clip : m_clipContainers) {
+        if (clip->scene() == this) removeItem(clip);
+        delete clip;
+    }
+    m_clipContainers.clear();
+
     for (VectorObject *item : m_displayItems) {
+        if (item->parentItem())
+            continue;
         m_cloneToSource.remove(item);
         if (item->scene() == this)
             removeItem(item);
@@ -131,34 +188,46 @@ void VectorCanvas::clearDisplay()
 
 void VectorCanvas::cancelLiveDrawing()
 {
-    // Called just before a context menu opens (right-click during drawing).
-    // Without this, the QMenu event loop keeps receiving mouseMoveEvents which
-    // accumulate points in m_liveDrawingItem. Since no mouseRelease fires for
-    // the original left-button drag, m_isDrawing never resets and the partial
-    // stroke is never cleaned up — leaving permanent ghost pixels every time.
-    if (!m_isDrawing && !m_liveDrawingItem) {
+    // Called before context menu / tool switch while a stroke is in progress.
+    if (!m_isDrawing && !m_liveDrawingItem)
         return;
-    }
 
-    // Set canceling flag to prevent race conditions with mouse release events
     m_isCancelingDrawing = true;
-
     m_isDrawing = false;
 
-    if (m_liveDrawingItem) {
-        if (m_liveDrawingItem->scene() == this)
-            removeItem(m_liveDrawingItem);
-        delete m_liveDrawingItem;   // discard — stroke was cancelled, not committed
-        m_liveDrawingItem = nullptr;
+    VectorObject *live = m_liveDrawingItem;
+    m_liveDrawingItem = nullptr;
+
+    if (m_currentTool)
+        m_currentTool->cancelDraw();
+
+    if (live) {
+        if (live->scene() == this)
+            removeItem(live);
+
+        // addObject() already pushed AddObjectCommand — the object is layer-owned.
+        // Never delete it here; undo/remove via the command stack or we double-free.
+        if (m_undoStack && m_project && m_project->currentLayer()) {
+            if (m_undoStack->isActive())
+                m_undoStack->endMacro();
+
+            bool reverted = false;
+            if (undoStackContainsAddForObject(m_undoStack, live)) {
+                m_undoStack->undo();
+                reverted = true;
+            }
+            if (!reverted) {
+                m_undoStack->push(new RemoveObjectCommand(live, m_project->currentLayer(),
+                                                          m_project->currentFrame()));
+            }
+        } else {
+            delete live;
+        }
     }
 
-    if (m_currentTool) {
-        m_currentTool->cancelDraw();  // reset tool's own m_isDrawing / m_currentPath
-    }
-
+    refreshFrame();
     update();
 
-    // Reset canceling flag after a small delay to ensure any pending events are processed
     QTimer::singleShot(100, this, [this]() {
         m_isCancelingDrawing = false;
     });
@@ -299,9 +368,11 @@ void VectorCanvas::refreshFrame()
             continue;
 
         QGraphicsPathItem *clipHost = nullptr;
-        if (layer->clipsToLayerBelow() && i > 0) {
+        if (layer->clipsToLayerBelow() && i > 0
+            && layer->layerType() != LayerType::Audio) {
             Layer *below = layers[i - 1];
-            if (currentDisplays.contains(below)) {
+            if (below->layerType() != LayerType::Audio
+                && currentDisplays.contains(below)) {
                 QPainterPath clipPath;
                 for (const LayerDisplay &bd : currentDisplays[below]) {
                     clipPath = clipPath.united(objectClipShape(bd.display));
@@ -442,7 +513,12 @@ void VectorCanvas::dragMoveEvent(QGraphicsSceneDragDropEvent *event)
     event->acceptProposedAction();
 }
 
-void VectorCanvas::setCurrentTool(Tool *tool) { m_currentTool = tool; }
+void VectorCanvas::setCurrentTool(Tool *tool)
+{
+    if ((m_isDrawing || m_liveDrawingItem) && tool != m_currentTool)
+        cancelLiveDrawing();
+    m_currentTool = tool;
+}
 
 void VectorCanvas::addPlacedObject(VectorObject *obj)
 {

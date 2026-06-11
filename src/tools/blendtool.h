@@ -20,6 +20,7 @@ public:
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
+    void cancelDraw() override;
 
     void setBlendStrength(qreal strength);
     qreal blendStrength() const { return m_blendStrength; }

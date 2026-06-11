@@ -84,3 +84,10 @@ void GradientTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanv
 
     Tool::mouseReleaseEvent(event, canvas);
 }
+
+void GradientTool::cancelDraw()
+{
+    m_isDrawing = false;
+    m_isDragging = false;
+    m_liveGradient = nullptr;
+}

@@ -121,6 +121,14 @@ void BlendTool::mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas 
     Tool::mouseReleaseEvent(event, canvas);
 }
 
+void BlendTool::cancelDraw()
+{
+    m_isDrawing = false;
+    m_activeSmear = nullptr;
+    m_activeSmearPath = QPainterPath();
+    m_strokePointCount = 0;
+}
+
 void BlendTool::blendAtPoint(const QPointF &pos, VectorCanvas *canvas)
 {
     if (!canvas || !m_activeSmear) return;

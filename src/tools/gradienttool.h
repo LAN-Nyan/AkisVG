@@ -24,6 +24,7 @@ public:
     void mousePressEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseMoveEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
     void mouseReleaseEvent(QGraphicsSceneMouseEvent *event, VectorCanvas *canvas) override;
+    void cancelDraw() override;
 
     // Settings (read/written by ToolSettingsPanel)
     enum GType { Linear, Radial };
