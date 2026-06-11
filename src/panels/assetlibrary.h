@@ -40,6 +40,8 @@ public:
     // Called by VectorCanvas when user groups objects
     void addObjectGroup(ObjectGroup *group);
     void addMasterSymbol(class SymbolMaster *symbol);
+    /** Regenerate thumbnail after editing a symbol's artwork. */
+    void refreshSymbolThumbnail(class SymbolMaster *symbol);
     void applyTheme();
 
 signals:
@@ -47,6 +49,7 @@ signals:
     void assetRemoved(const QString &id);
     // Emitted when user wants to instance a group onto the canvas
     void groupInstanceRequested(ObjectGroup *group);
+    void editMasterSymbolRequested(class SymbolMaster *master);
 
 private slots:
     void onImportClicked();

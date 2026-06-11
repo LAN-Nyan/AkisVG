@@ -149,6 +149,19 @@ void AssetLibrary::addMasterSymbol(SymbolMaster *symbol)
     emit assetAdded(asset);
 }
 
+void AssetLibrary::refreshSymbolThumbnail(SymbolMaster *symbol)
+{
+    if (!symbol) return;
+    for (Asset &a : m_assets) {
+        if (a.type == Asset::Symbol && a.symbol == symbol) {
+            a.thumbnail = symbol->thumbnail(64);
+            a.name      = symbol->groupName().isEmpty() ? a.name : symbol->groupName();
+            break;
+        }
+    }
+    updateAssetList();
+}
+
 void AssetLibrary::onImportClicked()
 {
     QStringList files = QFileDialog::getOpenFileNames(this, "Import Assets", "",
@@ -214,7 +227,10 @@ void AssetLibrary::updateAssetList()
     m_assetList->clear();
     for (const Asset &asset : m_assets) {
         QListWidgetItem *item = new QListWidgetItem(m_assetList);
-        item->setSizeHint(QSize(0, asset.type == Asset::Group ? 88 : 80));
+        int h = 80;
+        if (asset.type == Asset::Group) h = 88;
+        else if (asset.type == Asset::Symbol) h = 112;
+        item->setSizeHint(QSize(0, h));
         item->setData(Qt::UserRole, asset.id);
         m_assetList->setItemWidget(item, createAssetItem(asset));
     }
@@ -223,7 +239,10 @@ void AssetLibrary::updateAssetList()
 QWidget* AssetLibrary::createAssetItem(const Asset &asset)
 {
     QWidget *w = new QWidget();
-    w->setFixedHeight(asset.type == Asset::Group ? 88 : 80);
+    int rowH = 80;
+    if (asset.type == Asset::Group) rowH = 88;
+    else if (asset.type == Asset::Symbol) rowH = 112;
+    w->setFixedHeight(rowH);
     w->setProperty("assetId", asset.id);
 
     QHBoxLayout *layout = new QHBoxLayout(w);
@@ -279,6 +298,16 @@ QWidget* AssetLibrary::createAssetItem(const Asset &asset)
                 SymbolInstance *instance = new SymbolInstance(symbol);
                 emit groupInstanceRequested(instance);
             });
+            QPushButton *editBtn = new QPushButton(tr("Edit master…"));
+            editBtn->setFixedHeight(22);
+            editBtn->setCursor(Qt::PointingHandCursor);
+            editBtn->setStyleSheet(
+                "QPushButton { background:#444; color:white; border:none; border-radius:3px; font-size:10px; padding:2px 8px; }"
+                "QPushButton:hover { background:#555; }");
+            connect(editBtn, &QPushButton::clicked, this, [this, symbol]() {
+                emit editMasterSymbolRequested(symbol);
+            });
+            info->addWidget(editBtn);
         }
 
         info->addWidget(btn);
@@ -308,10 +337,14 @@ void AssetLibrary::showContextMenu(const QPoint &pos)
     Asset *asset = assetById(id);
 
     QAction *instanceAct = nullptr;
+    QAction *editMasterAct = nullptr;
     if (asset && (asset->type == Asset::Group || asset->type == Asset::Symbol)) {
         instanceAct = menu.addAction("Instance onto Canvas");
-        menu.addSeparator();
     }
+    if (asset && asset->type == Asset::Symbol && asset->symbol) {
+        editMasterAct = menu.addAction("Edit Master Symbol…");
+    }
+    menu.addSeparator();
     QAction *deleteAct = menu.addAction("Delete Asset");
     QAction *sel = menu.exec(m_assetList->mapToGlobal(pos));
 
@@ -325,6 +358,8 @@ void AssetLibrary::showContextMenu(const QPoint &pos)
             SymbolInstance *instance = new SymbolInstance(asset->symbol);
             emit groupInstanceRequested(instance);
         }
+    } else if (editMasterAct && sel == editMasterAct && asset && asset->symbol) {
+        emit editMasterSymbolRequested(asset->symbol);
     }
 }
 
